@@ -1,0 +1,54 @@
+{
+  "name": "access_audit_policy",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "name": "capture_sensitive_reads",
+      "when": {
+        "event": "record_access",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "data_class",
+            "value": "PHI"
+          },
+          {
+            "kind": "field_equals",
+            "field": "action",
+            "value": "READ"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "record_field", "field": "actor_id" },
+        { "kind": "require_distillium_proof" }
+      ]
+    },
+    {
+      "name": "deny_unauthorized_write",
+      "when": {
+        "event": "record_access",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "action",
+            "value": "WRITE"
+          },
+          {
+            "kind": "field_equals",
+            "field": "actor_role",
+            "value": "guest"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "guest_cannot_write_sensitive_records"
+        },
+        { "kind": "seal_current_dig" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+[package]
+name = "handshake"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core_types = { path = "../core_types" }
+sot_root = { path = "../sot_root" }
+clock = { path = "../clock" }

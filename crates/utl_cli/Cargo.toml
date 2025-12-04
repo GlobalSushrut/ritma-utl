@@ -1,0 +1,17 @@
+[package]
+name = "utl_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+utl_client = { path = "../utl_client" }
+utld = { path = "../utld" }
+serde_json = "1"
+hex = "0.4"
+truthscript = { path = "../truthscript" }
+policy_engine = { path = "../policy_engine" }
+dig_mem = { path = "../dig_mem" }
+tenant_policy = { path = "../tenant_policy" }
+serde = { version = "1", features = ["derive"] }
+dig_index = { path = "../dig_index" }

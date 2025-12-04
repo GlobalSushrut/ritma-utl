@@ -1,0 +1,153 @@
+{
+  "name": "security_policy",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "name": "seal_security_window_after_requests",
+      "when": {
+        "event": "http_request",
+        "conditions": [
+          {
+            "kind": "count_greater_than",
+            "counter": "security_window_requests",
+            "threshold": 5
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "seal_current_dig" }
+      ]
+    },
+    {
+      "name": "deny_public_to_internal_zone_flow",
+      "when": {
+        "event": "http_request",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "src_zone",
+            "value": "did:ritma:zone:acme:public"
+          },
+          {
+            "kind": "field_equals",
+            "field": "dst_zone",
+            "value": "did:ritma:zone:acme:internal"
+          },
+          {
+            "kind": "field_equals",
+            "field": "actor_did",
+            "value": "did:ritma:id:acme:attacker"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "deny_public_to_internal_zone_flow"
+        },
+        {
+          "kind": "flag_for_investigation",
+          "reason": "public_to_internal_zone_flow_detected"
+        }
+      ]
+    },
+    {
+      "name": "waf_sql_injection_block",
+      "when": {
+        "event": "http_request",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "waf_detected",
+            "value": "sql_injection"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "waf_sql_injection"
+        },
+        { "kind": "seal_current_dig" }
+      ]
+    },
+    {
+      "name": "rate_limit_patient_search",
+      "when": {
+        "event": "http_request",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "path",
+            "value": "/v1/patient/search"
+          },
+          {
+            "kind": "count_greater_than",
+            "counter": "patient_search_requests",
+            "threshold": 10
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "rate_limit_patient_search"
+        },
+        { "kind": "seal_current_dig" },
+        {
+          "kind": "flag_for_investigation",
+          "reason": "patient_search_rate_limit_triggered"
+        }
+      ]
+    },
+    {
+      "name": "auth_bruteforce_block",
+      "when": {
+        "event": "auth_attempt",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "auth_risk",
+            "value": "bruteforce_suspected"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "flag_for_investigation",
+          "reason": "auth_bruteforce_suspected"
+        },
+        {
+          "kind": "deny",
+          "reason": "auth_bruteforce"
+        }
+      ]
+    },
+    {
+      "name": "high_threat_score_block",
+      "when": {
+        "event": "http_request",
+        "conditions": [
+          {
+            "kind": "field_greater_than",
+            "field": "threat_score",
+            "threshold": 0.8
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "high_threat_score"
+        },
+        {
+          "kind": "seal_current_dig"
+        },
+        {
+          "kind": "flag_for_investigation",
+          "reason": "high_threat_score_event"
+        }
+      ]
+    }
+  ]
+}

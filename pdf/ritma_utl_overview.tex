@@ -1,0 +1,630 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  showstringspaces=false
+}
+
+\begin{document}
+
+\title{Ritma / UTL Security Fabric\\Pravyom Project -- Part I}
+\author{Pravyom Project}
+\date{\today}
+\maketitle
+
+\section*{What It Is}
+
+Ritma's Universal Truth Layer (UTL) is a security fabric that sits between
+applications and the operating system:
+
+\begin{itemize}
+  \item A live security firewall on every transition (RPC / HTTP / internal flows).
+  \item A policy engine (TruthScript) deciding allow, deny, or allow\_with\_actions.
+  \item Forensic DigFiles: sealed, Merkle--rooted JSON logs of what actually happened.
+  \item A forensics store and HTTP API for indexing and querying DigFiles.
+  \item A decision event stream feeding a host agent that can enforce at the OS layer.
+\end{itemize}
+
+This slice is the first production piece of the Pravyom project: a practical,
+policy--driven security OS core that can both enforce and prove what happened.
+
+\section*{30 Practical Use Cases}
+
+\begin{enumerate}
+  \item Tenant--level firewalling between did:ritma:tenant identities.
+  \item Service--to--service allowlists for did:ritma:svc endpoints.
+  \item Zero--trust zones: block public to internal zone flows by default.
+  \item High--value API monitoring: always seal DigFiles for sensitive endpoints.
+  \item Abuse / fraud detection with denies plus full forensic trails.
+  \item Compliance logging for PCI / GDPR with Merkle--rooted dig archives.
+  \item Incident forensics: reconstruct all transitions around suspicious roots.
+  \item Policy regression testing with synthetic events.
+  \item Shadow--mode policy evaluation (decision events without enforcement).
+  \item Per--tenant policy experiments and A/B testing.
+  \item API abuse throttling (future) via FlowDecision::Throttle.
+  \item Network quarantine (future) via IsolationScope and cgroups.
+  \item Credential misuse detection across actor DIDs.
+  \item Lateral movement tracking via src\_did to dst\_did graph analysis.
+  \item Production change approval anchored in TruthScript rules.
+  \item Data exfiltration guardrails that seal digs on large exports.
+  \item Multi--cloud consistency using a single policy and dig format.
+  \item Security posture scoring per tenant and per zone.
+  \item Anomaly detection by running ML over DigFile JSON.
+  \item ZK proof demos using SNARKs on selected flows.
+  \item Micro--proofs (Distillium) for compact transition proofs.
+  \item Red--team replay of recorded traffic against new policies.
+  \item Runbook validation with verifiable evidence of incident steps.
+  \item Breach impact analysis across all affected roots and entities.
+  \item Root of trust demos with Merkle roots for all histories.
+  \item Developer self--service dig inspection for debugging.
+  \item Security--as--code pipelines for policies and lawbooks.
+  \item Multi--tenant blast--radius analysis via tenant\_id.
+  \item Regulator--focused evidence bundles from the forensics API.
+  \item Security OS research platform for future Pravyom work.
+\end{enumerate}
+
+\section*{Current Condition and Capabilities}
+
+\subsection*{Current Condition}
+
+\begin{itemize}
+  \item Runs locally as a Rust workspace, no external services required.
+  \item Live policy enforcement in utld: deny or allow transitions based on
+        TruthScript policy, with demo actions for proofs.
+  \item Dig and forensics path: DigFiles written to a local dig directory and to
+        an S3--style forensics tree, plus a dig index in JSONL and SQLite.
+  \item Forensics HTTP API (utl\_forensics) for filtered queries and evidence
+        bundles.
+  \item Decision event stream and a logging host agent stub (security\_host).
+\end{itemize}
+
+\subsection*{What It Can Do Right Now}
+
+\begin{itemize}
+  \item Enforce allow / deny policies on each transition.
+  \item Seal and persist DigFiles with Merkle roots and optional HMAC signatures.
+  \item Index DigFiles with tenant, root, time range, record count, merkle root,
+        policy name, policy version, policy decision, and storage path.
+  \item Serve DigFiles and evidence bundles over a bearer--secured HTTP API.
+  \item Emit structured DecisionEvent records for host--level enforcement.
+\end{itemize}
+
+\subsection*{Truthfulness, Purpose, and Relation to Pravyom}
+
+\begin{itemize}
+  \item Truthfulness: digs are sealed, Merkle--rooted, and optionally signed;
+        index entries are derived directly from these DigFiles.
+  \item Purpose: combine live enforcement with verifiable evidence so we can
+        answer what happened and why policy decided it.
+  \item Pravyom: this is Part I of a broader security OS vision that extends
+        into host enforcement, isolation, and stronger proofs.
+\end{itemize}
+
+\subsection*{Founder Story}
+
+Ritma / UTL was born out of repeated frustration with security incidents and
+compliance reviews where nobody could answer a simple question: ``what exactly
+did this system do, and why?'' As engineers and operators we had seen too many
+ad-hoc logs, missing context, and retrospective guesses. The founders built
+UTL and the Pravyom project to turn that pain into a concrete system: one that
+enforces policy in real time, records every important decision as a sealed
+DigFile, and gives both teams and regulators a single, shared source of truth
+about system behaviour.
+
+\newpage
+
+\section*{Demo Run With Real Output}
+
+\subsection*{Environment Setup}
+
+\begin{lstlisting}[language=bash]
+cd ~/Documents/connector/ritma
+
+export UTLD_POLICY=creat/policies/security_policy.json
+export UTLD_DIG_INDEX=./dig_index.jsonl
+export UTLD_DIG_DIR=./dig
+export UTLD_FORENSICS_DIR=./forensics
+export UTLD_DIG_INDEX_DB=./dig_index.sqlite
+export UTLD_DECISION_EVENTS=./decision_events.jsonl
+
+export UTL_FORENSICS_ADDR=127.0.0.1:9101
+export UTL_FORENSICS_TOKEN=secret
+\end{lstlisting}
+
+\subsection*{Start the UTL Daemon}
+
+\begin{lstlisting}[language=bash]
+cargo run -p utld
+\end{lstlisting}
+
+This starts the UTL daemon, listening on the Unix socket configured by
+\texttt{UTLD\_SOCKET} (default \texttt{/tmp/utld.sock}).
+
+\subsection*{Start the Forensics HTTP API}
+
+\begin{lstlisting}[language=bash]
+cargo run -p utl_forensics
+\end{lstlisting}
+
+The forensics service listens on \texttt{UTL\_FORENSICS\_ADDR}, for example
+127.0.0.1:9101.
+
+\subsection*{List Digs From the CLI (Real Output)}
+
+\begin{lstlisting}
+file_id=34369472591186675942074264667413050103 root_id=300 tenant_id=acme time_range=1764640664-1764640664 records=4 merkle_root=c4957a59949451674121d9475b00d64f7f5d3e166ff47235e54445fe1cdf42ec policy=<none> decision=<none> path=./dig/root-300_file-34369472591186675942074264667413050103_1764640664.dig.json
+file_id=123323533102211976749380422689014311888 root_id=300 tenant_id=acme time_range=1764640664-1764640664 records=1 merkle_root=98db1a1e45c0856d298ed8aedd3d05e96c18f97a73932297ab7b361ce0ad78a4 policy=security_policy decision=allow_with_actions path=./dig/root-300_file-123323533102211976749380422689014311888_1764640664.dig.json
+file_id=65298172895416657786460545580706427572 root_id=300 tenant_id=acme time_range=1764640664-1764640664 records=1 merkle_root=2ce7baecec2e262ec6e0948db1beda4a17c7ac99fd360b2ed6eeaa5538308ee2 policy=security_policy decision=allow_with_actions path=./dig/root-300_file-65298172895416657786460545580706427572_1764640664.dig.json
+file_id=82267068329764365758771882348027784020 root_id=300 tenant_id=acme time_range=1764640664-1764640664 records=1 merkle_root=2b8547baa14609d6b509fadaf5a82f1bfe6510249b3f880a03d4a28a50cb467c policy=security_policy decision=allow_with_actions path=./dig/root-300_file-82267068329764365758771882348027784020_1764640664.dig.json
+file_id=271074095096341309265669976856511155421 root_id=300 tenant_id=acme time_range=1764640664-1764640664 records=1 merkle_root=805e12c4874210c5c93fd39f390f3be0900ee4d509817cae9bea67e758bbdc83 policy=security_policy decision=allow_with_actions path=./dig/root-300_file-271074095096341309265669976856511155421_1764640664.dig.json
+file_id=103794811444829778436004731181071716422 root_id=300 tenant_id=acme time_range=1764640664-1764640664 records=1 merkle_root=3aef17166eefe64632b078aa05fa6955a7debe2df7cccc837a6f6c0c62061040 policy=security_policy decision=allow_with_actions path=./dig/root-300_file-103794811444829778436004731181071716422_1764640664.dig.json
+\end{lstlisting}
+
+\subsection*{Inspect One Dig by ID}
+
+\begin{lstlisting}[language=bash]
+# Replace the file_id value with one from the listing above
+cargo run -p utl_cli -- \
+  dig-inspect-id \
+  --file-id 82267068329764365758771882348027784020 \
+  --limit 5
+\end{lstlisting}
+
+This resolves the DigFile path from the index and prints a filtered summary of
+records (tenant, event\_kind, severity, policy\_decision, and so on).
+
+\subsection*{Query Via the Forensics HTTP API}
+
+\begin{lstlisting}[language=bash]
+curl -H "Authorization: Bearer secret" \
+  "http://127.0.0.1:9101/digs?tenant=acme&root_id=300&policy_decision=allow_with_actions&show_path=true" \
+  | jq
+\end{lstlisting}
+
+The response is a JSON array of indexed digs matching the filters, including
+resolved paths when \texttt{show\_path=true}.
+
+\subsection*{Run the Host Agent Stub}
+
+\begin{lstlisting}[language=bash]
+export SECURITY_EVENTS_PATH=./decision_events.jsonl
+cargo run -p security_host
+\end{lstlisting}
+
+The host agent reads DecisionEvent records and logs firewall and cgroup
+intents using the security\_os traits.
+
+\newpage
+
+\section*{Mathematical and Technical Commentary}
+
+\subsection*{Core Model}
+
+\begin{itemize}
+  \item IDs: each root and entity is identified by a 128--bit value; these are
+        carried through transitions and digs.
+  \item DIDs: security identities use structured strings such as
+        \texttt{did:ritma:tenant:acme} and \texttt{did:ritma:svc:acme:public\_api}.
+  \item Events: each transition is turned into an EngineEvent with a kind and a
+        map of typed fields for the policy engine.
+\end{itemize}
+
+\subsection*{Policy Engine}
+
+A TruthScript policy maps EngineEvent values to EngineAction results. The main
+actions used today are:
+
+\begin{itemize}
+  \item Deny with a human--readable reason.
+  \item SealCurrentDig to force sealing and indexing of the current DigFile.
+  \item RequireSnarkProof and RequireDistilliumProof as cryptographic demos.
+  \item FlagForInvestigation and RecordField for richer forensic context.
+\end{itemize}
+
+For each RecordTransition, utld evaluates the policy, injects metadata back
+into the event parameters, emits a DecisionEvent, and then applies actions.
+
+\subsection*{DigFiles and Merkle Roots}
+
+DigFiles are sequences of DigRecords containing timestamps, parameters, and
+other structured data. A Merkle tree is built over these records; the Merkle
+root is stored in the DigFile and the dig index. This gives a compact, robust
+commitment to the full record set.
+
+\subsection*{Indexing and Forensics Store}
+
+\begin{itemize}
+  \item JSONL index: dig\_index.jsonl accumulates DigIndexEntry lines.
+  \item SQLite mirror: an optional dig\_index.sqlite mirrors the index for
+        fast queries.
+  \item Forensics store: DigFiles are mirrored into a forensics directory using
+        an S3--style path layout by tenant and date.
+\end{itemize}
+
+Index entries include time ranges, tenant, root, record count, Merkle root,
+policy metadata, and the forensic storage path.
+
+\subsection*{Decision Events and Host Agent}
+
+DecisionEvent records capture:
+
+\begin{itemize}
+  \item Core identifiers: tenant\_id, root\_id, entity\_id, event\_kind.
+  \item Policy context: policy\_name, policy\_version, policy\_decision,
+        policy\_rules, policy\_actions.
+  \item Optional identity context: src\_did, dst\_did, actor\_did,
+        src\_zone, dst\_zone.
+\end{itemize}
+
+The security\_host binary reads these events, prints human--readable logs, and
+invokes the security\_os FirewallController and CgroupController traits to
+show how a real enforcement agent would behave.
+
+\subsection*{Command Cheat--Sheet}
+
+\begin{lstlisting}[language=bash]
+# UTL daemon
+cargo run -p utld
+
+# Forensics HTTP API
+cargo run -p utl_forensics
+
+# Host agent stub
+cargo run -p security_host
+
+# List registered roots
+cargo run -p utl_cli -- roots-list
+
+# Register a root
+cargo run -p utl_cli -- root-register --root-id 300 --root-hash <hex> \
+  --param tenant_id=acme
+
+# Record a transition
+cargo run -p utl_cli -- tx-record --entity-id <id> --root-id 300 \
+  --signature <hex> --data "payload" --addr-heap-hash <hex> \
+  --hook-hash <hex> --logic-ref "ref" --wall "boundary" \
+  --param tenant_id=acme
+
+# List digs from the index
+cargo run -p utl_cli -- digs-list --show-path
+
+# Inspect a dig by file_id
+cargo run -p utl_cli -- dig-inspect-id --file-id <file_id> --limit 5
+\end{lstlisting}
+
+\section*{Glossary and Terminology}
+
+This section explains key terms used throughout Ritma / UTL, both new
+concepts and those that are native to the infrastructure.
+
+\subsection*{Core Platform}
+
+\textbf{UTL (Universal Truth Layer)}: the security fabric that evaluates
+policies for each transition and records what really happened.
+
+\textbf{utld}: the main UTL daemon. It receives NodeRequest messages
+(RegisterRoot, RecordTransition, BuildDigFile, and so on), evaluates
+policies, enforces allow / deny decisions, and seals DigFiles.
+
+\textbf{utl\_forensics}: the forensics HTTP service. It reads the dig
+index and serves filtered lists of digs and evidence bundles over a
+bearer--secured REST API.
+
+\textbf{utl\_cli}: the command-line client used to register roots, record
+transitions, list digs, and inspect DigFiles.
+
+\textbf{security\_host}: a host agent stub that reads DecisionEvent
+records and shows how a real firewall / isolation controller would be
+driven.
+
+\textbf{security\_os}: a crate that defines abstract traits such as
+FirewallController, CgroupController, IsolationScope, IsolationProfile,
+and FlowDecision, which describe how a host OS would enforce policy.
+
+\textbf{Pravyom}: the broader research and product programme. This
+document covers Part I: the policy / truth / forensics core.
+
+\subsection*{Identity and Scope}
+
+\textbf{tenant\_id}: identifies a tenant or customer (for example
+``acme''). Many policies and forensic queries are scoped per tenant.
+
+\textbf{root\_id}: a 128--bit identifier for a root of truth. A root
+groups related transitions and DigFiles (for example all events for a
+particular deployment or ledger).
+
+\textbf{entity\_id}: a 128--bit identifier for an entity participating in
+transitions under a given root.
+
+\textbf{zone}: a logical or network zone (for example public, internal,
+admin). Policies often reason about src\_zone and dst\_zone.
+
+\textbf{DID (Decentralised Identifier)}: a structured string such as
+\texttt{did:ritma:tenant:acme} or
+\texttt{did:ritma:svc:acme:public\_api} used to name tenants, services,
+zones, and actors.
+
+\subsection*{Data Structures}
+
+\textbf{NodeRequest}: the JSON message type sent to utld. Examples include
+RegisterRoot, RecordTransition, and BuildDigFile.
+
+\textbf{RecordTransition}: a NodeRequest variant representing one
+transition (for example an HTTP request) with signatures, data, and a
+parameter container (p\_container).
+
+\textbf{DigFile}: a sealed, append--only JSON log of DigRecords for a
+given root over a time range. Each DigFile has a Merkle root and may be
+signed.
+
+\textbf{DigIndexEntry}: a small index record for each DigFile containing
+file id, root id, tenant id, time range, record count, Merkle root,
+policy metadata, and storage path.
+
+\textbf{DecisionEvent}: a structured record emitted whenever a policy
+evaluation produces actions. It contains event kind, policy decision,
+rules, actions, and optional DIDs and zones.
+
+\subsection*{Storage and Formats}
+
+\textbf{JSONL}: JSON Lines format; each line of a file is a separate JSON
+object. Used for the dig index and decision events log.
+
+\textbf{S3--style path layout}: an object storage style path such as
+\texttt{forensics/<tenant>/<YYYY>/<MM>/<DD>/root-<root>\_file-<file>\_<ts>.dig.json}.
+The forensics\_store crate writes DigFiles in this layout on the local
+filesystem.
+
+\textbf{Forensics store}: the on-disk directory tree that holds DigFiles in
+the S3--style layout.
+
+\textbf{Dig index}: the combination of dig\_index.jsonl and optional
+dig\_index.sqlite that lets services quickly find DigFiles by tenant,
+root, time, and policy decision.
+
+\subsection*{Cryptography and Integrity}
+
+\textbf{Merkle tree / Merkle root}: a hash tree built over DigRecords; the
+root hash commits to the entire set of records in a DigFile.
+
+\textbf{HMAC}: a keyed hash (Hash-based Message Authentication Code) used
+to sign DigFiles so that tampering can be detected.
+
+\textbf{SNARK (zkSNARK)}: a succinct zero-knowledge proof system. In this
+codebase it is used in demo form to show how a policy could require a
+cryptographic proof before allowing a transition.
+
+\textbf{Distillium micro-proofs}: compact proofs for specific properties
+of a root or transition, used here as a placeholder for more advanced
+proofs.
+
+\subsection*{Policy and Enforcement}
+
+\textbf{TruthScript}: the policy language used by the PolicyEngine to
+decide allow, deny, or allow\_with\_actions.
+
+\textbf{Lawbook}: a curated set of policies and constraints for a tenant or
+environment, encoded in TruthScript (and, in future, CUE).
+
+\textbf{PolicyEngine}: the component inside utld that takes an EngineEvent
+and a policy and returns EngineActions (Deny, SealCurrentDig, proof
+requirements, and so on).
+
+\textbf{EngineAction}: an action produced by the PolicyEngine, such as
+Deny or SealCurrentDig.
+
+\textbf{FlowDecision}: an enum in security\_os that describes whether a
+flow should be allowed, denied, or throttled. The host agent maps
+DecisionEvents into FlowDecisions.
+
+\textbf{IsolationScope / IsolationProfile}: types in security\_os that
+describe how a process or container should be isolated (for example which
+cgroup or namespace settings to apply).
+
+\section*{How to Evaluate Your System with Ritma / UTL}
+
+This section outlines a practical way for a team to evaluate their own system
+using the current Ritma / UTL capabilities.
+
+\subsection*{1. Choose a Pilot Scope}
+
+\begin{itemize}
+  \item Pick one or two tenants (for example a non-production tenant such as
+        ``acme-sandbox'').
+  \item Choose a handful of services and flows that matter (for example
+        public API calls into an internal service, or admin actions on
+        critical data).
+  \item Register one or more roots in utld that correspond to these critical
+        areas.
+\end{itemize}
+
+\subsection*{2. Wire UTL into the Path}
+
+\begin{itemize}
+  \item Point the selected flows through utld (for example via an HTTP
+        shim, sidecar, or client library).
+  \item Ensure each RecordTransition includes tenant, DIDs, zones, and
+        relevant business fields in the parameter container.
+\end{itemize}
+
+\subsection*{3. Define an Initial Policy}
+
+\begin{itemize}
+  \item Start with a small TruthScript policy that encodes obvious rules:
+        which tenants and zones may talk, which actors may call which
+        services, and when digs should be sealed.
+  \item Run in allow-with-actions or shadow mode first, so that you collect
+        DecisionEvents and DigFiles without breaking traffic.
+\end{itemize}
+
+\subsection*{4. Generate Realistic Traffic}
+
+\begin{itemize}
+  \item Replay real traces (if available) or run normal staging / pre-prod
+        workloads through the instrumented path.
+  \item Intentionally trigger a few known-bad scenarios (for example a
+        forbidden zone crossing) to exercise deny paths and deny-forensics.
+\end{itemize}
+
+\subsection*{5. Inspect Digs and Decisions}
+
+\begin{itemize}
+  \item Use utl\_cli and the forensics HTTP API to list and inspect DigFiles
+        by tenant, root, time, and policy decision.
+  \item Check that the Merkle-rooted digs contain enough context to answer
+        "what happened" for your key scenarios.
+  \item Review DecisionEvent logs (or run security\_host) to see whether the
+        live decisions match your expectations.
+\end{itemize}
+
+\subsection*{6. Define Success Criteria}
+
+\begin{itemize}
+  \item Mean-time-to-understand (MTTU): how long it takes to reconstruct an
+        incident from DigFiles versus previous logging approaches.
+  \item Coverage: how many critical flows are now both enforced by policy and
+        recorded in digs.
+  \item Auditability: whether an external reviewer could understand the
+        policy decisions and evidence using only DigFiles, the dig index,
+        and DecisionEvents.
+\end{itemize}
+
+\subsection*{7. Iterate on Policy and Scope}
+
+\begin{itemize}
+  \item Add new rules, tenants, and flows based on what you learn.
+  \item Gradually move from pure observation to enforcement (from
+        allow-with-actions to real denies) once confidence is high.
+\end{itemize}
+
+This evaluation loop can be run in a free pilot, a scoped paid pilot, or as
+part of a broader enterprise deployment plan.
+
+\section*{Business Model and Go-To-Market}
+
+This section sketches how Ritma / UTL moves from free pilots to paid pilots
+and then to an enterprise programme, and where revenue is generated at each
+stage.
+
+\subsection*{Phase 1: Free Pilots}
+
+In the first phase we run a small number of free pilots with design partners.
+The goals are:
+
+\begin{itemize}
+  \item Prove technical fit: can UTL enforce the required policies and
+        produce usable digs and evidence bundles in their environment?
+  \item Prove operational fit: can their teams adopt the CLI, API, and
+        dashboards without excessive friction?
+  \item Co-design repeatable reference architectures for specific verticals
+        (e.g., fintech, SaaS, infra-as-a-service).
+\end{itemize}
+
+During this phase we do not charge licence or usage fees. We may, however,
+ask for:
+
+\begin{itemize}
+  \item Access to realistic traffic and policies for tuning the engine.
+  \item Rights to anonymised metrics and case studies that feed into the
+        product story.
+\end{itemize}
+
+\subsection*{Phase 2: Proofed / First Paid Pilots}
+
+Once we have proof-of-value from free pilots, we convert a subset into paid
+pilots. These are typically structured as small, time-bound engagements
+(for example 3--6 months) with clear success criteria.
+
+Possible charging models in this phase:
+
+\begin{itemize}
+  \item A fixed pilot fee that covers onboarding, policy authoring support,
+        and managed operation of the UTL stack.
+  \item Optional professional services for custom integrations (billing
+        based on days or sprints).
+  \item Usage-based components for heavy forensic storage or very high
+        decision volumes.
+\end{itemize}
+
+Customers in this phase are paying primarily for:\\
+(a) reduced incident and compliance risk and\\
+(b) faster investigations enabled by structured digs and decision events.
+
+\subsection*{Phase 3: Enterprise Programme}
+
+For enterprises that validate the pilot, we move to a programme--level
+engagement. At this stage we expect:
+
+\begin{itemize}
+  \item Multiple clusters and environments (prod, staging, regions).
+  \item Tight integration with existing SIEM, ticketing, and compliance
+        workflows.
+  \item Shared roadmaps for deeper host enforcement and governance
+        features.
+\end{itemize}
+
+Typical enterprise revenue components:
+
+\begin{itemize}
+  \item A base subscription per tenant or per cluster for the policy and
+        enforcement engine.
+  \item Volume-based pricing for decision throughput (for example number of
+        policy evaluations per month) and forensic storage consumed.
+  \item Optional premium features (advanced ZK proofs, long-term evidence
+        retention, advanced analytics) as add-on modules.
+  \item Ongoing professional services for new lawbooks, audits, or
+        migrations.
+\end{itemize}
+
+\subsection*{Why Customers Will Pay (Grounded in Current Maturity)}
+
+Even at the current stage of the codebase, customers gain concrete value:
+
+\begin{itemize}
+  \item A running utld daemon that enforces allow / deny decisions from a
+        real policy file (TruthScript) on every RecordTransition.
+  \item Automatic DigFile sealing on SealCurrentDig and on Deny actions,
+        with DigFiles written to a local dig directory and mirrored into an
+        S3--style forensics tree.
+  \item A dig index (JSONL plus optional SQLite) that records tenant, root,
+        time ranges, record counts, Merkle roots, policy decisions, and
+        storage paths.
+  \item A forensics HTTP service (utl\_forensics) that lets them filter
+        digs by tenant, root, time window, and policy decision, and fetch
+        evidence bundles over a bearer--secured API.
+  \item A DecisionEvent stream that explains why each policy fired, with a
+        host agent stub (security\_host) proving how this can drive
+        firewall / isolation controllers.
+  \item A working CLI (utl\_cli) that can list digs, inspect by file id,
+        and introspect roots and transitions using the same code paths.
+\end{itemize}
+
+Because this is backed by concrete code rather than slideware, there are
+customers who will pay earlier in the lifecycle:
+
+\begin{itemize}
+  \item Teams with painful incident forensics or audit workloads can buy a
+        paid pilot that focuses purely on DigFiles, the dig index, and the
+        forensics API, even before full host enforcement arrives.
+  \item Regulated SaaS and fintechs can justify a pilot fee because UTL
+        already produces structured, sealed evidence that shortens audits
+        and improves regulator conversations.
+  \item Security teams that currently spend days grepping logs can see
+        immediate time savings from the CLI and API, which is a direct and
+        measurable ROI.
+\end{itemize}
+
+In practice the path is:\\
+design partner (free) $\rightarrow$ proofed pilot (paid, scoped) $\rightarrow$
+enterprise programme (recurring subscription plus usage and services). This
+keeps the early stage focused on proving value while establishing clear
+surfaces where value is monetised once the product is trusted.
+
+\end{document}

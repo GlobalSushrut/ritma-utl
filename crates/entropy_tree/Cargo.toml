@@ -1,0 +1,9 @@
+[package]
+name = "entropy_tree"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core_types = { path = "../core_types" }
+tata = { path = "../tata" }
+dig_mem = { path = "../dig_mem" }

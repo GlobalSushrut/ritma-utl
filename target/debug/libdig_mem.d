@@ -1,0 +1,1 @@
+/home/umesh/Documents/connector/ritma/target/debug/libdig_mem.rlib: /home/umesh/Documents/connector/ritma/crates/clock/src/lib.rs /home/umesh/Documents/connector/ritma/crates/core_types/src/lib.rs /home/umesh/Documents/connector/ritma/crates/dig_mem/src/lib.rs /home/umesh/Documents/connector/ritma/crates/tata/src/lib.rs

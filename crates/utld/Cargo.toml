@@ -1,0 +1,28 @@
+[package]
+name = "utld"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core_types = { path = "../core_types" }
+sot_root = { path = "../sot_root" }
+clock = { path = "../clock" }
+handshake = { path = "../handshake" }
+tata = { path = "../tata" }
+dig_mem = { path = "../dig_mem" }
+entropy_tree = { path = "../entropy_tree" }
+tracer = { path = "../tracer" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+policy_engine = { path = "../policy_engine" }
+truthscript = { path = "../truthscript" }
+distillium = { path = "../distillium" }
+sha2 = "0.10"
+hmac = "0.12"
+zk_snark = { path = "../zk_snark" }
+hex = "0.4"
+dig_index = { path = "../dig_index" }
+forensics_store = { path = "../forensics_store" }
+security_events = { path = "../security_events" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

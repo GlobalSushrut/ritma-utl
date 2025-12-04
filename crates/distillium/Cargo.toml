@@ -1,0 +1,11 @@
+[package]
+name = "distillium"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core_types = { path = "../core_types" }
+clock = { path = "../clock" }
+serde = { version = "1", features = ["derive"] }
+ark-bls12-381 = "0.5"
+ark-ff = "0.5"

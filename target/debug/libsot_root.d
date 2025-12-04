@@ -1,0 +1,1 @@
+/home/umesh/Documents/connector/ritma/target/debug/libsot_root.rlib: /home/umesh/Documents/connector/ritma/crates/core_types/src/lib.rs /home/umesh/Documents/connector/ritma/crates/sot_root/src/lib.rs

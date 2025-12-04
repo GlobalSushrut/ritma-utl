@@ -1,0 +1,76 @@
+package policies
+
+// CUE instance of the ACME security firewall lawbook, checked against #Lawbook.
+
+acme_security_firewall: #Lawbook & {
+    tenant_id: "acme"
+    policy_id: "acme_security_firewall_v1"
+    version: 1
+    description: "Tenant-defined firewall/security lawbook for HTTP and auth events"
+
+    meta: {
+        category: "security"
+        domain:   "firewall"
+    }
+
+    rules: [
+        {
+            name: "geo_block_admin"
+            when: {
+                event_kind: "http_request"
+                conditions: [
+                    { kind: "field_equals", field: "path_prefix", value: "/admin" },
+                    { kind: "field_not_in", field: "client_country", values: ["CA", "US"] },
+                ]
+            }
+            action: {
+                kind: "deny"
+                reason: "geo_block_admin"
+                evidence: ["must_log"]
+            }
+        },
+        {
+            name: "rate_limit_patient_search"
+            when: {
+                event_kind: "http_request"
+                conditions: [
+                    { kind: "field_equals", field: "path", value: "/v1/patient/search" },
+                    { kind: "field_greater_equal", field: "rate_per_minute", threshold: 100.0 },
+                ]
+            }
+            action: {
+                kind: "deny"
+                reason: "rate_limit_patient_search"
+                evidence: ["seal_digfile"]
+            }
+        },
+        {
+            name: "waf_sql_injection_block"
+            when: {
+                event_kind: "http_request"
+                conditions: [
+                    { kind: "field_equals", field: "waf_detected", value: "sql_injection" },
+                ]
+            }
+            action: {
+                kind: "deny"
+                reason: "waf_sql_injection"
+                evidence: ["seal_digfile"]
+            }
+        },
+        {
+            name: "auth_bruteforce_mfa_challenge"
+            when: {
+                event_kind: "auth_attempt"
+                conditions: [
+                    { kind: "field_greater_equal", field: "failed_attempts_last_10_min", threshold: 5.0 },
+                ]
+            }
+            action: {
+                kind: "escalate"
+                reason: "bruteforce_protection"
+                evidence: ["must_log"]
+            }
+        },
+    ]
+}

@@ -1,0 +1,174 @@
+{
+  "name": "enterprise_policy",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "name": "capture_ai_calls",
+      "when": {
+        "event": "ai_call",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "model_version",
+            "value": "demo_v1"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "capture_output" },
+        { "kind": "record_field", "field": "model_version" },
+        { "kind": "require_distillium_proof" }
+      ]
+    },
+    {
+      "name": "block_high_risk_ai",
+      "when": {
+        "event": "ai_call",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "risk_bucket",
+            "value": "high"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "ai_risk_score_above_threshold"
+        },
+        { "kind": "seal_current_dig" }
+      ]
+    },
+    {
+      "name": "seal_on_error_burst",
+      "when": {
+        "event": "log_event",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "severity",
+            "value": "ERROR"
+          },
+          {
+            "kind": "count_greater_than",
+            "counter": "error_events",
+            "threshold": 10
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "seal_current_dig" },
+        { "kind": "require_snark_proof" },
+        {
+          "kind": "flag_for_investigation",
+          "reason": "error_burst_detected"
+        }
+      ]
+    },
+    {
+      "name": "capture_warn_logs",
+      "when": {
+        "event": "log_event",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "severity",
+            "value": "WARN"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "record_field", "field": "service" }
+      ]
+    },
+    {
+      "name": "capture_sensitive_reads",
+      "when": {
+        "event": "record_access",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "data_class",
+            "value": "PHI"
+          },
+          {
+            "kind": "field_equals",
+            "field": "action",
+            "value": "READ"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "record_field", "field": "actor_id" },
+        { "kind": "require_distillium_proof" }
+      ]
+    },
+    {
+      "name": "deny_unauthorized_write",
+      "when": {
+        "event": "record_access",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "action",
+            "value": "WRITE"
+          },
+          {
+            "kind": "field_equals",
+            "field": "actor_role",
+            "value": "guest"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "guest_cannot_write_sensitive_records"
+        },
+        { "kind": "seal_current_dig" }
+      ]
+    },
+    {
+      "name": "capture_large_payments",
+      "when": {
+        "event": "payment_tx",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "amount_bucket",
+            "value": "large"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "record_field", "field": "merchant_id" },
+        { "kind": "require_distillium_proof" }
+      ]
+    },
+    {
+      "name": "deny_high_risk_payments",
+      "when": {
+        "event": "payment_tx",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "risk_bucket",
+            "value": "high"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "payment_risk_score_above_threshold"
+        },
+        { "kind": "seal_current_dig" }
+      ]
+    }
+  ]
+}

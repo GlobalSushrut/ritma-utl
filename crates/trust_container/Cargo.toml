@@ -1,0 +1,9 @@
+[package]
+name = "trust_container"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core_types = { path = "../core_types" }
+distillium = { path = "../distillium" }
+serde = { version = "1", features = ["derive"] }

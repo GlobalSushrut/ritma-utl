@@ -1,0 +1,49 @@
+{
+  "name": "log_hardening_policy",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "name": "seal_on_error_burst",
+      "when": {
+        "event": "log_event",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "severity",
+            "value": "ERROR"
+          },
+          {
+            "kind": "count_greater_than",
+            "counter": "error_events",
+            "threshold": 10
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "seal_current_dig" },
+        { "kind": "require_snark_proof" },
+        {
+          "kind": "flag_for_investigation",
+          "reason": "error_burst_detected"
+        }
+      ]
+    },
+    {
+      "name": "capture_warn_logs",
+      "when": {
+        "event": "log_event",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "severity",
+            "value": "WARN"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "record_field", "field": "service" }
+      ]
+    }
+  ]
+}

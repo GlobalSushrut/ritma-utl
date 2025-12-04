@@ -1,0 +1,45 @@
+{
+  "name": "ai_audit_policy",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "name": "capture_ai_calls",
+      "when": {
+        "event": "ai_call",
+        "conditions": [
+          {
+            "kind": "field_equals",
+            "field": "model_version",
+            "value": "demo_v1"
+          }
+        ]
+      },
+      "actions": [
+        { "kind": "capture_input" },
+        { "kind": "capture_output" },
+        { "kind": "record_field", "field": "model_version" },
+        { "kind": "require_distillium_proof" }
+      ]
+    },
+    {
+      "name": "block_high_risk_ai",
+      "when": {
+        "event": "ai_call",
+        "conditions": [
+          {
+            "kind": "field_greater_than",
+            "field": "risk_score",
+            "threshold": 0.95
+          }
+        ]
+      },
+      "actions": [
+        {
+          "kind": "deny",
+          "reason": "ai_risk_score_above_threshold"
+        },
+        { "kind": "seal_current_dig" }
+      ]
+    }
+  ]
+}
