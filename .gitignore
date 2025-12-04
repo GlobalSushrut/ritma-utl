@@ -1,0 +1,40 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock for libraries (keep for binaries)
+# Cargo.lock
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Runtime / state files
+*.sock
+utld_roots.json
+dig/
+forensics/
+dig_index.jsonl
+dig_index.sqlite
+dig_index.sqlite-shm
+dig_index.sqlite-wal
+decision_events.jsonl
+*.dig.json
+*.sig
+
+# Logs
+*.log
+
+# Environment / secrets
+.env
+.env.local
+*.key
+
+# Temporary files
+*.tmp
+*.temp
