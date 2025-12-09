@@ -4,14 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.5.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+dig_mem = { path = "../dig_mem" }
+dig_index = { path = "../dig_index" }
 utl_client = { path = "../utl_client" }
 utld = { path = "../utld" }
-serde_json = "1"
-hex = "0.4"
-truthscript = { path = "../truthscript" }
 policy_engine = { path = "../policy_engine" }
-dig_mem = { path = "../dig_mem" }
+truthscript = { path = "../truthscript" }
 tenant_policy = { path = "../tenant_policy" }
-serde = { version = "1", features = ["derive"] }
-dig_index = { path = "../dig_index" }
+zk_snark = { path = "../zk_snark" }
+core_types = { path = "../core_types" }
+hmac = "0.12"
+sha2 = "0.10"

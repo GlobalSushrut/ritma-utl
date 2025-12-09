@@ -26,4 +26,6 @@ members = [
     "crates/forensics_store",
     "crates/security_events",
     "crates/security_host",
+    "crates/utl_cue",
+    "crates/biz_api",
 ]

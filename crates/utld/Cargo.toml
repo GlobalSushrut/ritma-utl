@@ -24,5 +24,7 @@ hex = "0.4"
 dig_index = { path = "../dig_index" }
 forensics_store = { path = "../forensics_store" }
 security_events = { path = "../security_events" }
+biz_api = { path = "../biz_api" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+fs2 = "0.4"

@@ -14,3 +14,4 @@ hex = "0.4"
 security_tools = { path = "../security_tools" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+biz_api = { path = "../biz_api" }

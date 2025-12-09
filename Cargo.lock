@@ -394,6 +394,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "biz_api"
+version = "0.1.0"
+dependencies = [
+ "core_types",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -594,6 +604,8 @@ dependencies = [
 name = "dig_index"
 version = "0.1.0"
 dependencies = [
+ "core_types",
+ "fs2",
  "rusqlite",
  "serde",
  "serde_json",
@@ -745,6 +757,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -1814,16 +1836,20 @@ name = "utl_cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "core_types",
  "dig_index",
  "dig_mem",
  "hex",
+ "hmac",
  "policy_engine",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tenant_policy",
  "truthscript",
  "utl_client",
  "utld",
+ "zk_snark",
 ]
 
 [[package]]
@@ -1833,6 +1859,17 @@ dependencies = [
  "serde",
  "serde_json",
  "utld",
+]
+
+[[package]]
+name = "utl_cue"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "tenant_policy",
+ "truthscript",
 ]
 
 [[package]]
@@ -1853,6 +1890,7 @@ name = "utl_http"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "biz_api",
  "hex",
  "security_tools",
  "serde",
@@ -1868,6 +1906,7 @@ dependencies = [
 name = "utld"
 version = "0.1.0"
 dependencies = [
+ "biz_api",
  "clock",
  "core_types",
  "dig_index",
@@ -1875,6 +1914,7 @@ dependencies = [
  "distillium",
  "entropy_tree",
  "forensics_store",
+ "fs2",
  "handshake",
  "hex",
  "hmac",
@@ -1980,6 +2020,28 @@ checksum = "cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-core"
@@ -2180,5 +2242,6 @@ dependencies = [
  "ark-groth16",
  "ark-relations",
  "core_types",
+ "hex",
  "rand",
 ]

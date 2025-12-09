@@ -21,6 +21,7 @@ pub struct DecisionEvent {
     pub actor_did: Option<String>,
     pub src_zone: Option<String>,
     pub dst_zone: Option<String>,
+    pub snark_high_threat_merkle_status: Option<String>,
 }
 
 /// Append a DecisionEvent as a JSON line to the configured decision event log.

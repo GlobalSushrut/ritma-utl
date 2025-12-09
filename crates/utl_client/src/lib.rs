@@ -2,7 +2,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use utld::{NodeRequest, NodeResponse};
 
 #[derive(Debug)]

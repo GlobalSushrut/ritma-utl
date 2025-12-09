@@ -66,8 +66,12 @@ pub enum Action {
     CaptureOutput,
     /// Record an additional logical field (e.g. model_version).
     RecordField { field: String },
-    /// Require a zkSNARK proof to be generated and checked.
+    /// Require a generic zkSNARK proof to be generated and checked.
     RequireSnarkProof,
+    /// Require a zkSNARK policy evaluation proof (alias of RequireSnarkProof).
+    RequirePolicyEvalProof,
+    /// Require a zkSNARK dig inclusion proof (alias of RequireSnarkProof).
+    RequireDigInclusionProof,
     /// Hard deny / block with a reason.
     Deny { reason: String },
 }

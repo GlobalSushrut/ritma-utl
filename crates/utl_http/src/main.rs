@@ -5,9 +5,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::{extract::State, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use security_tools::{SecurityEvent, SecurityTool, ToolVerdict, Value as SecValue};
 use utl_client::UtlClient;
 use utld::{NodeRequest, NodeResponse};
+use biz_api::UsageEvent;
 
 #[derive(Clone)]
 struct AppState {
@@ -15,6 +17,7 @@ struct AppState {
     auth_token: Option<String>,
     auth_tenants: BTreeMap<String, String>,
     metrics: Arc<Metrics>,
+    usage_totals: Arc<Mutex<BTreeMap<(String, String, String), u64>>>,
 }
 
 struct Metrics {
@@ -33,6 +36,58 @@ impl Metrics {
             entropy_bins_total: AtomicU64::new(0),
         }
     }
+}
+
+async fn ingest_usage_event(
+    State(state): State<AppState>,
+    Json(ev): Json<UsageEvent>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    // Derive string keys for product and metric using serde's snake_case
+    // representation, matching what utld and biz_api already emit.
+    let product_val = serde_json::to_value(&ev.product)
+        .map_err(|e| bad_request(format!("failed to serialize product: {:?}", e)))?;
+    let metric_val = serde_json::to_value(&ev.metric)
+        .map_err(|e| bad_request(format!("failed to serialize metric: {:?}", e)))?;
+
+    let product = product_val
+        .as_str()
+        .unwrap_or("<unknown_product>")
+        .to_string();
+    let metric = metric_val
+        .as_str()
+        .unwrap_or("<unknown_metric>")
+        .to_string();
+
+    let key = (ev.tenant_id.clone(), product, metric);
+
+    {
+        let mut totals = state.usage_totals.lock().await;
+        *totals.entry(key).or_insert(0) += ev.quantity;
+    }
+
+    Ok(Json(serde_json::json!({ "status": "ok" })))
+}
+
+#[derive(Serialize)]
+struct UsageSummaryEntry {
+    tenant_id: String,
+    product: String,
+    metric: String,
+    quantity: u64,
+}
+
+async fn usage_summary(State(state): State<AppState>) -> Json<Vec<UsageSummaryEntry>> {
+    let totals = state.usage_totals.lock().await;
+    let mut entries = Vec::with_capacity(totals.len());
+    for ((tenant_id, product, metric), qty) in totals.iter() {
+        entries.push(UsageSummaryEntry {
+            tenant_id: tenant_id.clone(),
+            product: product.clone(),
+            metric: metric.clone(),
+            quantity: *qty,
+        });
+    }
+    Json(entries)
 }
 
 #[derive(Serialize)]
@@ -107,7 +162,8 @@ async fn main() {
     let auth_token = std::env::var("UTLD_API_TOKEN").ok();
     let auth_tenants = load_tenant_tokens();
     let metrics = Arc::new(Metrics::new());
-    let state = AppState { client, auth_token, auth_tenants, metrics };
+    let usage_totals = Arc::new(Mutex::new(BTreeMap::new()));
+    let state = AppState { client, auth_token, auth_tenants, metrics, usage_totals };
 
     let app = Router::new()
         .route("/health", get(health))
@@ -116,6 +172,8 @@ async fn main() {
         .route("/transitions", post(record_transition))
         .route("/dig", post(build_dig))
         .route("/entropy", post(build_entropy))
+        .route("/usage_events", post(ingest_usage_event))
+        .route("/usage_summary", get(usage_summary))
         .with_state(state);
 
     let addr: SocketAddr = std::env::var("UTLD_HTTP_ADDR")
@@ -610,6 +668,7 @@ mod tests {
             auth_token: None,
             auth_tenants,
             metrics: Arc::new(Metrics::new()),
+            usage_totals: Arc::new(Mutex::new(BTreeMap::new())),
         };
 
         let mut headers = HeaderMap::new();
@@ -632,6 +691,7 @@ mod tests {
             auth_token: None,
             auth_tenants,
             metrics: Arc::new(Metrics::new()),
+            usage_totals: Arc::new(Mutex::new(BTreeMap::new())),
         };
 
         let mut headers = HeaderMap::new();

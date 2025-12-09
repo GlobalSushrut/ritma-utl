@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
 use rusqlite::{params, Connection};
+use core_types::hash_bytes;
 
 /// Minimal index entry for a sealed DigFile.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DigIndexEntry {
     pub file_id: String,
     pub root_id: String,
@@ -13,10 +14,30 @@ pub struct DigIndexEntry {
     pub time_end: u64,
     pub record_count: usize,
     pub merkle_root: String,
+    #[serde(default)]
+    pub snark_root: Option<String>,
     pub policy_name: Option<String>,
     pub policy_version: Option<String>,
     pub policy_decision: Option<String>,
     pub storage_path: Option<String>,
+    #[serde(default)]
+    pub prev_index_hash: Option<String>,
+}
+
+fn compute_index_hash(prev: Option<&str>, line: &[u8]) -> String {
+    let mut data = Vec::new();
+    if let Some(p) = prev {
+        data.extend_from_slice(p.as_bytes());
+    }
+    data.extend_from_slice(line);
+
+    let hash = hash_bytes(&data);
+    let mut s = String::with_capacity(64);
+    for b in &hash.0 {
+        s.push_str(&format!("{:02x}", b));
+    }
+
+    s
 }
 
 /// Append a JSON line describing a DigFile to the local dig index file.
@@ -25,15 +46,36 @@ pub struct DigIndexEntry {
 /// `./dig_index.jsonl` when unset.
 pub fn append_index_entry(entry: &DigIndexEntry) -> std::io::Result<()> {
     let path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+
+    let head_path = format!("{}.head", path);
+    let prev_hash = std::fs::read_to_string(&head_path)
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    let mut chained_entry = entry.clone();
+    chained_entry.prev_index_hash = prev_hash.clone();
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)?;
+        .open(&path)?;
 
-    let line = serde_json::to_string(entry).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    use fs2::FileExt;
+
+    // Serialize appends with an advisory file lock so multiple writers cannot
+    // interleave dig index entries.
+    file.lock_exclusive()?;
+
+    let line = serde_json::to_string(&chained_entry)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
-    file.flush()?;
+    file.sync_all()?;
+
+    let current_hash = compute_index_hash(prev_hash.as_deref(), line.as_bytes());
+    if let Err(e) = std::fs::write(&head_path, format!("{}\n", current_hash)) {
+        eprintln!("failed to update dig index head {}: {}", head_path, e);
+    }
 
     // Optionally mirror entries into a local SQLite DB if UTLD_DIG_INDEX_DB is set.
     if let Ok(db_path) = std::env::var("UTLD_DIG_INDEX_DB") {

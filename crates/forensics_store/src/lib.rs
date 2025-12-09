@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
 
-use chrono::{Datelike, NaiveDateTime};
+use chrono::{Datelike, DateTime, Utc};
 
 /// Persist a DigFile JSON blob to a local filesystem "forensics" tree
 /// using an S3-style layout:
@@ -25,8 +25,8 @@ pub fn persist_dig_to_fs(
 
     // Use end of time range as the canonical timestamp for the object key.
     let ts = time_end.max(time_start);
-    let dt = NaiveDateTime::from_timestamp_opt(ts as i64, 0)
-        .unwrap_or_else(|| NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+    let dt = DateTime::<Utc>::from_timestamp(ts as i64, 0)
+        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
     let (year, month, day) = (dt.year(), dt.month(), dt.day());
 
     let mut path = PathBuf::from(base);

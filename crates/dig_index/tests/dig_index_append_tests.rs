@@ -20,10 +20,12 @@ fn append_index_entry_writes_json_line() {
         time_end: 200,
         record_count: 3,
         merkle_root: "abcd".to_string(),
+        snark_root: None,
         policy_name: Some("policy".to_string()),
         policy_version: Some("1.0.0".to_string()),
         policy_decision: Some("allow".to_string()),
         storage_path: Some("/tmp/path".to_string()),
+        prev_index_hash: None,
     };
 
     append_index_entry(&entry).expect("append_index_entry");
