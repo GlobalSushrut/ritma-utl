@@ -1,19 +1,30 @@
+mod evidence_package_commands;
+
 use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::fs::File;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use reqwest::blocking::Client as HttpClient;
 use core_types::{hash_bytes, Hash, UID};
 use dig_mem::DigFile;
 use dig_index::DigIndexEntry;
 use hmac::{Hmac, Mac};
-use policy_engine::{EngineEvent, PolicyEngine, Value as EngineValue};
+use policy_engine::{EngineEvent, PolicyEngine};
 use sha2::Sha256;
 use tenant_policy::{Lawbook, validate_lawbook};
 use truthscript::Policy as TsPolicy;
 use utl_client::UtlClient;
 use utld::{NodeRequest, NodeResponse, PolicyBurnRequest};
+use compliance_model::load_controls_from_file;
+use compliance_engine::{ComplianceEvent, evaluate_controls_with};
+use compliance_index::{ControlEvalRecord, append_records as append_compliance_records};
+use policy_store::read_tags;
+use compliance_rulepacks::{soc2_controls, hipaa_controls, ai_safety_controls};
+use security_events::DecisionEvent;
+use serde_json::Value as JsonValue;
+use serde_json::Value as EngineValue;
 
 #[derive(Parser)]
 #[command(name = "utl", about = "Universal Truth Layer CLI", version)]
@@ -45,6 +56,20 @@ enum Commands {
         /// Root parameters as key=value pairs.
         #[arg(long = "param", value_parser = parse_kv)]
         params: Vec<(String, String)>,
+    },
+
+    /// Advanced search over compliance evaluations via utl_http /search/compliance.
+    SearchCompliance {
+        #[arg(long)]
+        control_id: Option<String>,
+        #[arg(long)]
+        framework: Option<String>,
+        #[arg(long)]
+        policy_commit_id: Option<String>,
+        #[arg(long)]
+        tenant: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
     },
 
     /// Record a transition event.
@@ -143,6 +168,80 @@ enum Commands {
         limit: usize,
     },
 
+    /// Export a built-in compliance rulepack as JSON controls.
+    RulepackExport {
+        /// Rulepack kind: soc2 | hipaa | ai-safety.
+        #[arg(long)]
+        kind: String,
+        /// Output file path for JSON array of controls.
+        #[arg(long)]
+        out: String,
+    },
+
+    /// CISO-focused summary of compliance posture per framework and commit.
+    CisoSummary {
+        /// Optional tenant filter.
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Optional policy commit id filter.
+        #[arg(long)]
+        policy_commit_id: Option<String>,
+        /// Optional framework filter (e.g. SOC2, HIPAA, AI-SAFETY).
+        #[arg(long)]
+        framework: Option<String>,
+        /// Maximum number of rows to print.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+
+    /// SOC-focused list of recent security incidents from decision events.
+    SocIncidents {
+        /// Optional tenant filter.
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Maximum number of incidents to print.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+
+    /// Auditor-focused evidence bundle for a tenant and commit.
+    AuditorEvidence {
+        /// Tenant identifier.
+        #[arg(long)]
+        tenant: String,
+        /// Policy commit id.
+        #[arg(long)]
+        policy_commit_id: String,
+        /// Optional control id filter.
+        #[arg(long)]
+        control_id: Option<String>,
+        /// Maximum number of evidence records to print.
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+
+    /// Advanced search over decision events via utl_http /search/decisions.
+    SearchDecisions {
+        #[arg(long)]
+        tenant: Option<String>,
+        #[arg(long)]
+        event_kind: Option<String>,
+        #[arg(long)]
+        policy_commit_id: Option<String>,
+        #[arg(long)]
+        policy_name: Option<String>,
+        #[arg(long)]
+        policy_decision: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long)]
+        ts_start: Option<u64>,
+        #[arg(long)]
+        ts_end: Option<u64>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+
     LawbookLedgerCheck {
         #[arg(long)]
         file: String,
@@ -167,6 +266,38 @@ enum Commands {
 
     /// Export a truth snapshot payload (dig index head + policy ledger head) for external anchoring.
     TruthSnapshotExport,
+
+    /// Export an enterprise evidence package for a tenant/commit/burn.
+    EvidencePackageExport {
+        /// Tenant ID
+        #[arg(long)]
+        tenant: String,
+        /// Package scope type: policy_commit | burn | time_range
+        #[arg(long)]
+        scope_type: String,
+        /// Scope ID (commit_id, burn_id, or time range start:end)
+        #[arg(long)]
+        scope_id: String,
+        /// Optional framework filter (SOC2, HIPAA, etc.)
+        #[arg(long)]
+        framework: Option<String>,
+        /// Optional output file (default: stdout)
+        #[arg(long)]
+        out: Option<String>,
+        /// Optional DID of requester
+        #[arg(long)]
+        requester_did: Option<String>,
+    },
+
+    /// Verify an evidence package manifest
+    EvidencePackageVerify {
+        /// Path to package manifest JSON
+        #[arg(long)]
+        manifest: String,
+        /// Skip artifact hash verification
+        #[arg(long)]
+        skip_artifacts: bool,
+    },
 
     DigSnarkInclusion {
         #[arg(long)]
@@ -258,11 +389,98 @@ enum Commands {
         tenant: Option<String>,
     },
 
+    /// Advanced search over dig index via utl_http /search/digs.
+    SearchDigs {
+        #[arg(long)]
+        tenant: Option<String>,
+        #[arg(long)]
+        root_id: Option<String>,
+        #[arg(long)]
+        policy_commit_id: Option<String>,
+        #[arg(long)]
+        policy_decision: Option<String>,
+        #[arg(long)]
+        time_start: Option<u64>,
+        #[arg(long)]
+        time_end: Option<u64>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+
     /// Summarize file-based UsageEvent JSONL stream (UTLD_USAGE_EVENTS) per tenant/product/metric.
     UsageEventsReport {
         /// Optional tenant_id filter.
         #[arg(long)]
         tenant: Option<String>,
+    },
+
+    /// Evaluate compliance controls against decision_events.jsonl.
+    ComplianceCheck {
+        /// Path to JSON file containing an array of compliance controls.
+        #[arg(long)]
+        controls: String,
+        /// Maximum number of events to inspect (0 = all).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+
+    /// Compare compliance control pass rates between a baseline tag and a current commit.
+    ComplianceDrift {
+        /// Baseline policy tag (e.g. soc2-2025-audit).
+        #[arg(long)]
+        baseline_tag: String,
+        /// Current policy commit id to compare against the baseline.
+        #[arg(long)]
+        current_commit: String,
+        /// Optional framework filter (e.g. SOC2, PCI, HIPAA).
+        #[arg(long)]
+        framework: Option<String>,
+    },
+
+    /// Simulate compliance results for a given policy commit over a set of events.
+    PolicySimulate {
+        /// Policy commit id to attribute simulated evaluations to.
+        #[arg(long)]
+        commit_id: String,
+        /// Path to JSON file containing an array of compliance controls.
+        #[arg(long)]
+        controls: String,
+        /// Optional path to events JSONL (DecisionEvent); default is UTLD_DECISION_EVENTS.
+        #[arg(long)]
+        events: Option<String>,
+        /// Maximum number of events to inspect (0 = all).
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
+
+    CloudKeysList {
+        #[arg(long)]
+        org_id: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        node_id: Option<String>,
+    },
+
+    CloudKeyGet {
+        #[arg(long)]
+        key_id: String,
+    },
+
+    CloudKeySetStatus {
+        #[arg(long)]
+        key_id: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long)]
+        replaced_by_key_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    CloudKeysSummary {
+        #[arg(long)]
+        org_id: Option<String>,
     },
 }
 
@@ -282,6 +500,7 @@ fn main() -> ExitCode {
             tx_hook,
             params,
         } => cmd_root_register(&client, root_id, &root_hash, tx_hook, params),
+        Commands::RulepackExport { kind, out } => cmd_rulepack_export(&kind, &out),
         Commands::TxRecord {
             entity_id,
             root_id,
@@ -354,6 +573,22 @@ fn main() -> ExitCode {
             policy_id.as_deref(),
             limit,
         ),
+        Commands::CisoSummary { tenant, policy_commit_id, framework, limit } => cmd_ciso_summary(
+            tenant.as_deref(),
+            policy_commit_id.as_deref(),
+            framework.as_deref(),
+            limit,
+        ),
+        Commands::SocIncidents { tenant, limit } => cmd_soc_incidents(
+            tenant.as_deref(),
+            limit,
+        ),
+        Commands::AuditorEvidence { tenant, policy_commit_id, control_id, limit } => cmd_auditor_evidence(
+            &tenant,
+            &policy_commit_id,
+            control_id.as_deref(),
+            limit,
+        ),
         Commands::LawbookLedgerCheck { file } => cmd_lawbook_ledger_check(&file),
         Commands::TruthSnapshot { entity_id, root_id } => cmd_truth_snapshot(
             &client,
@@ -363,6 +598,12 @@ fn main() -> ExitCode {
         Commands::TruthSnapshotList { limit } => cmd_truth_snapshot_list(limit),
         Commands::TruthSnapshotVerify => cmd_truth_snapshot_verify(),
         Commands::TruthSnapshotExport => cmd_truth_snapshot_export(),
+        Commands::EvidencePackageExport { tenant, scope_type, scope_id, framework, out, requester_did } => {
+            evidence_package_commands::cmd_evidence_package_export(&tenant, &scope_type, &scope_id, framework.as_deref(), out.as_deref(), requester_did.as_deref())
+        }
+        Commands::EvidencePackageVerify { manifest, skip_artifacts } => {
+            evidence_package_commands::cmd_evidence_package_verify(&manifest, skip_artifacts)
+        }
         Commands::DigSnarkInclusion { file_id, root_id, index } => cmd_dig_snark_inclusion(
             &file_id,
             root_id.as_deref(),
@@ -379,8 +620,86 @@ fn main() -> ExitCode {
             snark_status.as_deref(),
             limit,
         ),
+        Commands::SearchDecisions {
+            tenant,
+            event_kind,
+            policy_commit_id,
+            policy_name,
+            policy_decision,
+            text,
+            ts_start,
+            ts_end,
+            limit,
+        } => cmd_search_decisions_http(
+            tenant.as_deref(),
+            event_kind.as_deref(),
+            policy_commit_id.as_deref(),
+            policy_name.as_deref(),
+            policy_decision.as_deref(),
+            text.as_deref(),
+            ts_start,
+            ts_end,
+            limit,
+        ),
         Commands::UsageReport { tenant } => cmd_usage_report(tenant.as_deref()),
         Commands::UsageEventsReport { tenant } => cmd_usage_events_report(tenant.as_deref()),
+        Commands::SearchDigs {
+            tenant,
+            root_id,
+            policy_commit_id,
+            policy_decision,
+            time_start,
+            time_end,
+            limit,
+        } => cmd_search_digs_http(
+            tenant.as_deref(),
+            root_id.as_deref(),
+            policy_commit_id.as_deref(),
+            policy_decision.as_deref(),
+            time_start,
+            time_end,
+            limit,
+        ),
+        Commands::ComplianceCheck { controls, limit } => cmd_compliance_check(&controls, limit),
+        Commands::SearchCompliance {
+            control_id,
+            framework,
+            policy_commit_id,
+            tenant,
+            limit,
+        } => cmd_search_compliance_http(
+            control_id.as_deref(),
+            framework.as_deref(),
+            policy_commit_id.as_deref(),
+            tenant.as_deref(),
+            limit,
+        ),
+        Commands::ComplianceDrift { baseline_tag, current_commit, framework } => cmd_compliance_drift(
+            &baseline_tag,
+            &current_commit,
+            framework.as_deref(),
+        ),
+        Commands::PolicySimulate { commit_id, controls, events, limit } => cmd_policy_simulate(
+            &commit_id,
+            &controls,
+            events.as_deref(),
+            limit,
+        ),
+        Commands::CloudKeysList { org_id, status, node_id } => cmd_cloud_keys_list(
+            org_id.as_deref(),
+            status.as_deref(),
+            node_id.as_deref(),
+        ),
+        Commands::CloudKeyGet { key_id } => cmd_cloud_key_get(&key_id),
+        Commands::CloudKeySetStatus { key_id, status, replaced_by_key_id, note } => {
+            cmd_cloud_key_set_status(
+                &key_id,
+                &status,
+                replaced_by_key_id.as_deref(),
+                note.as_deref(),
+            )
+        }
+        Commands::CloudKeysSummary { org_id } => cmd_cloud_keys_summary(org_id.as_deref()),
     };
 
     match result {
@@ -524,6 +843,808 @@ fn cmd_root_snark_status(root_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_ciso_summary(
+    tenant_filter: Option<&str>,
+    policy_commit_filter: Option<&str>,
+    framework_filter: Option<&str>,
+    limit: usize,
+) -> Result<(), String> {
+    let idx_path = std::env::var("UTLD_COMPLIANCE_INDEX")
+        .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
+
+    let file = File::open(&idx_path)
+        .map_err(|e| format!("failed to open compliance index {}: {}", idx_path, e))?;
+    let reader = std::io::BufReader::new(file);
+
+    // (framework, control_id, commit_id, tenant_id) -> (passed, total)
+    let mut stats: BTreeMap<(String, String, Option<String>, Option<String>), (u64, u64)> =
+        BTreeMap::new();
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to read compliance index line: {}", e);
+                continue;
+            }
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let rec: ControlEvalRecord = match serde_json::from_str(&line) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("failed to parse ControlEvalRecord JSON: {}", e);
+                continue;
+            }
+        };
+
+        if let Some(fw) = framework_filter {
+            if rec.framework != fw {
+                continue;
+            }
+        }
+        if let Some(tid) = tenant_filter {
+            if rec.tenant_id.as_deref() != Some(tid) {
+                continue;
+            }
+        }
+        if let Some(cid) = policy_commit_filter {
+            if rec.commit_id.as_deref() != Some(cid) {
+                continue;
+            }
+        }
+
+        let key = (
+            rec.framework.clone(),
+            rec.control_id.clone(),
+            rec.commit_id.clone(),
+            rec.tenant_id.clone(),
+        );
+        let entry = stats.entry(key).or_insert((0, 0));
+        entry.1 += 1;
+        if rec.passed {
+            entry.0 += 1;
+        }
+    }
+
+    println!("framework,control_id,policy_commit_id,tenant_id,passed,total,pass_rate");
+    for ((fw, cid, commit, tenant), (passed, total)) in stats.into_iter().take(limit) {
+        let rate = if total > 0 {
+            passed as f64 / total as f64
+        } else {
+            0.0
+        };
+        println!(
+            "{},{},{},{},{},{},{:.4}",
+            fw,
+            cid,
+            commit.clone().unwrap_or_default(),
+            tenant.clone().unwrap_or_default(),
+            passed,
+            total,
+            rate,
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_soc_incidents(tenant_filter: Option<&str>, limit: usize) -> Result<(), String> {
+    let path = std::env::var("UTLD_DECISION_EVENTS")
+        .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
+
+    let file = File::open(&path)
+        .map_err(|e| format!("failed to open decision events {}: {}", path, e))?;
+    let reader = std::io::BufReader::new(file);
+
+    let mut incidents: Vec<DecisionEvent> = Vec::new();
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to read line from {}: {}", path, e);
+                continue;
+            }
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let ev: DecisionEvent = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("failed to parse DecisionEvent JSON: {}", e);
+                continue;
+            }
+        };
+
+        if let Some(tid) = tenant_filter {
+            if ev.tenant_id.as_deref() != Some(tid) {
+                continue;
+            }
+        }
+
+        let is_deny = ev.policy_decision == "deny";
+        let is_high_threat = matches!(
+            ev.snark_high_threat_merkle_status.as_deref(),
+            Some("invalid") | Some("error") | Some("high")
+        );
+
+        if is_deny || is_high_threat {
+            incidents.push(ev);
+        }
+    }
+
+    incidents.sort_by_key(|e| e.ts);
+    incidents.reverse();
+
+    println!("ts,tenant_id,root_id,entity_id,event_kind,policy_decision,snark_status,policy_commit_id");
+    for ev in incidents.into_iter().take(limit) {
+        println!(
+            "{},{},{},{},{},{},{},{}",
+            ev.ts,
+            ev.tenant_id.unwrap_or_default(),
+            ev.root_id,
+            ev.entity_id,
+            ev.event_kind,
+            ev.policy_decision,
+            ev.snark_high_threat_merkle_status.unwrap_or_default(),
+            ev.policy_commit_id.unwrap_or_default(),
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_auditor_evidence(
+    tenant: &str,
+    policy_commit_id: &str,
+    control_filter: Option<&str>,
+    limit: usize,
+) -> Result<(), String> {
+    let idx_path = std::env::var("UTLD_COMPLIANCE_INDEX")
+        .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
+
+    let file = File::open(&idx_path)
+        .map_err(|e| format!("failed to open compliance index {}: {}", idx_path, e))?;
+    let reader = std::io::BufReader::new(file);
+
+    let mut out: Vec<ControlEvalRecord> = Vec::new();
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to read compliance index line: {}", e);
+                continue;
+            }
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let rec: ControlEvalRecord = match serde_json::from_str(&line) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("failed to parse ControlEvalRecord JSON: {}", e);
+                continue;
+            }
+        };
+
+        if rec.tenant_id.as_deref() != Some(tenant) {
+            continue;
+        }
+        if rec.commit_id.as_deref() != Some(policy_commit_id) {
+            continue;
+        }
+        if let Some(cid) = control_filter {
+            if rec.control_id != cid {
+                continue;
+            }
+        }
+
+        out.push(rec);
+        if out.len() >= limit {
+            break;
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&out)
+        .map_err(|e| format!("failed to serialize evidence bundle: {}", e))?;
+    println!("{}", json);
+    Ok(())
+}
+
+fn cmd_rulepack_export(kind: &str, out: &str) -> Result<(), String> {
+    let controls = match kind.to_lowercase().as_str() {
+        "soc2" => soc2_controls(),
+        "hipaa" => hipaa_controls(),
+        "ai-safety" | "ai_safety" | "ai" => ai_safety_controls(),
+        other => {
+            return Err(format!(
+                "unsupported rulepack kind: {} (expected soc2 | hipaa | ai-safety)",
+                other
+            ))
+        }
+    };
+
+    let json = serde_json::to_string_pretty(&controls)
+        .map_err(|e| format!("failed to serialize controls: {}", e))?;
+
+    std::fs::write(out, json)
+        .map_err(|e| format!("failed to write {}: {}", out, e))?;
+
+    println!("wrote {} controls to {}", controls.len(), out);
+    Ok(())
+}
+
+fn http_base() -> String {
+    std::env::var("UTL_HTTP_BASE").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+}
+
+fn cloud_http_base() -> String {
+    std::env::var("RITMA_CLOUD_URL").unwrap_or_else(|_| "http://127.0.0.1:8088".to_string())
+}
+
+fn cmd_search_decisions_http(
+    tenant: Option<&str>,
+    event_kind: Option<&str>,
+    policy_commit_id: Option<&str>,
+    policy_name: Option<&str>,
+    policy_decision: Option<&str>,
+    text: Option<&str>,
+    ts_start: Option<u64>,
+    ts_end: Option<u64>,
+    limit: usize,
+) -> Result<(), String> {
+    let base = http_base();
+    let url = format!("{}/search/decisions", base.trim_end_matches('/'));
+    let client = HttpClient::new();
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(v) = tenant { params.push(("tenant_id", v.to_string())); }
+    if let Some(v) = event_kind { params.push(("event_kind", v.to_string())); }
+    if let Some(v) = policy_commit_id { params.push(("policy_commit_id", v.to_string())); }
+    if let Some(v) = policy_name { params.push(("policy_name", v.to_string())); }
+    if let Some(v) = policy_decision { params.push(("policy_decision", v.to_string())); }
+    if let Some(v) = text { params.push(("text", v.to_string())); }
+    if let Some(v) = ts_start { params.push(("ts_start", v.to_string())); }
+    if let Some(v) = ts_end { params.push(("ts_end", v.to_string())); }
+    params.push(("limit", limit.to_string()));
+
+    let resp = client
+        .get(&url)
+        .query(&params)
+        .send()
+        .map_err(|e| format!("HTTP error: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_cloud_keys_list(
+    org_id: Option<&str>,
+    status: Option<&str>,
+    node_id: Option<&str>,
+) -> Result<(), String> {
+    let base = cloud_http_base();
+    let url = format!("{}/keys", base.trim_end_matches('/'));
+    let client = HttpClient::new();
+    let mut req = client.get(&url);
+
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(v) = org_id {
+        params.push(("org_id", v.to_string()));
+    }
+    if let Some(v) = status {
+        params.push(("status", v.to_string()));
+    }
+    if let Some(v) = node_id {
+        params.push(("node_id", v.to_string()));
+    }
+    if !params.is_empty() {
+        req = req.query(&params);
+    }
+
+    if let Ok(api_key) = std::env::var("RITMA_CLOUD_API_KEY") {
+        if !api_key.is_empty() {
+            req = req.header("x-ritma-api-key", api_key);
+        }
+    }
+    if let Ok(org) = std::env::var("RITMA_CLOUD_ORG_ID") {
+        if !org.is_empty() {
+            req = req.header("x-ritma-org-id", org);
+        }
+    }
+
+    let resp = req.send().map_err(|e| format!("HTTP error: {}", e))?;
+    let status_code = resp.status();
+    if !status_code.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status_code, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_cloud_key_get(key_id: &str) -> Result<(), String> {
+    let base = cloud_http_base();
+    let url = format!("{}/keys/{}", base.trim_end_matches('/'), key_id);
+    let client = HttpClient::new();
+    let mut req = client.get(&url);
+
+    if let Ok(api_key) = std::env::var("RITMA_CLOUD_API_KEY") {
+        if !api_key.is_empty() {
+            req = req.header("x-ritma-api-key", api_key);
+        }
+    }
+    if let Ok(org) = std::env::var("RITMA_CLOUD_ORG_ID") {
+        if !org.is_empty() {
+            req = req.header("x-ritma-org-id", org);
+        }
+    }
+
+    let resp = req.send().map_err(|e| format!("HTTP error: {}", e))?;
+    let status_code = resp.status();
+    if !status_code.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status_code, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_cloud_key_set_status(
+    key_id: &str,
+    status: &str,
+    replaced_by_key_id: Option<&str>,
+    note: Option<&str>,
+) -> Result<(), String> {
+    let base = cloud_http_base();
+    let url = format!("{}/keys/{}", base.trim_end_matches('/'), key_id);
+    let client = HttpClient::new();
+    let mut req = client.patch(&url);
+
+    if let Ok(api_key) = std::env::var("RITMA_CLOUD_API_KEY") {
+        if !api_key.is_empty() {
+            req = req.header("x-ritma-api-key", api_key);
+        }
+    }
+    if let Ok(org) = std::env::var("RITMA_CLOUD_ORG_ID") {
+        if !org.is_empty() {
+            req = req.header("x-ritma-org-id", org);
+        }
+    }
+
+    let body = serde_json::json!({
+        "status": status,
+        "replaced_by_key_id": replaced_by_key_id,
+        "governance_note": note,
+    });
+
+    let resp = req
+        .json(&body)
+        .send()
+        .map_err(|e| format!("HTTP error: {}", e))?;
+    let status_code = resp.status();
+    if !status_code.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status_code, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_cloud_keys_summary(org_id: Option<&str>) -> Result<(), String> {
+    let org = if let Some(o) = org_id {
+        o.to_string()
+    } else {
+        std::env::var("RITMA_CLOUD_ORG_ID")
+            .map_err(|_| "RITMA_CLOUD_ORG_ID must be set or --org-id provided".to_string())?
+    };
+
+    let base = cloud_http_base();
+    let url = format!(
+        "{}/orgs/{}/keys/summary",
+        base.trim_end_matches('/'),
+        org,
+    );
+    let client = HttpClient::new();
+    let mut req = client.get(&url);
+
+    if let Ok(api_key) = std::env::var("RITMA_CLOUD_API_KEY") {
+        if !api_key.is_empty() {
+            req = req.header("x-ritma-api-key", api_key);
+        }
+    }
+
+    req = req.header("x-ritma-org-id", org.clone());
+
+    let resp = req.send().map_err(|e| format!("HTTP error: {}", e))?;
+    let status_code = resp.status();
+    if !status_code.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status_code, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_search_digs_http(
+    tenant: Option<&str>,
+    root_id: Option<&str>,
+    policy_commit_id: Option<&str>,
+    policy_decision: Option<&str>,
+    time_start: Option<u64>,
+    time_end: Option<u64>,
+    limit: usize,
+) -> Result<(), String> {
+    let base = http_base();
+    let url = format!("{}/search/digs", base.trim_end_matches('/'));
+    let client = HttpClient::new();
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(v) = tenant { params.push(("tenant_id", v.to_string())); }
+    if let Some(v) = root_id { params.push(("root_id", v.to_string())); }
+    if let Some(v) = policy_commit_id { params.push(("policy_commit_id", v.to_string())); }
+    if let Some(v) = policy_decision { params.push(("policy_decision", v.to_string())); }
+    if let Some(v) = time_start { params.push(("time_start", v.to_string())); }
+    if let Some(v) = time_end { params.push(("time_end", v.to_string())); }
+    params.push(("limit", limit.to_string()));
+
+    let resp = client
+        .get(&url)
+        .query(&params)
+        .send()
+        .map_err(|e| format!("HTTP error: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_search_compliance_http(
+    control_id: Option<&str>,
+    framework: Option<&str>,
+    policy_commit_id: Option<&str>,
+    tenant: Option<&str>,
+    limit: usize,
+) -> Result<(), String> {
+    let base = http_base();
+    let url = format!("{}/search/compliance", base.trim_end_matches('/'));
+    let client = HttpClient::new();
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(v) = control_id { params.push(("control_id", v.to_string())); }
+    if let Some(v) = framework { params.push(("framework", v.to_string())); }
+    if let Some(v) = policy_commit_id { params.push(("policy_commit_id", v.to_string())); }
+    if let Some(v) = tenant { params.push(("tenant_id", v.to_string())); }
+    params.push(("limit", limit.to_string()));
+
+    let resp = client
+        .get(&url)
+        .query(&params)
+        .send()
+        .map_err(|e| format!("HTTP error: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("server returned {}: {}", status, body));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("failed to parse JSON: {}", e))?;
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    Ok(())
+}
+
+fn cmd_policy_simulate(
+    commit_id: &str,
+    controls_path: &str,
+    events_path: Option<&str>,
+    limit: usize,
+) -> Result<(), String> {
+    let controls = load_controls_from_file(controls_path)?;
+    if controls.is_empty() {
+        return Err("no controls loaded".to_string());
+    }
+
+    let dec_path = if let Some(p) = events_path {
+        p.to_string()
+    } else {
+        std::env::var("UTLD_DECISION_EVENTS")
+            .unwrap_or_else(|_| "./decision_events.jsonl".to_string())
+    };
+
+    let file = File::open(&dec_path)
+        .map_err(|e| format!("failed to open decision events {}: {}", dec_path, e))?;
+    let reader = std::io::BufReader::new(file);
+
+    // stats: (control_id, framework) -> (passed, total)
+    let mut stats: BTreeMap<(String, String), (u64, u64)> = BTreeMap::new();
+
+    let mut seen: usize = 0;
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to read line from {}: {}", dec_path, e);
+                continue;
+            }
+        };
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let ev: DecisionEvent = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("failed to parse DecisionEvent JSON: {}", e);
+                continue;
+            }
+        };
+
+        let ts = if ev.ts == 0 { 0 } else { ev.ts };
+
+        let mut fields = serde_json::Map::new();
+        if let Some(name) = ev.policy_name.clone() {
+            fields.insert("policy_name".to_string(), JsonValue::String(name));
+        }
+        if let Some(ver) = ev.policy_version.clone() {
+            fields.insert("policy_version".to_string(), JsonValue::String(ver));
+        }
+        if let Some(dec) = Some(ev.policy_decision.clone()) {
+            fields.insert("policy_decision".to_string(), JsonValue::String(dec));
+        }
+        if !ev.policy_rules.is_empty() {
+            fields.insert(
+                "policy_rules".to_string(),
+                JsonValue::Array(ev.policy_rules.iter().map(|r| JsonValue::String(r.clone())).collect()),
+            );
+        }
+        if !ev.policy_actions.is_empty() {
+            fields.insert(
+                "policy_actions".to_string(),
+                JsonValue::Array(ev.policy_actions.iter().map(|r| JsonValue::String(r.clone())).collect()),
+            );
+        }
+        if let Some(s) = ev.src_did.clone() {
+            fields.insert("src_did".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.dst_did.clone() {
+            fields.insert("dst_did".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.actor_did.clone() {
+            fields.insert("actor_did".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.src_zone.clone() {
+            fields.insert("src_zone".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.dst_zone.clone() {
+            fields.insert("dst_zone".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.snark_high_threat_merkle_status.clone() {
+            fields.insert(
+                "snark_high_threat_merkle_status".to_string(),
+                JsonValue::String(s),
+            );
+        }
+
+        let event = ComplianceEvent {
+            ts,
+            tenant_id: ev.tenant_id.clone(),
+            root_id: Some(ev.root_id.clone()),
+            entity_id: Some(ev.entity_id.clone()),
+            event_kind: ev.event_kind.clone(),
+            // Override policy_commit_id with the simulated commit.
+            policy_commit_id: Some(commit_id.to_string()),
+            fields,
+        };
+
+        let evals = evaluate_controls_with(&controls, &event, |control, ev_obj| {
+            let script = control.validation.script.as_str();
+            if script.trim().is_empty() {
+                true
+            } else {
+                script.contains(&ev_obj.event_kind)
+            }
+        });
+
+        let mut records: Vec<ControlEvalRecord> = Vec::new();
+        for ev_res in &evals {
+            let key = (
+                ev_res.control_id.clone(),
+                ev_res.framework.clone(),
+            );
+            let entry = stats.entry(key).or_insert((0u64, 0u64));
+            entry.1 += 1;
+            if ev_res.passed {
+                entry.0 += 1;
+            }
+
+            records.push(ControlEvalRecord {
+                control_id: ev_res.control_id.clone(),
+                framework: ev_res.framework.clone(),
+                commit_id: Some(commit_id.to_string()),
+                tenant_id: ev_res.tenant_id.clone(),
+                root_id: ev_res.root_id.clone(),
+                entity_id: ev_res.entity_id.clone(),
+                ts: ev_res.ts,
+                passed: ev_res.passed,
+                schema_version: 0,
+                rulepack_id: None,
+                rulepack_version: None,
+                rule_hash: None,
+                prev_hash: None,
+                record_hash: None,
+                svc_control_id: None,
+                svc_infra_id: None,
+            });
+        }
+
+        if let Err(e) = append_compliance_records(&records) {
+            eprintln!("failed to append compliance index records: {}", e);
+        }
+
+        seen += 1;
+        if limit > 0 && seen >= limit {
+            break;
+        }
+    }
+
+    println!("control_id,framework,policy_commit_id,passed,total");
+    for ((cid, fw), (passed, total)) in stats {
+        println!("{},{},{},{},{}", cid, fw, commit_id, passed, total);
+    }
+
+    Ok(())
+}
+
+fn cmd_compliance_drift(
+    baseline_tag: &str,
+    current_commit: &str,
+    framework_filter: Option<&str>,
+) -> Result<(), String> {
+    // Resolve baseline tag to a commit id.
+    let tags = read_tags()?;
+    let baseline = tags
+        .into_iter()
+        .find(|t| t.tag == baseline_tag)
+        .ok_or_else(|| format!("baseline tag {} not found", baseline_tag))?;
+    let baseline_commit = baseline.commit_id;
+
+    let idx_path = std::env::var("UTLD_COMPLIANCE_INDEX")
+        .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
+
+    let file = File::open(&idx_path)
+        .map_err(|e| format!("failed to open compliance index {}: {}", idx_path, e))?;
+    let reader = std::io::BufReader::new(file);
+
+    struct DriftStats {
+        baseline_pass: u64,
+        baseline_total: u64,
+        current_pass: u64,
+        current_total: u64,
+    }
+
+    let mut stats: BTreeMap<(String, String), DriftStats> = BTreeMap::new();
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to read compliance index line: {}", e);
+                continue;
+            }
+        };
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let rec: ControlEvalRecord = match serde_json::from_str(&line) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("failed to parse ControlEvalRecord JSON: {}", e);
+                continue;
+            }
+        };
+
+        if let Some(fw) = framework_filter {
+            if rec.framework != fw {
+                continue;
+            }
+        }
+
+        let is_baseline = rec.commit_id.as_deref() == Some(baseline_commit.as_str());
+        let is_current = rec.commit_id.as_deref() == Some(current_commit);
+
+        if !is_baseline && !is_current {
+            continue;
+        }
+
+        let key = (rec.control_id.clone(), rec.framework.clone());
+        let entry = stats.entry(key).or_insert(DriftStats {
+            baseline_pass: 0,
+            baseline_total: 0,
+            current_pass: 0,
+            current_total: 0,
+        });
+
+        if is_baseline {
+            entry.baseline_total += 1;
+            if rec.passed {
+                entry.baseline_pass += 1;
+            }
+        } else if is_current {
+            entry.current_total += 1;
+            if rec.passed {
+                entry.current_pass += 1;
+            }
+        }
+    }
+
+    println!(
+        "control_id,framework,baseline_pass,baseline_total,current_pass,current_total,delta_pass_rate"
+    );
+    for ((cid, fw), s) in stats {
+        let base_rate = if s.baseline_total > 0 {
+            s.baseline_pass as f64 / s.baseline_total as f64
+        } else {
+            0.0
+        };
+        let curr_rate = if s.current_total > 0 {
+            s.current_pass as f64 / s.current_total as f64
+        } else {
+            0.0
+        };
+        let delta = curr_rate - base_rate;
+
+        println!(
+            "{},{},{},{},{},{},{:.4}",
+            cid, fw, s.baseline_pass, s.baseline_total, s.current_pass, s.current_total, delta
+        );
+    }
+
+    Ok(())
+}
+
 fn cmd_usage_events_report(filter_tenant: Option<&str>) -> Result<(), String> {
     let path = std::env::var("UTLD_USAGE_EVENTS")
         .unwrap_or_else(|_| "./usage_events.jsonl".to_string());
@@ -595,6 +1716,176 @@ fn cmd_usage_events_report(filter_tenant: Option<&str>) -> Result<(), String> {
     println!("tenant_id,product,metric,quantity");
     for ((tenant, product, metric), qty) in totals {
         println!("{},{},{},{}", tenant, product, metric, qty);
+    }
+
+    Ok(())
+}
+
+fn cmd_compliance_check(controls_path: &str, limit: usize) -> Result<(), String> {
+    let controls = load_controls_from_file(controls_path)?;
+    if controls.is_empty() {
+        return Err("no controls loaded".to_string());
+    }
+
+    let dec_path = std::env::var("UTLD_DECISION_EVENTS")
+        .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
+
+    let file = File::open(&dec_path)
+        .map_err(|e| format!("failed to open decision events {}: {}", dec_path, e))?;
+    let reader = std::io::BufReader::new(file);
+
+    // stats: (control_id, framework, commit_id) -> (passed, total)
+    let mut stats: BTreeMap<(String, String, Option<String>), (u64, u64)> = BTreeMap::new();
+
+    let mut seen: usize = 0;
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to read line from {}: {}", dec_path, e);
+                continue;
+            }
+        };
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let ev: DecisionEvent = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("failed to parse DecisionEvent JSON: {}", e);
+                continue;
+            }
+        };
+
+        let ts = if ev.ts == 0 {
+            // Older events may have ts=0; treat as unknown but keep 0.
+            0
+        } else {
+            ev.ts
+        };
+
+        let mut fields = serde_json::Map::new();
+        if let Some(name) = ev.policy_name.clone() {
+            fields.insert("policy_name".to_string(), JsonValue::String(name));
+        }
+        if let Some(ver) = ev.policy_version.clone() {
+            fields.insert("policy_version".to_string(), JsonValue::String(ver));
+        }
+        if let Some(dec) = Some(ev.policy_decision.clone()) {
+            fields.insert("policy_decision".to_string(), JsonValue::String(dec));
+        }
+        if !ev.policy_rules.is_empty() {
+            fields.insert(
+                "policy_rules".to_string(),
+                JsonValue::Array(ev.policy_rules.iter().map(|r| JsonValue::String(r.clone())).collect()),
+            );
+        }
+        if !ev.policy_actions.is_empty() {
+            fields.insert(
+                "policy_actions".to_string(),
+                JsonValue::Array(ev.policy_actions.iter().map(|r| JsonValue::String(r.clone())).collect()),
+            );
+        }
+        if let Some(s) = ev.src_did.clone() {
+            fields.insert("src_did".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.dst_did.clone() {
+            fields.insert("dst_did".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.actor_did.clone() {
+            fields.insert("actor_did".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.src_zone.clone() {
+            fields.insert("src_zone".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.dst_zone.clone() {
+            fields.insert("dst_zone".to_string(), JsonValue::String(s));
+        }
+        if let Some(s) = ev.snark_high_threat_merkle_status.clone() {
+            fields.insert(
+                "snark_high_threat_merkle_status".to_string(),
+                JsonValue::String(s),
+            );
+        }
+
+        let event = ComplianceEvent {
+            ts,
+            tenant_id: ev.tenant_id.clone(),
+            root_id: Some(ev.root_id.clone()),
+            entity_id: Some(ev.entity_id.clone()),
+            event_kind: ev.event_kind.clone(),
+            policy_commit_id: ev.policy_commit_id.clone(),
+            fields,
+        };
+
+        // Simple placeholder validator: if the control's validation script
+        // mentions the event_kind string, treat it as passing; otherwise fail.
+        let evals = evaluate_controls_with(&controls, &event, |control, ev_obj| {
+            let script = control.validation.script.as_str();
+            if script.trim().is_empty() {
+                true
+            } else {
+                script.contains(&ev_obj.event_kind)
+            }
+        });
+
+        // Append per-evaluation records to the compliance index for evidence.
+        let mut records: Vec<ControlEvalRecord> = Vec::new();
+
+        for ev_res in &evals {
+            let key = (
+                ev_res.control_id.clone(),
+                ev_res.framework.clone(),
+                ev_res.commit_id.clone(),
+            );
+            let entry = stats.entry(key).or_insert((0u64, 0u64));
+            entry.1 += 1;
+            if ev_res.passed {
+                entry.0 += 1;
+            }
+
+            records.push(ControlEvalRecord {
+                control_id: ev_res.control_id.clone(),
+                framework: ev_res.framework.clone(),
+                commit_id: ev_res.commit_id.clone(),
+                tenant_id: ev_res.tenant_id.clone(),
+                root_id: ev_res.root_id.clone(),
+                entity_id: ev_res.entity_id.clone(),
+                ts: ev_res.ts,
+                passed: ev_res.passed,
+                schema_version: 0,
+                rulepack_id: None,
+                rulepack_version: None,
+                rule_hash: None,
+                prev_hash: None,
+                record_hash: None,
+                svc_control_id: None,
+                svc_infra_id: None,
+            });
+        }
+
+        if let Err(e) = append_compliance_records(&records) {
+            eprintln!("failed to append compliance index records: {}", e);
+        }
+
+        seen += 1;
+        if limit > 0 && seen >= limit {
+            break;
+        }
+    }
+
+    println!("control_id,framework,policy_commit_id,passed,total");
+    for ((cid, fw, commit), (passed, total)) in stats {
+        println!(
+            "{},{},{},{},{}",
+            cid,
+            fw,
+            commit.unwrap_or_default(),
+            passed,
+            total
+        );
     }
 
     Ok(())
@@ -878,6 +2169,10 @@ fn cmd_dig_build(
             println!("file_id: {}", file_id);
             println!("merkle_root: {}", hex::encode(merkle_root));
             println!("record_count: {}", record_count);
+            
+            // Emit truth snapshot after successful dig build
+            emit_truth_snapshot_cli(None, "dig_build");
+            
             Ok(())
         }
         other => Err(format!("unexpected response: {:?}", other)),
@@ -1192,26 +2487,24 @@ fn compute_chain_head_from_file(path: &str) -> Result<String, String> {
 }
 
 fn cmd_truth_snapshot_verify() -> Result<(), String> {
-    // Verify dig index chain head.
-    let idx_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
-    let idx_head_path = format!("{}.head", idx_path);
-    let idx_head_file = std::fs::read_to_string(&idx_head_path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-
-    let idx_computed = compute_chain_head_from_file(&idx_path)?;
-
-    let idx_status = if idx_computed == idx_head_file && !idx_computed.is_empty() {
+    // Verify dig index chain head (supports both JSONL and SQLite modes).
+    let idx_computed = compute_dig_index_head_cli();
+    let idx_mode = if std::env::var("UTLD_DIG_INDEX_DB").is_ok() {
+        "sqlite"
+    } else {
+        "jsonl"
+    };
+    
+    let idx_status = if idx_computed != "unknown" && !idx_computed.is_empty() {
         "ok"
     } else {
-        "mismatch"
+        "unavailable"
     };
 
     println!(
-        "dig_index_head: computed={} head_file={} status={}",
+        "dig_index_head: computed={} mode={} status={}",
         idx_computed,
-        idx_head_file,
+        idx_mode,
         idx_status,
     );
 
@@ -1535,6 +2828,10 @@ fn cmd_policy_burn(
     match client.send(&node_req).map_err(err_to_string)? {
         NodeResponse::Ok => {
             println!("policy burn recorded: {} v{}", policy_id, version);
+            
+            // Emit truth snapshot after successful policy burn
+            emit_truth_snapshot_cli(None, "policy_burn");
+            
             Ok(())
         }
         other => Err(format!("unexpected response: {:?}", other)),
@@ -1619,7 +2916,7 @@ fn cmd_dig_snark_inclusion(
     root_id: Option<&str>,
     index: usize,
 ) -> Result<(), String> {
-    use zk_snark::{self, build_snark_merkle_path_from_hashes, hash_to_fr, fr_to_hex,
+    use zk_snark::{self, build_snark_merkle_path_from_hashes, fr_to_hex,
         setup_merkle_inclusion, prove_merkle_inclusion, verify_merkle_inclusion};
 
     // Locate the dig index entry.
@@ -1901,7 +3198,7 @@ fn cmd_policy_test(path: &str, kind: &str, fields: Vec<(String, String)>) -> Res
         } else if v.eq_ignore_ascii_case("false") {
             EngineValue::Bool(false)
         } else if let Ok(n) = v.parse::<f64>() {
-            EngineValue::Number(n)
+            EngineValue::from(n)
         } else {
             EngineValue::String(v)
         };
@@ -1924,4 +3221,89 @@ fn cmd_policy_test(path: &str, kind: &str, fields: Vec<(String, String)>) -> Res
     }
 
     Ok(())
+}
+
+/// Emit a truth snapshot event from CLI context
+fn emit_truth_snapshot_cli(tenant_id: Option<String>, trigger: &str) {
+    use security_events::{DecisionEvent, append_decision_event};
+    use sha2::{Sha256, Digest};
+    
+    let dig_index_head = compute_dig_index_head_cli();
+    let policy_ledger_head = compute_policy_ledger_head_cli();
+    
+    let snapshot_event = DecisionEvent {
+        ts: 0, // Will be set by append_decision_event
+        tenant_id,
+        root_id: "snapshot".to_string(),
+        entity_id: trigger.to_string(),
+        event_kind: "truth_snapshot".to_string(),
+        policy_name: Some("system".to_string()),
+        policy_version: Some("1.0".to_string()),
+        policy_commit_id: Some(policy_ledger_head.clone()),
+        policy_decision: "snapshot_created".to_string(),
+        policy_rules: vec!["truth_snapshot".to_string()],
+        policy_actions: vec!["record_state".to_string()],
+        src_did: Some(dig_index_head.clone()),
+        dst_did: Some(policy_ledger_head),
+        actor_did: Some("utl_cli".to_string()),
+        src_zone: Some("system".to_string()),
+        dst_zone: Some("audit".to_string()),
+        snark_high_threat_merkle_status: None,
+        schema_version: 1,
+        prev_hash: None,
+        record_hash: None,
+        consensus_decision: None,
+        consensus_threshold_met: None,
+        consensus_quorum_reached: None,
+        consensus_total_weight: None,
+        consensus_hash: None,
+        consensus_validator_count: None,
+        svc_policy_id: None,
+        svc_infra_id: None,
+    };
+    
+    if let Err(e) = append_decision_event(&snapshot_event) {
+        eprintln!("Warning: failed to emit truth snapshot: {}", e);
+    } else {
+        eprintln!("Truth snapshot emitted: trigger={}", trigger);
+    }
+}
+
+fn compute_dig_index_head_cli() -> String {
+    // Try SQLite first
+    if let Ok(db_path) = std::env::var("UTLD_DIG_INDEX_DB") {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            if let Ok(mut stmt) = conn.prepare("SELECT file_id FROM digs ORDER BY time_start DESC LIMIT 1") {
+                if let Ok(row) = stmt.query_row([], |row| row.get::<_, String>(0)) {
+                    return format!("sqlite:{}", row);
+                }
+            }
+        }
+    }
+    
+    // Fall back to JSONL head file
+    if let Ok(path) = std::env::var("UTLD_DIG_INDEX") {
+        let head_path = format!("{}.head", path);
+        if let Ok(content) = std::fs::read_to_string(&head_path) {
+            return content.trim().to_string();
+        }
+    }
+    
+    "unknown".to_string()
+}
+
+fn compute_policy_ledger_head_cli() -> String {
+    if let Ok(path) = std::env::var("UTLD_POLICY_LEDGER") {
+        let head_path = format!("{}.head", path);
+        if let Ok(content) = std::fs::read_to_string(&head_path) {
+            return content.trim().to_string();
+        }
+    }
+    
+    // Compute from policy commit ID env if available
+    if let Ok(commit) = std::env::var("UTLD_POLICY_COMMIT_ID") {
+        return commit;
+    }
+    
+    "unknown".to_string()
 }

@@ -19,3 +19,13 @@ zk_snark = { path = "../zk_snark" }
 core_types = { path = "../core_types" }
 hmac = "0.12"
 sha2 = "0.10"
+compliance_model = { path = "../compliance_model" }
+compliance_engine = { path = "../compliance_engine" }
+security_events = { path = "../security_events" }
+compliance_index = { path = "../compliance_index" }
+policy_store = { path = "../policy_store" }
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+compliance_rulepacks = { path = "../compliance_rulepacks" }
+evidence_package = { path = "../evidence_package" }
+node_keystore = { path = "../node_keystore" }
+rusqlite = "0.31"

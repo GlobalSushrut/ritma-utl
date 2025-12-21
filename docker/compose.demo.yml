@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  ritma-demo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-demo
+    image: ritma/demo:latest
+    container_name: ritma-demo
+    environment:
+      - NAMESPACE_ID=ns://demo/dev/hello/world
+      - INDEX_DB_PATH=/data/index_db.sqlite
+    volumes:
+      - ./demo-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

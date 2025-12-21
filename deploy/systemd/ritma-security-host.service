@@ -1,0 +1,15 @@
+[Unit]
+Description=Ritma Security Host Agent
+After=network.target
+
+[Service]
+Type=simple
+# Tail the decision events file and feed it to security_host via stdin.
+ExecStart=/bin/sh -c 'SECURITY_EVENTS_PATH=- SECURITY_HOST_CGROUP_ROOT=/sys/fs/cgroup/ritma tail -F /var/log/ritma/decision_events.jsonl | /usr/local/bin/security_host'
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

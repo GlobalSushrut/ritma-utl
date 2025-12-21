@@ -28,6 +28,21 @@ cargo run -p utl_cli -- evidence-package-export --tenant acme \
   --out evidence.json
 ```
 
+### Ritma CLI additions (grounded demo + attestation)
+
+```bash
+# Grounded 8-phase demo that calls real detector APIs (truthful-by-default)
+cargo run --bin ritma_cli -- demo-enhanced
+
+# Create an attestation over a repo/file-tree and print receipt hash
+cargo run --bin ritma_cli -- attest --path . \
+  --namespace ns://demo/dev/hello/world
+```
+
+Notes:
+- Demo prints an Evidence Pack with `namespace_id`, `window_id`, `attack_graph_hash`, `evidence_pack_path`, and `receipt_hash` for verification.
+- Attribution is evidence-based by default (cluster ID, template match, TTPs, confidence). Named intel mapping can be enabled explicitly and is off by default.
+
 ---
 
 ## ✅ What's Fixed

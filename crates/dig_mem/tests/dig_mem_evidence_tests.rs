@@ -40,6 +40,10 @@ fn make_record(params: ParamBag) -> DigRecord {
         timeclock: tick,
         data_container: frame,
         hook_hash,
+        svc_commit_id: None,
+        infra_version_id: None,
+        camera_frame_id: None,
+        actor_did: None,
     }
 }
 

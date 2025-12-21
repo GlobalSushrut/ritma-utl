@@ -1,0 +1,33 @@
+{
+  "package_id": "pkg_tenant-a_1765499256",
+  "format_version": 1,
+  "created_at": 1765499256,
+  "created_by": null,
+  "tenant_id": "tenant-a",
+  "scope": {
+    "type": "time_range",
+    "time_start": 1765499191,
+    "time_end": 1765499251,
+    "framework": null
+  },
+  "chain_heads": {
+    "dig_index_head": "empty",
+    "policy_ledger_head": "865b16bc65a65b8e014df69baac38ab7f53c7e1ccf59f130db8e4f8aecfa344b",
+    "svc_ledger_head": null,
+    "burn_chain_head": null,
+    "search_events_head": null
+  },
+  "artifacts": [],
+  "security": {
+    "hash_algorithm": "sha256",
+    "package_hash": "421299c6957456fb2ba9670be03ef54c6b8f9f150e1853f2dffe918df6eec0d8",
+    "signature": {
+      "signature_type": "hmac_sha256",
+      "signature_hex": "e93c23565990aea83378d75c25ce67653a24194f3ffaacc78a138ab02d758189",
+      "signer_id": "utl_cli",
+      "signed_at": 1765499256,
+      "public_key_hex": null
+    }
+  },
+  "metadata": {}
+}

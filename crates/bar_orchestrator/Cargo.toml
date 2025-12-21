@@ -1,0 +1,25 @@
+[package]
+name = "bar_orchestrator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+common_models = { path = "../common_models" }
+index_db = { path = "../index_db" }
+proof_standards = { path = "../proof_standards" }
+security_interfaces = { path = "../security_interfaces" }
+ml_runner = { path = "../ml_runner" }
+window_summarizer = { path = "../window_summarizer" }
+attack_graph = { path = "../attack_graph" }
+judge_contracts = { path = "../judge_contracts" }
+snapshotter = { path = "../snapshotter" }
+observability = { path = "../observability" }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+
+[dev-dependencies]
+tempfile = "3"

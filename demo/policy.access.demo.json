@@ -1,0 +1,33 @@
+{
+  "kind": "access_policy",
+  "id": "demo-policy",
+  "name": "demo_security_policy",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "name": "allow_normal_flows",
+      "when": {
+        "kind": "http_request",
+        "src_zone": "public",
+        "dst_zone": "internal"
+      },
+      "then": {
+        "decision": "allow_with_actions",
+        "actions": ["seal_current_dig"]
+      }
+    },
+    {
+      "name": "deny_public_to_internal_attackers",
+      "when": {
+        "kind": "http_request",
+        "src_zone": "public",
+        "dst_zone": "internal",
+        "actor_kind": "attacker"
+      },
+      "then": {
+        "decision": "deny",
+        "actions": ["seal_current_dig", "flag_for_investigation"]
+      }
+    }
+  ]
+}

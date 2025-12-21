@@ -1,0 +1,17 @@
+[package]
+name = "bar_pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bar_powers = { path = "../bar_powers" }
+common_models = { path = "../common_models" }
+index_db = { path = "../index_db" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

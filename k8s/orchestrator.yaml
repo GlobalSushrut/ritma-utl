@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bar-orchestrator
+  namespace: ritma-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bar-orchestrator
+  template:
+    metadata:
+      labels:
+        app: bar-orchestrator
+    spec:
+      containers:
+      - name: orchestrator
+        image: ritma/bar_orchestrator:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NAMESPACE_ID
+          value: "ns://k8s/default"
+        - name: INDEX_DB_PATH
+          value: "/data/index_db.sqlite"
+        - name: TICK_SECS
+          value: "60"
+        - name: UTLD_URL
+          value: "http://utld:8088"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        hostPath:
+          path: /var/ritma/data
+          type: DirectoryOrCreate

@@ -1,0 +1,16 @@
+# Tracer sidecar (auditd fallback tailer)
+FROM rust:1.79 as builder
+WORKDIR /app
+COPY . .
+RUN cargo build -p tracer_sidecar --release
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/tracer_sidecar /usr/local/bin/tracer_sidecar
+# Read-only mount of host audit log directory required for auditd fallback
+VOLUME ["/var/log/audit"]
+VOLUME ["/data"]
+ENV AUDIT_LOG_PATH=/var/log/audit/audit.log
+ENV INDEX_DB_PATH=/data/index_db.sqlite
+ENV NAMESPACE_ID=ns://demo/dev/hello/world
+ENTRYPOINT ["/usr/local/bin/tracer_sidecar"]

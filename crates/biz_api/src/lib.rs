@@ -1,5 +1,6 @@
 use core_types::UID;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Identifier for a commercial Ritma Cloud product.
 ///
@@ -162,6 +163,128 @@ pub fn load_tenants_from_file(path: &str) -> Result<Vec<TenantConfig>, String> {
         .map_err(|e| format!("failed to parse tenants file {}: {}", path, e))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PricingRule {
+    pub plan_id: String,
+    pub metric: MetricKind,
+    pub included_quantity: u64,
+    pub unit_quantity: u64,
+    pub unit_price_cents: u64,
+    pub unit_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InvoiceLine {
+    pub metric: Option<MetricKind>,
+    pub description: String,
+    pub quantity: u64,
+    pub unit_price_cents: u64,
+    pub total_cents: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InvoiceDraft {
+    pub tenant_id: String,
+    pub plan_id: String,
+    pub period_start_ts: u64,
+    pub period_end_ts: u64,
+    pub currency: String,
+    pub base_price_cents: u64,
+    pub lines: Vec<InvoiceLine>,
+    pub subtotal_cents: u64,
+}
+
+pub fn compute_invoice_draft_for_month(
+    tenant_id: &str,
+    plan_id: &str,
+    period_start_ts: u64,
+    period_end_ts: u64,
+    currency: &str,
+    base_price_cents: u64,
+    usage: &[(ProductId, MetricKind, u64)],
+    pricing_rules: &[PricingRule],
+) -> InvoiceDraft {
+    let mut usage_by_metric: HashMap<MetricKind, u64> = HashMap::new();
+    for (_, metric, qty) in usage {
+        let entry = usage_by_metric.entry(*metric).or_insert(0);
+        *entry = entry.saturating_add(*qty);
+    }
+
+    let mut rules_by_metric: HashMap<MetricKind, &PricingRule> = HashMap::new();
+    for rule in pricing_rules {
+        if rule.plan_id == plan_id {
+            rules_by_metric.insert(rule.metric, rule);
+        }
+    }
+
+    let mut lines = Vec::new();
+    let mut subtotal_cents = base_price_cents;
+
+    if base_price_cents > 0 {
+        lines.push(InvoiceLine {
+            metric: None,
+            description: "base_subscription".to_string(),
+            quantity: 1,
+            unit_price_cents: base_price_cents,
+            total_cents: base_price_cents,
+        });
+    }
+
+    for (metric, quantity) in usage_by_metric {
+        if let Some(rule) = rules_by_metric.get(&metric) {
+            let rule = *rule;
+            if quantity <= rule.included_quantity {
+                continue;
+            }
+
+            let over_raw = quantity - rule.included_quantity;
+            let units = if rule.unit_quantity == 0 {
+                0
+            } else {
+                (over_raw + rule.unit_quantity - 1) / rule.unit_quantity
+            };
+
+            if units == 0 {
+                continue;
+            }
+
+            let line_total = units.saturating_mul(rule.unit_price_cents);
+            subtotal_cents = subtotal_cents.saturating_add(line_total);
+
+            lines.push(InvoiceLine {
+                metric: Some(metric),
+                description: rule.unit_label.clone(),
+                quantity: units,
+                unit_price_cents: rule.unit_price_cents,
+                total_cents: line_total,
+            });
+        }
+    }
+
+    InvoiceDraft {
+        tenant_id: tenant_id.to_string(),
+        plan_id: plan_id.to_string(),
+        period_start_ts,
+        period_end_ts,
+        currency: currency.to_string(),
+        base_price_cents,
+        lines,
+        subtotal_cents,
+    }
+}
+
+pub trait PaymentProvider {
+    type Error;
+
+    fn ensure_customer(&self, external_customer_id: &str) -> Result<String, Self::Error>;
+
+    fn create_invoice(
+        &self,
+        provider_customer_id: &str,
+        draft: &InvoiceDraft,
+    ) -> Result<String, Self::Error>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +368,50 @@ mod tests {
         assert_eq!(loaded_plans.len(), 1);
         assert_eq!(loaded_tenants.len(), 1);
         assert_eq!(loaded_tenants[0].tenant_id, "acme");
+    }
+
+    #[test]
+    fn compute_invoice_with_overage() {
+        let pricing = vec![PricingRule {
+            plan_id: "standard".to_string(),
+            metric: MetricKind::Decisions,
+            included_quantity: 100,
+            unit_quantity: 10,
+            unit_price_cents: 40,
+            unit_label: "decisions_per_10".to_string(),
+        }];
+
+        let usage = vec![(
+            ProductId::ManagedUtldClusters,
+            MetricKind::Decisions,
+            150u64,
+        )];
+
+        let draft = compute_invoice_draft_for_month(
+            "tenant1",
+            "standard",
+            1,
+            31,
+            "usd",
+            1_000,
+            &usage,
+            &pricing,
+        );
+
+        assert_eq!(draft.tenant_id, "tenant1");
+        assert_eq!(draft.plan_id, "standard");
+        assert_eq!(draft.base_price_cents, 1_000);
+        assert_eq!(draft.lines.len(), 2);
+
+        let overage_line = draft
+            .lines
+            .iter()
+            .find(|l| l.metric == Some(MetricKind::Decisions))
+            .unwrap();
+
+        assert_eq!(overage_line.quantity, 5);
+        assert_eq!(overage_line.unit_price_cents, 40);
+        assert_eq!(overage_line.total_cents, 200);
+        assert_eq!(draft.subtotal_cents, 1_200);
     }
 }

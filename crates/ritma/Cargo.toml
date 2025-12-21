@@ -1,0 +1,39 @@
+[package]
+name = "ritma"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ritma"
+path = "src/main.rs"
+
+[dependencies]
+# All Ritma crates unified
+common_models = { path = "../common_models" }
+index_db = { path = "../index_db" }
+bar_powers = { path = "../bar_powers" }
+bar_pipeline = { path = "../bar_pipeline" }
+namespaces = { path = "../namespaces" }
+contracts = { path = "../contracts" }
+cyber_funnel = { path = "../cyber_funnel" }
+intent_power = { path = "../intent_power" }
+proof_standards = { path = "../proof_standards" }
+middleware_adapters = { path = "../middleware_adapters" }
+bar_config = { path = "../bar_config" }
+threat_detection = { path = "../threat_detection" }
+
+# CLI dependencies
+clap = { version = "4", features = ["derive", "cargo"] }
+colored = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+# For demo server
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }

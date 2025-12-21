@@ -38,3 +38,11 @@ decision_events.jsonl
 # Temporary files
 *.tmp
 *.temp
+.local_archive/
+node_modules/
+.next/
+dist/
+build/
+bun.lockb
+pnpm-lock.yaml
+package-lock.json

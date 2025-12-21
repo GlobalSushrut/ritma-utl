@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: utl-sandbox
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: utl-http
+  namespace: utl-sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: utl-http
+  template:
+    metadata:
+      labels:
+        app: utl-http
+    spec:
+      containers:
+        - name: utl-http
+          image: ghcr.io/your-org/utl-http:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: UTLD_SOCKET
+              value: /tmp/utld.sock
+            - name: UTLD_HTTP_ADDR
+              value: 0.0.0.0:8080
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: utld-socket
+              mountPath: /tmp
+      volumes:
+        - name: utld-socket
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: utl-http
+  namespace: utl-sandbox
+spec:
+  selector:
+    app: utl-http
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

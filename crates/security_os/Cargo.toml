@@ -5,4 +5,7 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+rustls = { version = "0.21", default-features = false }
+rustls-pemfile = "1"
+x509-parser = "0.16"
 

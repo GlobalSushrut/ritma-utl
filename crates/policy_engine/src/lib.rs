@@ -1,16 +1,18 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-use truthscript::{Action, Condition, Policy, Rule};
+pub mod consensus;
+pub mod proof_validator;
+pub mod cue_integration;
+pub mod compliance_pipeline;
 
-/// Simple value type for engine events.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum Value {
-    String(String),
-    Number(f64),
-    Bool(bool),
-}
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use truthscript::{Action, Condition, Policy, Rule};
+pub use consensus::{ConsensusEngine, ConsensusVote, ConsensusResult, SignatureVerifier, NoOpVerifier, ConsensusDecision};
+pub use proof_validator::{ProofValidator, PolicyProof, ProofType};
+pub use cue_integration::{CueConfigLoader, CueConsensusConfig, CueComplianceConfig, ComplianceStage};
+pub use compliance_pipeline::{CompliancePipeline, PipelineResult, StageResult};
 
 /// Event flowing into the policy engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,11 +98,11 @@ fn condition_matches(cond: &Condition, event: &EngineEvent, counters: &mut BTree
             _ => false,
         },
         Condition::FieldGreaterThan { field, threshold } => match event.fields.get(field) {
-            Some(Value::Number(n)) => n > threshold,
+            Some(Value::Number(n)) => n.as_f64().map(|v| v > *threshold).unwrap_or(false),
             _ => false,
         },
         Condition::EntropyGreaterThan { threshold } => match event.fields.get("entropy") {
-            Some(Value::Number(n)) => n > threshold,
+            Some(Value::Number(n)) => n.as_f64().map(|v| v > *threshold).unwrap_or(false),
             _ => false,
         },
         Condition::CountGreaterThan { counter, threshold } => {
@@ -167,7 +169,7 @@ mod tests {
         let mut engine = PolicyEngine::new(policy);
 
         let mut fields = BTreeMap::new();
-        fields.insert("threat_score".to_string(), Value::Number(0.9));
+        fields.insert("threat_score".to_string(), serde_json::json!(0.9));
 
         let event = EngineEvent {
             kind: "http_request".to_string(),

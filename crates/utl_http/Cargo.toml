@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -15,3 +15,21 @@ security_tools = { path = "../security_tools" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 biz_api = { path = "../biz_api" }
+security_events = { path = "../security_events" }
+dig_index = { path = "../dig_index" }
+compliance_index = { path = "../compliance_index" }
+security_os = { path = "../security_os" }
+rustls = { version = "0.21", features = ["dangerous_configuration"], default-features = false }
+rustls-pemfile = "1"
+hyper = { version = "1", features = ["http1"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+tokio-rustls = { version = "0.24", default-features = false, features = ["logging", "tls12"] }
+tower = "0.4"
+security_kit = { path = "../security_kit" }
+evidence_package = { path = "../evidence_package" }
+node_keystore = { path = "../node_keystore" }
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
+tracing-opentelemetry = "0.32"
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }

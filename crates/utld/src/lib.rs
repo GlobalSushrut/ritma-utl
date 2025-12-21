@@ -281,6 +281,10 @@ impl UtlNode {
                 frame.wall,
             ),
             hook_hash,
+            svc_commit_id: None,
+            infra_version_id: None,
+            camera_frame_id: None,
+            actor_did: None,
         };
 
         self.records
@@ -331,6 +335,10 @@ impl UtlNode {
                 frame.wall,
             ),
             hook_hash: Hash([0u8; 32]),
+            svc_commit_id: None,
+            infra_version_id: None,
+            camera_frame_id: None,
+            actor_did: None,
         };
 
         self.records

@@ -1,5 +1,8 @@
+#[cfg(all(target_os = "linux", feature = "tls"))]
+mod tls_listener;
+
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -10,14 +13,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use core_types::{Hash, UID};
 use forensics_store::persist_dig_to_fs;
 use biz_api::{BusinessPlugin, UsageEvent, ProductId, MetricKind};
+use security_os::MtlsConfig;
 use security_events::{append_decision_event, DecisionEvent};
-use policy_engine::{EngineAction, EngineEvent, PolicyEngine, Value as EngineValue};
+use policy_engine::{EngineAction, EngineEvent, PolicyEngine};
 use truthscript::{Action as PolicyAction, Policy};
 use zk_snark::{self, Fr as SnarkFr};
 use utld::{handle_request, NodeRequest, NodeResponse, UtlNode};
 use sot_root::StateOfTruthRoot;
 use serde::Deserialize;
+use serde_json::Value as EngineValue;
 use dig_index::DigIndexEntry;
+use reqwest::blocking::Client as HttpClient;
+
+#[cfg(feature = "bar_governance")]
+use bar_core::{ObservedEvent as BarObservedEvent, VerdictDecision as BarVerdictDecision};
+#[cfg(feature = "bar_governance")]
+use bar_client::{BarClient, BarClientError};
 
 struct FileBusinessPlugin {
     path: String,
@@ -27,6 +38,211 @@ impl FileBusinessPlugin {
     fn new(path: String) -> Self {
         Self { path }
     }
+}
+
+#[cfg(feature = "bar_governance")]
+struct BarGovernance {
+    client: Option<BarClient>,
+    mode: BarGovernanceMode,
+}
+
+#[cfg(feature = "bar_governance")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarGovernanceMode {
+    Off,
+    Observe,
+    Enforce,
+}
+
+#[cfg(feature = "bar_governance")]
+impl BarGovernanceMode {
+    fn from_env() -> Self {
+        match std::env::var("UTLD_BAR_GOVERNANCE_MODE")
+            .unwrap_or_else(|_| "off".to_string())
+            .to_lowercase()
+            .as_str()
+        {
+            "observe" | "observe-only" => BarGovernanceMode::Observe,
+            "enforce" => BarGovernanceMode::Enforce,
+            _ => BarGovernanceMode::Off,
+        }
+    }
+}
+
+#[cfg(feature = "bar_governance")]
+impl Default for BarGovernance {
+    fn default() -> Self {
+        let mode = BarGovernanceMode::from_env();
+        let client = match mode {
+            BarGovernanceMode::Off => None,
+            _ => Some(BarClient::from_env()),
+        };
+        BarGovernance { client, mode }
+    }
+}
+
+#[cfg(feature = "bar_governance")]
+impl GovernanceEngine for BarGovernance {
+    fn maybe_apply(
+        &mut self,
+        req: &mut NodeRequest,
+        _node: &mut UtlNode,
+        _plugin: &Option<Arc<dyn BusinessPlugin + Send + Sync>>,
+    ) -> Option<NodeResponse> {
+        // Default behavior: BAR governance is completely disabled unless
+        // both the feature is enabled at compile time and the runtime mode
+        // is set via UTLD_BAR_GOVERNANCE_MODE.
+        if self.mode == BarGovernanceMode::Off {
+            let _ = node_request_to_bar_event(req);
+            return None;
+        }
+
+        let client = match &self.client {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    "bar_governance enabled but BarClient is not initialized; deferring to local handler"
+                );
+                let _ = node_request_to_bar_event(req);
+                return None;
+            }
+        };
+
+        let event = match node_request_to_bar_event(req) {
+            Some(ev) => ev,
+            None => {
+                // Not a transition we currently project into BAR; fall back.
+                return None;
+            }
+        };
+
+        let verdict = match client.evaluate(&event) {
+            Ok(v) => v,
+            Err(e) => {
+                match e {
+                    BarClientError::DaemonError(msg) => {
+                        tracing::warn!("BAR daemon returned error: {}", msg);
+                    }
+                    _ => {
+                        tracing::warn!("BAR client error: {}", e);
+                    }
+                }
+                // On any error, we fail open to avoid breaking UTL.
+                return None;
+            }
+        };
+
+        match self.mode {
+            BarGovernanceMode::Observe => {
+                // Observe-only: we log the verdict but do not alter behavior.
+                tracing::warn!(
+                    "BAR observe-only verdict: decision={:?} reason={:?} obligations={:?}",
+                    verdict.decision,
+                    verdict.reason,
+                    verdict.obligations,
+                );
+                None
+            }
+            BarGovernanceMode::Enforce => {
+                match verdict.decision {
+                    BarVerdictDecision::Allow => None,
+                    BarVerdictDecision::ObserveOnly => {
+                        // In enforce mode, an observe-only verdict behaves
+                        // like allow but we log it explicitly so operators
+                        // can see BAR choosing to observe instead of deny.
+                        tracing::warn!(
+                            "BAR enforce-mode observe_only verdict: reason={:?} rule_ids={:?} obligations={:?}",
+                            verdict.reason,
+                            verdict.rule_ids,
+                            verdict.obligations,
+                        );
+                        None
+                    }
+                    BarVerdictDecision::Deny => {
+                        // TODO: refine mapping into richer NodeResponse once we
+                        // have a dedicated error type for governance denials.
+                        Some(NodeResponse::Error {
+                            message: format!(
+                                "request denied by BAR governance: {}",
+                                verdict.reason.unwrap_or_else(|| "no_reason".to_string())
+                            ),
+                        })
+                    }
+                }
+            }
+            BarGovernanceMode::Off => None,
+        }
+    }
+}
+
+/// Convert a NodeRequest::RecordTransition into a BAR ObservedEvent. This is
+/// compiled only when `bar_governance` is enabled and is currently unused at
+/// runtime; it prepares the seam for BAR-backed governance.
+#[cfg(feature = "bar_governance")]
+fn node_request_to_bar_event(req: &NodeRequest) -> Option<BarObservedEvent> {
+    match req {
+        NodeRequest::RecordTransition {
+            entity_id,
+            root_id,
+            p_container,
+            logic_ref,
+            ..
+        } => {
+            let mut properties = BTreeMap::new();
+
+            // Copy all params as JSON strings for now.
+            for (k, v) in p_container.iter() {
+                properties.insert(k.clone(), serde_json::Value::String(v.clone()));
+            }
+
+            // Ensure some core fields are always present.
+            properties
+                .entry("root_id".to_string())
+                .or_insert_with(|| serde_json::Value::String(root_id.to_string()));
+            properties
+                .entry("logic_ref".to_string())
+                .or_insert_with(|| serde_json::Value::String(logic_ref.clone()));
+
+            let namespace_id = p_container
+                .get("namespace_id")
+                .cloned()
+                .unwrap_or_else(|| "default".to_string());
+
+            let kind = p_container
+                .get("event_kind")
+                .cloned()
+                .unwrap_or_else(|| "record_transition".to_string());
+
+            Some(BarObservedEvent {
+                namespace_id,
+                kind,
+                entity_id: Some(UID(*entity_id)),
+                properties,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn load_mtls_config_from_env() -> Option<MtlsConfig> {
+    let ca_bundle_path = std::env::var("UTLD_MTLS_CA").ok()?;
+    let cert_path = std::env::var("UTLD_MTLS_CERT").ok()?;
+    let key_path = std::env::var("UTLD_MTLS_KEY").ok()?;
+
+    let require_client_auth = std::env::var("UTLD_MTLS_REQUIRE_CLIENT_AUTH")
+        .ok()
+        .map(|v| {
+            let v = v.to_lowercase();
+            !(v == "0" || v == "false" || v == "no")
+        })
+        .unwrap_or(true);
+
+    Some(MtlsConfig {
+        ca_bundle_path,
+        cert_path,
+        key_path,
+        require_client_auth,
+    })
 }
 
 impl BusinessPlugin for FileBusinessPlugin {
@@ -67,6 +283,40 @@ impl BusinessPlugin for StdoutBusinessPlugin {
     }
 }
 
+struct HttpBusinessPlugin {
+    client: HttpClient,
+    url: String,
+}
+
+impl HttpBusinessPlugin {
+    fn new(url: String) -> Result<Self, String> {
+        let client = HttpClient::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .map_err(|e| format!("failed to build http client: {}", e))?;
+        Ok(Self { client, url })
+    }
+}
+
+impl BusinessPlugin for HttpBusinessPlugin {
+    fn on_usage_event(&self, event: &UsageEvent) {
+        match self.client.post(&self.url).json(event).send() {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    eprintln!(
+                        "usage http sink got non-success status {} from {}",
+                        resp.status(),
+                        self.url
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("failed to POST usage event to {}: {}", self.url, e);
+            }
+        }
+    }
+}
+
 struct CompositeBusinessPlugin {
     sinks: Vec<Arc<dyn BusinessPlugin + Send + Sync>>,
 }
@@ -88,6 +338,16 @@ impl BusinessPlugin for CompositeBusinessPlugin {
 fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
     let socket_path = std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".into());
+
+    if let Some(cfg) = load_mtls_config_from_env() {
+        tracing::info!(
+            "mtls config loaded: ca_bundle_path={}, cert_path={}, key_path={}, require_client_auth={}",
+            cfg.ca_bundle_path,
+            cfg.cert_path,
+            cfg.key_path,
+            cfg.require_client_auth,
+        );
+    }
 
     if Path::new(&socket_path).exists() {
         std::fs::remove_file(&socket_path)?;
@@ -120,6 +380,7 @@ fn main() -> std::io::Result<()> {
     // Optional business plugins for usage metering / billing.
     // - UTLD_USAGE_EVENTS=/path/usage.jsonl  -> append JSONL lines to that file
     // - UTLD_USAGE_STDOUT=1                 -> print UsageEvent JSON lines to stdout
+    // - UTLD_USAGE_HTTP_URL=http://host:port/ingest-usage -> POST UsageEvent JSON to billing_daemon
     let mut sinks: Vec<Arc<dyn BusinessPlugin + Send + Sync>> = Vec::new();
 
     if let Ok(path) = std::env::var("UTLD_USAGE_EVENTS") {
@@ -134,11 +395,39 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    if let Ok(url) = std::env::var("UTLD_USAGE_HTTP_URL") {
+        if !url.trim().is_empty() {
+            match HttpBusinessPlugin::new(url) {
+                Ok(p) => sinks.push(Arc::new(p)),
+                Err(e) => eprintln!("failed to init HttpBusinessPlugin: {}", e),
+            }
+        }
+    }
+
     let plugin: Option<Arc<dyn BusinessPlugin + Send + Sync>> = if sinks.is_empty() {
         None
     } else {
         Some(Arc::new(CompositeBusinessPlugin::new(sinks)))
     };
+
+    // Optional TCP+TLS listener.
+    #[cfg(all(target_os = "linux", feature = "tls"))]
+    if let Ok(tls_addr_str) = std::env::var("UTLD_TLS_ADDR") {
+        if let Some(cfg) = load_mtls_config_from_env() {
+            if let Ok(tls_addr) = tls_addr_str.parse() {
+                let node_tls = Arc::clone(&node);
+                let engine_tls = engine.as_ref().map(Arc::clone);
+                let plugin_tls = plugin.as_ref().map(Arc::clone);
+                thread::spawn(move || {
+                    if let Err(e) = tls_listener::start_tls_listener(tls_addr, cfg, node_tls, engine_tls, plugin_tls) {
+                        tracing::error!("TLS listener error: {}", e);
+                    }
+                });
+            } else {
+                tracing::error!("invalid UTLD_TLS_ADDR: {}", tls_addr_str);
+            }
+        }
+    }
 
     for stream in listener.incoming() {
         match stream {
@@ -216,6 +505,30 @@ fn load_roots_into_node(node: &mut UtlNode) -> std::io::Result<()> {
     Ok(())
 }
 
+trait GovernanceEngine {
+    fn maybe_apply(
+        &mut self,
+        req: &mut NodeRequest,
+        node: &mut UtlNode,
+        plugin: &Option<Arc<dyn BusinessPlugin + Send + Sync>>,
+    ) -> Option<NodeResponse>;
+}
+
+struct PolicyGovernance<'a> {
+    engine: &'a mut PolicyEngine,
+}
+
+impl<'a> GovernanceEngine for PolicyGovernance<'a> {
+    fn maybe_apply(
+        &mut self,
+        req: &mut NodeRequest,
+        node: &mut UtlNode,
+        plugin: &Option<Arc<dyn BusinessPlugin + Send + Sync>>,
+    ) -> Option<NodeResponse> {
+        enforce_policy(self.engine, req, node, plugin)
+    }
+}
+
 fn enforce_policy(
     engine: &mut PolicyEngine,
     req: &mut NodeRequest,
@@ -237,7 +550,7 @@ fn enforce_policy(
 
             for (k, v) in p_container.iter() {
                 if let Ok(n) = v.parse::<f64>() {
-                    fields.insert(k.clone(), EngineValue::Number(n));
+                    fields.insert(k.clone(), EngineValue::from(n));
                 } else {
                     fields.insert(k.clone(), EngineValue::String(v.clone()));
                 }
@@ -306,7 +619,9 @@ fn enforce_policy(
                 let src_zone = p_container.get("src_zone").cloned();
                 let dst_zone = p_container.get("dst_zone").cloned();
 
-                let mut event_rec = DecisionEvent {
+                let policy_commit_id = std::env::var("UTLD_POLICY_COMMIT_ID").ok();
+
+                let event_rec = DecisionEvent {
                     ts: 0,
                     tenant_id,
                     root_id: root_id.to_string(),
@@ -314,6 +629,7 @@ fn enforce_policy(
                     event_kind: kind.clone(),
                     policy_name: Some(policy_name.to_string()),
                     policy_version: Some(policy_version.to_string()),
+                    policy_commit_id,
                     policy_decision: decision.clone(),
                     policy_rules: rule_names.clone(),
                     policy_actions: action_kinds.clone(),
@@ -323,10 +639,28 @@ fn enforce_policy(
                     src_zone,
                     dst_zone,
                     snark_high_threat_merkle_status: snark_status,
+                    schema_version: 0,
+                    prev_hash: None,
+                    record_hash: None,
+                    consensus_decision: None,
+                    consensus_threshold_met: None,
+                    consensus_quorum_reached: None,
+                    consensus_total_weight: None,
+                    consensus_hash: None,
+                    consensus_validator_count: None,
+                    svc_policy_id: None,
+                    svc_infra_id: None,
                 };
 
                 if let Err(e) = append_decision_event(&event_rec) {
                     eprintln!("failed to append decision event: {}", e);
+                }
+                
+                // Emit truth snapshot for certain critical events
+                if action_kinds.contains(&"seal_current_dig".to_string()) 
+                    || action_kinds.contains(&"flag_for_investigation".to_string())
+                    || event_rec.policy_decision == "deny" {
+                    emit_truth_snapshot(event_rec.tenant_id.clone(), "policy_decision");
                 }
 
                 // Optional business usage hook: emit one decision usage event per
@@ -638,6 +972,18 @@ fn seal_and_index_current_dig(
                 Some(zk_snark::fr_to_hex(&fr_root))
             };
 
+            let policy_commit_id = std::env::var("UTLD_POLICY_COMMIT_ID").ok();
+
+            // Derive actor DIDs from records (unique set).
+            let mut actor_dids: Vec<String> = Vec::new();
+            for rec in &dig.dig_records {
+                if let Some(ref did) = rec.actor_did {
+                    if !actor_dids.contains(did) {
+                        actor_dids.push(did.clone());
+                    }
+                }
+            }
+
             let entry = DigIndexEntry {
                 file_id: dig.file_id.0.to_string(),
                 root_id: root_id.0.to_string(),
@@ -651,7 +997,19 @@ fn seal_and_index_current_dig(
                 policy_version,
                 policy_decision,
                 storage_path,
+                policy_commit_id,
                 prev_index_hash: None,
+                svc_commits: dig.svc_commits.clone(),
+                infra_version_id: None,
+                camera_frames: dig.camera_frames.clone(),
+                actor_dids,
+                compliance_framework: None,
+                compliance_burn_id: None,
+                file_hash: Some(hex::encode(dig.file_hash.0)),
+                compression: dig.compression.clone(),
+                encryption: dig.encryption.clone(),
+                signature: dig.signature.clone(),
+                schema_version: dig.schema_version,
             };
 
             if let Err(e) = dig_index::append_index_entry(&entry) {
@@ -757,43 +1115,209 @@ fn handle_client(
     engine: Option<Arc<Mutex<PolicyEngine>>>,
     plugin: Option<Arc<dyn BusinessPlugin + Send + Sync>>,
 ) -> std::io::Result<()> {
-    let reader = BufReader::new(stream.try_clone()?);
-    let mut writer = stream;
+    handle_client_generic(stream, node, engine, plugin, None)
+}
 
-    for line_result in reader.lines() {
-        let line = line_result?;
-        if line.trim().is_empty() {
+/// Generic client handler that optionally injects a DID into p_container.
+pub fn handle_client_with_did<S: std::io::Read + std::io::Write>(
+    stream: S,
+    node: Arc<Mutex<UtlNode>>,
+    engine: Option<Arc<Mutex<PolicyEngine>>>,
+    plugin: Option<Arc<dyn BusinessPlugin + Send + Sync>>,
+    peer_did: Option<security_os::Did>,
+) -> std::io::Result<()> {
+    handle_client_generic(stream, node, engine, plugin, peer_did)
+}
+
+fn handle_client_generic<S>(
+    mut stream: S,
+    node: Arc<Mutex<UtlNode>>,
+    engine: Option<Arc<Mutex<PolicyEngine>>>,
+    plugin: Option<Arc<dyn BusinessPlugin + Send + Sync>>,
+    peer_did: Option<security_os::Did>,
+) -> std::io::Result<()>
+where
+    S: std::io::Read + std::io::Write,
+{
+    let mut buffer = String::new();
+
+    #[cfg(feature = "bar_governance")]
+    let mut bar_gov = BarGovernance::default();
+
+    loop {
+        buffer.clear();
+
+        // Read a single line from the stream (blocking) into buffer.
+        let mut n_total = 0usize;
+        loop {
+            let mut byte = [0u8; 1];
+            let n = stream.read(&mut byte)?;
+            if n == 0 {
+                break;
+            }
+            n_total += n;
+            let b = byte[0];
+            buffer.push(b as char);
+            if b == b'\n' {
+                break;
+            }
+        }
+
+        if n_total == 0 {
+            // EOF
+            break;
+        }
+
+        let line = buffer.trim();
+        if line.is_empty() {
             continue;
         }
 
-        let mut req: NodeRequest = match serde_json::from_str(&line) {
+        let mut req: NodeRequest = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
                 let resp = NodeResponse::Error {
                     message: format!("invalid_json: {}", e),
                 };
                 let s = serde_json::to_string(&resp).unwrap();
-                writeln!(writer, "{}", s)?;
+                writeln!(&mut stream, "{}", s)?;
                 continue;
             }
         };
 
+        // Inject DID from TLS client cert into p_container if present.
+        if let Some(ref did) = peer_did {
+            if let NodeRequest::RecordTransition { ref mut p_container, .. } = req {
+                let did_str = did.as_str().to_string();
+                p_container
+                    .entry("actor_did".to_string())
+                    .or_insert_with(|| did_str.clone());
+                p_container.entry("src_did".to_string()).or_insert(did_str);
+            }
+        }
+
         let resp = {
             let mut node_guard = node.lock().unwrap();
-            if let Some(engine_arc) = engine.as_ref() {
-                let mut eng_guard = engine_arc.lock().unwrap();
-                if let Some(policy_resp) = enforce_policy(&mut *eng_guard, &mut req, &mut *node_guard, &plugin) {
-                    policy_resp
+
+            #[cfg(feature = "bar_governance")]
+            {
+                if let Some(bar_resp) = bar_gov.maybe_apply(&mut req, &mut *node_guard, &plugin) {
+                    bar_resp
+                } else {
+                    if let Some(engine_arc) = engine.as_ref() {
+                        let mut eng_guard = engine_arc.lock().unwrap();
+                        let mut gov = PolicyGovernance { engine: &mut *eng_guard };
+                        if let Some(policy_resp) = gov.maybe_apply(&mut req, &mut *node_guard, &plugin) {
+                            policy_resp
+                        } else {
+                            handle_request(&mut *node_guard, req)
+                        }
+                    } else {
+                        handle_request(&mut *node_guard, req)
+                    }
+                }
+            }
+
+            #[cfg(not(feature = "bar_governance"))]
+            {
+                if let Some(engine_arc) = engine.as_ref() {
+                    let mut eng_guard = engine_arc.lock().unwrap();
+                    let mut gov = PolicyGovernance { engine: &mut *eng_guard };
+                    if let Some(policy_resp) = gov.maybe_apply(&mut req, &mut *node_guard, &plugin) {
+                        policy_resp
+                    } else {
+                        handle_request(&mut *node_guard, req)
+                    }
                 } else {
                     handle_request(&mut *node_guard, req)
                 }
-            } else {
-                handle_request(&mut *node_guard, req)
             }
         };
         let s = serde_json::to_string(&resp).unwrap();
-        writeln!(writer, "{}", s)?;
+        writeln!(&mut stream, "{}", s)?;
     }
 
     Ok(())
+}
+
+/// Emit a truth snapshot event capturing current system state heads
+fn emit_truth_snapshot(tenant_id: Option<String>, trigger: &str) {
+    let dig_index_head = compute_dig_index_head();
+    let policy_ledger_head = compute_policy_ledger_head();
+    
+    let snapshot_event = DecisionEvent {
+        ts: 0, // Will be set by append_decision_event
+        tenant_id,
+        root_id: "snapshot".to_string(),
+        entity_id: trigger.to_string(),
+        event_kind: "truth_snapshot".to_string(),
+        policy_name: Some("system".to_string()),
+        policy_version: Some("1.0".to_string()),
+        policy_commit_id: Some(policy_ledger_head.clone()),
+        policy_decision: "snapshot_created".to_string(),
+        policy_rules: vec!["truth_snapshot".to_string()],
+        policy_actions: vec!["record_state".to_string()],
+        src_did: Some(dig_index_head.clone()),
+        dst_did: Some(policy_ledger_head),
+        actor_did: Some("utld".to_string()),
+        src_zone: Some("system".to_string()),
+        dst_zone: Some("audit".to_string()),
+        snark_high_threat_merkle_status: None,
+        schema_version: 1,
+        prev_hash: None,
+        record_hash: None,
+        consensus_decision: None,
+        consensus_threshold_met: None,
+        consensus_quorum_reached: None,
+        consensus_total_weight: None,
+        consensus_hash: None,
+        consensus_validator_count: None,
+        svc_policy_id: None,
+        svc_infra_id: None,
+    };
+    
+    if let Err(e) = append_decision_event(&snapshot_event) {
+        eprintln!("Warning: failed to emit truth snapshot: {}", e);
+    } else {
+        eprintln!("Truth snapshot emitted: trigger={}", trigger);
+    }
+}
+
+fn compute_dig_index_head() -> String {
+    // Try SQLite first
+    if let Ok(db_path) = std::env::var("UTLD_DIG_INDEX_DB") {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            if let Ok(mut stmt) = conn.prepare("SELECT file_id FROM digs ORDER BY time_start DESC LIMIT 1") {
+                if let Ok(row) = stmt.query_row([], |row| row.get::<_, String>(0)) {
+                    return format!("sqlite:{}", row);
+                }
+            }
+        }
+    }
+    
+    // Fall back to JSONL head file
+    if let Ok(path) = std::env::var("UTLD_DIG_INDEX") {
+        let head_path = format!("{}.head", path);
+        if let Ok(content) = std::fs::read_to_string(&head_path) {
+            return content.trim().to_string();
+        }
+    }
+    
+    "unknown".to_string()
+}
+
+fn compute_policy_ledger_head() -> String {
+    if let Ok(path) = std::env::var("UTLD_POLICY_LEDGER") {
+        let head_path = format!("{}.head", path);
+        if let Ok(content) = std::fs::read_to_string(&head_path) {
+            return content.trim().to_string();
+        }
+    }
+    
+    // Compute from policy commit ID env if available
+    if let Ok(commit) = std::env::var("UTLD_POLICY_COMMIT_ID") {
+        return commit;
+    }
+    
+    "unknown".to_string()
 }

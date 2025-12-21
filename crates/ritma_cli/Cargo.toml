@@ -1,0 +1,39 @@
+[package]
+name = "ritma_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+dig_mem = { path = "../dig_mem" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+evidence_package = { path = "../evidence_package" }
+node_keystore = { path = "../node_keystore" }
+bar_core = { path = "../bar_core" }
+bar_client = { path = "../bar_client" }
+index_db = { path = "../index_db" }
+chrono = { version = "0.4", features = ["serde"] }
+bar_orchestrator = { path = "../bar_orchestrator" }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+walkdir = "2"
+common_models = { path = "../common_models" }
+security_interfaces = { path = "../security_interfaces" }
+attack_graph = { path = "../attack_graph" }
+snapshotter = { path = "../snapshotter" }
+tiny_http = "0.12"
+mime_guess = "2.0"
+qrcode = { version = "0.12", features = ["image"] }
+image = { version = "0.24", default-features = false, features = ["png"] }
+
+# Phase crates used by enhanced demo
+fileless_detector = { path = "../fileless_detector" }
+ebpf_hardening = { path = "../ebpf_hardening" }
+apt_tracker = { path = "../apt_tracker" }
+container_security = { path = "../container_security" }
+memory_forensics = { path = "../memory_forensics" }
+network_analysis = { path = "../network_analysis" }
+hardware_monitor = { path = "../hardware_monitor" }
+ml_detector = { path = "../ml_detector" }

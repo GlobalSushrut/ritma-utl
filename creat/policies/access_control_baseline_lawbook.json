@@ -1,0 +1,84 @@
+{
+  "tenant_id": "baseline",
+  "policy_id": "access_control_baseline_v1",
+  "version": 1,
+  "description": "Baseline access control and admin actions lawbook for common API and admin scenarios",
+  "meta": {
+    "category": "access_control",
+    "pack": "access_control_baseline",
+    "frameworks": ["SOC2", "HIPAA", "AI-SAFETY"]
+  },
+  "rules": [
+    {
+      "name": "allow_authenticated_read_api",
+      "when": {
+        "event_kind": "record_access",
+        "conditions": [
+          { "kind": "field_equals", "field": "method", "value": "GET" },
+          { "kind": "field_equals", "field": "authn_state", "value": "authenticated" }
+        ]
+      },
+      "action": {
+        "kind": "allow",
+        "reason": "allow_authenticated_read_api",
+        "evidence": ["must_log"]
+      }
+    },
+    {
+      "name": "deny_unauthenticated_any_access",
+      "when": {
+        "event_kind": "record_access",
+        "conditions": [
+          { "kind": "field_equals", "field": "authn_state", "value": "anonymous" }
+        ]
+      },
+      "action": {
+        "kind": "deny",
+        "reason": "deny_unauthenticated_any_access",
+        "evidence": ["must_log"]
+      }
+    },
+    {
+      "name": "deny_admin_actions_from_untrusted_zones",
+      "when": {
+        "event_kind": "admin_action",
+        "conditions": [
+          { "kind": "field_equals", "field": "actor_role", "value": "admin" },
+          { "kind": "field_not_in", "field": "client_zone", "values": ["corp", "vpn"] }
+        ]
+      },
+      "action": {
+        "kind": "deny",
+        "reason": "deny_admin_from_untrusted_zone",
+        "evidence": ["seal_digfile"]
+      }
+    },
+    {
+      "name": "escalate_large_privileged_exports",
+      "when": {
+        "event_kind": "record_access",
+        "conditions": [
+          { "kind": "field_equals", "field": "resource_kind", "value": "data_export" },
+          { "kind": "field_greater_equal", "field": "bytes", "threshold": 10000000.0 }
+        ]
+      },
+      "action": {
+        "kind": "escalate",
+        "reason": "large_privileged_export",
+        "evidence": ["seal_digfile"]
+      }
+    },
+    {
+      "name": "ai_call_must_log",
+      "when": {
+        "event_kind": "ai_call",
+        "conditions": []
+      },
+      "action": {
+        "kind": "allow",
+        "reason": "ai_call_must_log",
+        "evidence": ["must_log"]
+      }
+    }
+  ]
+}

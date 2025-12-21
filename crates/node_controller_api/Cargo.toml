@@ -1,0 +1,18 @@
+[package]
+name = "node_controller_api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+core_types = { path = "../core_types" }
+tower-http = { version = "0.5", features = ["cors"] }
+thiserror = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+dig_index = { path = "../dig_index" }
+node_keystore = { path = "../node_keystore" }

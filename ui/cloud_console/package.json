@@ -1,0 +1,27 @@
+{
+  "name": "ritma-cloud-console",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "lucide-react": "0.453.0",
+    "next": "14.2.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.0",
+    "@types/react": "19.2.7",
+    "autoprefixer": "10.4.16",
+    "eslint": "8.57.0",
+    "eslint-config-next": "14.2.0",
+    "postcss": "8.4.35",
+    "tailwindcss": "3.4.0",
+    "typescript": "5.3.3"
+  }
+}

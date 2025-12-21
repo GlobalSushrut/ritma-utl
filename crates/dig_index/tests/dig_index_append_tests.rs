@@ -25,7 +25,19 @@ fn append_index_entry_writes_json_line() {
         policy_version: Some("1.0.0".to_string()),
         policy_decision: Some("allow".to_string()),
         storage_path: Some("/tmp/path".to_string()),
+        policy_commit_id: None,
         prev_index_hash: None,
+        svc_commits: vec!["svc_123".to_string()],
+        infra_version_id: Some("infra_456".to_string()),
+        camera_frames: vec!["frame_789".to_string()],
+        actor_dids: vec!["did:ritma:user:alice".to_string()],
+        compliance_framework: Some("SOC2".to_string()),
+        compliance_burn_id: Some("burn_abc".to_string()),
+        file_hash: Some("hash_def".to_string()),
+        compression: None,
+        encryption: None,
+        signature: None,
+        schema_version: 2,
     };
 
     append_index_entry(&entry).expect("append_index_entry");

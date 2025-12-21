@@ -1,13 +1,65 @@
+pub mod v2;
+pub mod v2_executor;
+
 use std::error::Error;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// High-level policy document containing multiple rules.
+/// UTF-8 Compliance Header for Universal Policy Engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyHeader {
+    /// Policy name
+    pub name: String,
+    /// Semantic version (e.g., "1.0.0")
+    pub version: String,
+    /// UTF-8 encoding declaration
+    #[serde(default = "default_encoding")]
+    pub encoding: String,
+    /// Policy author/organization
+    #[serde(default)]
+    pub author: Option<String>,
+    /// Policy description
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Compliance frameworks this policy addresses
+    #[serde(default)]
+    pub frameworks: Vec<String>,
+    /// Policy hash for integrity verification
+    #[serde(default)]
+    pub policy_hash: Option<String>,
+    /// Consensus requirement (number of validators needed)
+    #[serde(default)]
+    pub consensus_threshold: Option<u32>,
+    /// CUE schema reference for validation
+    #[serde(default)]
+    pub cue_schema: Option<String>,
+    /// Proof requirement (snark, zk, merkle, etc.)
+    #[serde(default)]
+    pub proof_type: Option<String>,
+    /// Timestamp of policy creation
+    #[serde(default)]
+    pub created_at: Option<u64>,
+    /// Signature for policy authenticity
+    #[serde(default)]
+    pub signature: Option<String>,
+}
+
+fn default_encoding() -> String {
+    "UTF-8".to_string()
+}
+
+/// High-level policy document containing multiple rules with enhanced metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
+    /// Policy header with compliance metadata
+    #[serde(default)]
+    pub header: Option<PolicyHeader>,
+    
+    // Legacy fields for backward compatibility
     pub name: String,
     pub version: String,
+    
     pub rules: Vec<Rule>,
 }
 
@@ -110,6 +162,7 @@ impl Policy {
 impl Policy {
     pub fn new(name: impl Into<String>, version: impl Into<String>, rules: Vec<Rule>) -> Self {
         Self {
+            header: None,
             name: name.into(),
             version: version.into(),
             rules,

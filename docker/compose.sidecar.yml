@@ -1,0 +1,67 @@
+version: "3.9"
+
+# Non-custodial, distributed sidecars per-namespace
+# - tracer (auditd fallback today; eBPF-capable runtime flags)
+# - bar_orchestrator (CPU ML + judge + seal via UTL)
+# - utld (truth layer)
+# - redis (hot path queue; optional today)
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    restart: unless-stopped
+
+  utld:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-utld
+    container_name: utld
+    restart: unless-stopped
+    environment:
+      # configure per your UTLD settings if needed
+      - RUST_LOG=info
+    ports:
+      - "8088:8088"
+
+  tracer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-tracer
+    container_name: tracer_sidecar
+    # eBPF-ready flags (kept even if auditd fallback is used)
+    privileged: true
+    pid: host
+    # network_mode host optional; not strictly required for auditd fallback
+    # network_mode: host
+    restart: unless-stopped
+    environment:
+      - NAMESPACE_ID=ns://demo/dev/hello/world
+      - AUDIT_LOG_PATH=/var/log/audit/audit.log
+      - INDEX_DB_PATH=/data/index_db.sqlite
+    volumes:
+      - /var/log/audit:/var/log/audit:ro
+      - sidecar-data:/data
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-orchestrator
+    container_name: bar_orchestrator
+    depends_on:
+      - tracer
+      - utld
+    restart: unless-stopped
+    environment:
+      - NAMESPACE_ID=ns://demo/dev/hello/world
+      - INDEX_DB_PATH=/data/index_db.sqlite
+      - TICK_SECS=60
+    volumes:
+      - sidecar-data:/data
+
+volumes:
+  sidecar-data:
+  
+# Notes:
+# - sidecar-data is per-namespace volume; to isolate, compose per namespace or use distinct volume names
+# - ML remains advisory; orchestrator only adjusts confidence; UTL seals proofs; no enforcement tasks are run here

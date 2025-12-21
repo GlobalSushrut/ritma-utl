@@ -1,0 +1,45 @@
+[package]
+name = "ritma_integration_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bar_core = { path = "../../crates/bar_core" }
+bar_client = { path = "../../crates/bar_client" }
+common_models = { path = "../../crates/common_models" }
+index_db = { path = "../../crates/index_db" }
+middleware_adapters = { path = "../../crates/middleware_adapters" }
+bar_pipeline = { path = "../../crates/bar_pipeline" }
+intent_power = { path = "../../crates/intent_power" }
+proof_standards = { path = "../../crates/proof_standards" }
+tempfile = "3"
+anyhow = "1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "test_mtls_did_flow"
+path = "test_mtls_did_flow.rs"
+
+[[test]]
+name = "test_tenant_isolation"
+path = "test_tenant_isolation.rs"
+
+[[test]]
+name = "test_bar_daemon_roundtrip"
+path = "test_bar_daemon_roundtrip.rs"
+
+[[test]]
+name = "test_utld_bar_integration"
+path = "test_utld_bar_integration.rs"
+
+[[test]]
+name = "test_utld_fail_open"
+path = "test_utld_fail_open.rs"
+
+[[test]]
+name = "test_full_pipeline"
+path = "test_full_pipeline.rs"

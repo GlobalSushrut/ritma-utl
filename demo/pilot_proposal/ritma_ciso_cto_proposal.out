@@ -3,3 +3,23 @@
 \BOOKMARK [1][-]{section.3}{Chapter 3: Security Posture, Threat Model, and Failure Modes}{}% 3
 \BOOKMARK [1][-]{section.4}{Chapter 4: Pilot Offer \04010-Day Demo to Paid Pilot}{}% 4
 \BOOKMARK [1][-]{section.5}{Chapter 5: Evidence, Evaluation, and Next Steps}{}% 5
+\BOOKMARK [1][-]{section.6}{Chapter 6: Demo Logs and Proof \205 What You Can Verify Today}{}% 6
+\BOOKMARK [2][-]{subsection.6.1}{Stage 1: Root Registration and Dig Build}{section.6}% 7
+\BOOKMARK [2][-]{subsection.6.2}{Stage 2: Policy Validation, Testing, and Ledger Burn}{section.6}% 8
+\BOOKMARK [2][-]{subsection.6.3}{Stage 3: SOC2 Compliance Check Over Decision Events}{section.6}% 9
+\BOOKMARK [2][-]{subsection.6.4}{Stage 4: Decision Events and Incident Detection}{section.6}% 10
+\BOOKMARK [2][-]{subsection.6.5}{Stage 5: Evidence Package Export and Verification}{section.6}% 11
+\BOOKMARK [2][-]{subsection.6.6}{Stage 6: Truth Snapshot Export and Verification}{section.6}% 12
+\BOOKMARK [2][-]{subsection.6.7}{Summary: What the Demo Proves}{section.6}% 13
+\BOOKMARK [1][-]{section.7}{Chapter 7: Command Reference \205 Try It Yourself}{}% 14
+\BOOKMARK [2][-]{subsection.7.1}{Prerequisites}{section.7}% 15
+\BOOKMARK [2][-]{subsection.7.2}{Environment Setup}{section.7}% 16
+\BOOKMARK [2][-]{subsection.7.3}{Core Commands: Roots, Transitions, and Digs}{section.7}% 17
+\BOOKMARK [2][-]{subsection.7.4}{Policy Commands: Validation, Testing, and Ledger}{section.7}% 18
+\BOOKMARK [2][-]{subsection.7.5}{Compliance Commands: Controls and Reports}{section.7}% 19
+\BOOKMARK [2][-]{subsection.7.6}{Decision Events and Incident Detection}{section.7}% 20
+\BOOKMARK [2][-]{subsection.7.7}{Evidence Package Commands}{section.7}% 21
+\BOOKMARK [2][-]{subsection.7.8}{Truth Snapshot Commands}{section.7}% 22
+\BOOKMARK [2][-]{subsection.7.9}{Running the Full Advanced Demo}{section.7}% 23
+\BOOKMARK [2][-]{subsection.7.10}{Verification Commands: Check the Proofs}{section.7}% 24
+\BOOKMARK [2][-]{subsection.7.11}{Expected Outcomes}{section.7}% 25

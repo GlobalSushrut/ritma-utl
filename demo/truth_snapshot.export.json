@@ -1,0 +1,8 @@
+{
+  "kind": "truth_snapshot_export",
+  "dig_index_path": "./dig_index.jsonl",
+  "dig_index_head": "9cdce1b1345edd0692d2b9a370efbc0036315897c6c1f0a817960145231a12cb",
+  "policy_ledger_path": "./policy_ledger.jsonl",
+  "policy_ledger_head": "865b16bc65a65b8e014df69baac38ab7f53c7e1ccf59f130db8e4f8aecfa344b",
+  "ts": 1765499257
+}

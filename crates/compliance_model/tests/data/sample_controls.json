@@ -1,0 +1,15 @@
+[
+  {
+    "control_id": "AC-3",
+    "framework": "SOC2",
+    "intent": "Ensure access to customer data is restricted.",
+    "requirements": [
+      "All data access events must be logged.",
+      "Only whitelisted services may access sensitive data."
+    ],
+    "evidence": ["transition_logs", "dig_files"],
+    "validation": {
+      "script": "event.type == \"data_access\" -> event.actor in allowed_list"
+    }
+  }
+]

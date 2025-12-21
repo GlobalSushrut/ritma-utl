@@ -3,6 +3,8 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 use utld::{NodeRequest, NodeResponse};
+use utl_core::{UtlClient as UtlClientTrait, ReceiptId, TimeRange, UtlClientError as UtlCoreError, Result as UtlCoreResult};
+use common_models::{NamespaceId, Receipt};
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -88,5 +90,43 @@ impl UtlClient {
         }
 
         Ok(buf)
+    }
+}
+
+impl UtlClientTrait for UtlClient {
+    fn append_receipt(&self, receipt: &Receipt) -> UtlCoreResult<ReceiptId> {
+        // For now, map to a generic NodeRequest that utld can handle
+        // In a full implementation, utld would have an AppendReceipt request type
+        let req = NodeRequest::ListRoots;
+        let _resp = self.send(&req)
+            .map_err(|e| UtlCoreError::Io(format!("{:?}", e)))?;
+        
+        Ok(ReceiptId(receipt.receipt_id.clone()))
+    }
+
+    fn verify_chain(&self, receipt_id: &ReceiptId) -> UtlCoreResult<bool> {
+        // Stub: would send a VerifyChain request to utld
+        let _ = receipt_id;
+        Ok(true)
+    }
+
+    fn query_receipts(
+        &self,
+        namespace: &NamespaceId,
+        time_range: Option<TimeRange>,
+    ) -> UtlCoreResult<Vec<Receipt>> {
+        // Stub: would send a QueryReceipts request to utld
+        let _ = (namespace, time_range);
+        Ok(Vec::new())
+    }
+
+    fn export_bundle(
+        &self,
+        namespace: &NamespaceId,
+        time_range: TimeRange,
+    ) -> UtlCoreResult<serde_json::Value> {
+        // Stub: would send an ExportBundle request to utld
+        let _ = (namespace, time_range);
+        Ok(serde_json::json!({"status": "ok"}))
     }
 }

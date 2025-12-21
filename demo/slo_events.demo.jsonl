@@ -1,0 +1,3 @@
+{"ts": 1733940000, "component": "connector_k8s", "operation": "dry_run", "tenant_id": "tenant-a", "target": "demo-cluster", "outcome": "ok", "latency_ms": 120, "error": null}
+{"ts": 1733940060, "component": "connector_k8s", "operation": "dry_run", "tenant_id": "tenant-a", "target": "demo-cluster", "outcome": "error", "latency_ms": 250, "error": "kubeconfig not found"}
+{"ts": 1733940120, "component": "evidence", "operation": "package", "tenant_id": "tenant-a", "target": "demo-root", "outcome": "ok", "latency_ms": 540, "error": null}

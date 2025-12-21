@@ -14,6 +14,82 @@ This repository contains the first production slice of the **Pravyom** project:
 
 ---
 
+## What Ritma Has Become (2025-12)
+
+Ritma has evolved into an end‑to‑end, evidence‑first security fabric. In addition to the UTL core, the workspace now includes:
+
+- 8 grounded detection phases as composable crates (fileless, eBPF hardening, APT tracking, container/K8s, memory forensics, network analysis, hardware, ML).
+- A BAR pipeline (policy verdicting primitives) and orchestration components.
+- Evidence packaging, indexing (SQLite/JSONL), and signing via a node keystore.
+- A CLI with a truthful‑by‑default, fully grounded enhanced demo and an attestation command that emits verifiable artifacts.
+
+This section summarizes how to experience the system quickly and verify every claim from artifacts produced during a run.
+
+### Quick Start (Grounded Demo + Attestation)
+
+```bash
+# 1) Run the grounded 8‑phase demo (invokes real crate APIs)
+cargo run --bin ritma_cli -- demo-enhanced
+
+# 2) Create a repository/file‑tree attestation and QR (optional QR via flags)
+cargo run --bin ritma_cli -- attest \
+  --path . \
+  --namespace ns://demo/dev/hello/world
+```
+
+The demo prints a final "Evidence Pack" section containing:
+
+- namespace_id, window_id
+- attack_graph_hash
+- evidence_pack_path (JSON payload written to disk)
+- receipt_hash (sha256 of the payload)
+- proof_status (generated/skipped)
+
+The demo avoids named actor claims by default. It reports evidence‑based classification (cluster ID, template match, TTP bundle, confidence). Predictive lines use conservative wording (e.g., "ransomware‑like behavior risk" + horizon) and never overstate certainty.
+
+### Module Map (high‑level)
+
+- Detectors (8 phases): `fileless_detector`, `ebpf_hardening`, `apt_tracker`, `container_security`, `memory_forensics`, `network_analysis`, `hardware_monitor`, `ml_detector`
+- BAR core: `bar_core`, `bar_orchestrator`, `bar_pipeline`, `bar_daemon`
+- Evidence + Index: `evidence_package`, `forensics_store`, `dig_index`, `index_db`
+- Keys + Identity: `node_keystore`, `handshake`
+- Compliance (alpha): `compliance_engine`, `compliance_index`, `compliance_packs`
+- CLI: `ritma_cli` (demo‑enhanced, attest)
+
+For detailed component docs, see each crate’s README where available.
+
+---
+
+### Truthful‑by‑Default Policy
+
+- Evidence‑first output. The demo and CLI avoid threat‑actor naming by default.
+- Classification is reported as:
+  - Cluster ID (e.g., campaign_a1b2c3d4)
+  - Template match (e.g., supply‑chain‑beacon‑v1)
+  - TTP bundle (MITRE ATT&CK techniques)
+  - Confidence noted with rationale (e.g., feature match + beacon regularity)
+- Predictive language is conservative (e.g., "ransomware‑like behavior risk") and includes horizon when applicable.
+
+### Verify the Evidence
+
+After running `demo-enhanced`, check the final Evidence Pack lines:
+
+1. Read the JSON: `cat <evidence_pack_path>/demo_evidence.json`
+2. Verify receipt hash:
+   - `sha256sum <evidence_pack_path>/demo_evidence.json | cut -d' ' -f1`
+   - Compare to the printed `receipt_hash`
+3. Recompute `attack_graph_hash` per the printed construction (namespace_id|window_id) if needed.
+
+To generate a repository attestation artifact:
+
+```bash
+cargo run --bin ritma_cli -- attest --path . --namespace ns://demo/dev/hello/world
+```
+
+Outputs include the attestation directory and a `sha256` receipt in the console (or JSON with `--json`).
+
+---
+
 ## High-Level Architecture
 
 At a high level, UTL does three things:

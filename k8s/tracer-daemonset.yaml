@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tracer-sidecar
+  namespace: ritma-system
+spec:
+  selector:
+    matchLabels:
+      app: tracer-sidecar
+  template:
+    metadata:
+      labels:
+        app: tracer-sidecar
+    spec:
+      hostPID: true
+      hostNetwork: true
+      containers:
+      - name: tracer
+        image: ritma/tracer_sidecar:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        env:
+        - name: NAMESPACE_ID
+          value: "ns://k8s/default"
+        - name: AUDIT_LOG_PATH
+          value: "/var/log/audit/audit.log"
+        - name: INDEX_DB_PATH
+          value: "/data/index_db.sqlite"
+        - name: PROC_ROOT
+          value: "/proc"
+        - name: PRIVACY_MODE
+          value: "hash-only"
+        volumeMounts:
+        - name: audit
+          mountPath: /var/log/audit
+          readOnly: true
+        - name: data
+          mountPath: /data
+        - name: proc
+          mountPath: /proc
+          readOnly: true
+      volumes:
+      - name: audit
+        hostPath:
+          path: /var/log/audit
+          type: DirectoryOrCreate
+      - name: data
+        hostPath:
+          path: /var/ritma/data
+          type: DirectoryOrCreate
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory

@@ -52,5 +52,28 @@ pub fn persist_dig_to_fs(
     file.write_all(dig_json.as_bytes())?;
     file.sync_all()?;
 
+    if let Ok(cold_base) = std::env::var("UTLD_FORENSICS_COLD_DIR") {
+        if !cold_base.trim().is_empty() {
+            let mut cold_path = PathBuf::from(cold_base);
+            cold_path.push(tenant);
+            cold_path.push(format!("{:04}", year));
+            cold_path.push(format!("{:02}", month));
+            cold_path.push(format!("{:02}", day));
+            if fs::create_dir_all(&cold_path).is_ok() {
+                if let Ok(meta) = fs::metadata(&cold_path) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(0o750);
+                    let _ = fs::set_permissions(&cold_path, perms);
+                }
+
+                cold_path.push(&filename);
+                if let Ok(mut cold_file) = File::create(&cold_path) {
+                    let _ = cold_file.write_all(dig_json.as_bytes());
+                    let _ = cold_file.sync_all();
+                }
+            }
+        }
+    }
+
     Ok(path.to_string_lossy().into_owned())
 }
