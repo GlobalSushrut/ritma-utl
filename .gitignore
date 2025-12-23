@@ -24,8 +24,27 @@ dig_index.sqlite
 dig_index.sqlite-shm
 dig_index.sqlite-wal
 decision_events.jsonl
+compliance_index.jsonl
+policy_ledger.jsonl
+policy_ledger.jsonl.head
 *.dig.json
 *.sig
+
+# Generated exports / demo output
+deploy-out/
+ritma-demo-out/
+ritma-report-out/
+ritma-report/
+ritma-attest-out/
+pdf/
+
+# Local archive (not for GitHub)
+.local_archive/
+
+# Local generated manifests
+ritma.compose.v1.yml
+ritma.compose.v2.yml
+ritma.sidecar.yml
 
 # Logs
 *.log

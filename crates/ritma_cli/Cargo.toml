@@ -3,6 +3,10 @@ name = "ritma_cli"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "ritma"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 dig_mem = { path = "../dig_mem" }

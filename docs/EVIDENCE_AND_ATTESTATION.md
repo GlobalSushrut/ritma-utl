@@ -38,7 +38,7 @@ Generates a canonical JSON attestation over a folder/repo, plus a receipt hash.
 - Command:
 
 ```bash
-cargo run --bin ritma_cli -- attest --path . --namespace ns://demo/dev/hello/world
+cargo run -p ritma_cli -- attest --path . --namespace ns://demo/dev/hello/world
 ```
 
 - Output:
@@ -63,7 +63,21 @@ Notes:
 - This command does not sign the attestation by default; it produces canonical JSON + a receipt hash.
 - Advanced options (QR/serve/actor/purpose) exist in code but aren’t exposed by the minimal CLI flags.
 
-## 3) Incident Packaging (separate export path)
+## 3) Runtime DNA (ritma_cli dna)
+
+Runtime DNA is a per-namespace, hash-chained commit log derived from ML windows and evidence hashes.
+
+- It is **non-custodial**: commits store hashes, not raw event payloads.
+- It is **verifiable**: each commit’s `chain_hash` is derived from (`namespace_id`, `ml_id`, `start_ts`, `end_ts`, `prev_chain_hash`, `payload_hash`).
+
+Commands:
+
+```bash
+cargo run -p ritma_cli -- dna status --namespace ns://demo/dev/hello/world
+cargo run -p ritma_cli -- dna trace --namespace ns://demo/dev/hello/world --since 10
+```
+
+## 4) Incident Packaging (separate export path)
 
 The incident packaging/signing lives in the `evidence_package` crate and related CLI flows (e.g., export-incident in other binaries). That path supports:
 

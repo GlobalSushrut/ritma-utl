@@ -12,14 +12,14 @@ Truthful-by-default. This reference covers `ritma_cli` commands currently expose
 Run the grounded 8‑phase security demo; invokes real crate APIs and prints an Evidence Pack.
 
 ```bash
-cargo run --bin ritma_cli -- demo-enhanced
+cargo run -p ritma_cli -- demo-enhanced
 ```
 
 ### attest
 Generate a canonical attestation JSON for a repository/folder and print the receipt hash.
 
 ```bash
-cargo run --bin ritma_cli -- attest --path . --namespace ns://demo/dev/hello/world
+cargo run -p ritma_cli -- attest --path . --namespace ns://demo/dev/hello/world
 ```
 
 Flags:
@@ -36,14 +36,36 @@ Read JSON events from stdin, evaluate with a no-op agent, and print decisions.
 
 ```bash
 echo '{"namespace_id":"default","kind":"event","bar_decision":"deny"}' | \
-  cargo run --bin ritma_cli -- bar-run-observe-only
+  cargo run -p ritma_cli -- bar-run-observe-only
+```
+
+### export report
+Export an auditor-readable HTML report for all ML windows overlapping a time range.
+
+```bash
+cargo run -p ritma_cli -- export report \
+  --namespace ns://demo/dev/hello/world \
+  --start <unix_seconds> \
+  --end <unix_seconds> \
+  --out ./ritma-report
+```
+
+Optional PDF generation (capability-detected):
+
+```bash
+cargo run -p ritma_cli -- export report \
+  --namespace ns://demo/dev/hello/world \
+  --start <unix_seconds> \
+  --end <unix_seconds> \
+  --out ./ritma-report \
+  --pdf
 ```
 
 ### export-proof
 Export a deterministic ProofPack (v0.1) for an ML window (when index DB is available).
 
 ```bash
-cargo run --bin ritma_cli -- export-proof --ml-id <id> --out ./out \
+cargo run -p ritma_cli -- export-proof --ml-id <id> --out ./out \
   --index-db /data/index_db.sqlite
 ```
 
@@ -51,7 +73,7 @@ cargo run --bin ritma_cli -- export-proof --ml-id <id> --out ./out \
 Build and (optionally) sign a compact incident manifest over a time range.
 
 ```bash
-cargo run --bin ritma_cli -- export-incident \
+cargo run -p ritma_cli -- export-incident \
   --tenant acme --time-start 1700000000 --time-end 1700003600 \
   --framework SOC2 --out manifest.json
 ```
@@ -65,22 +87,29 @@ Signing:
 Verify an offline ProofPack folder.
 
 ```bash
-cargo run --bin ritma_cli -- verify-proof --path ./proofpack
+cargo run -p ritma_cli -- verify-proof --path ./proofpack
 ```
 
-### diff
-Diff two ML window commits and show attack-graph/feature deltas.
+### investigate diff
+Diff two ML windows and show attack-graph/feature deltas.
 
 ```bash
-cargo run --bin ritma_cli -- diff --a <old_ml_id> --b <new_ml_id> \
+cargo run -p ritma_cli -- investigate diff --a <old_ml_id> --b <new_ml_id> \
   --index-db /data/index_db.sqlite
+```
+
+Shortcut for "diff the last two windows":
+
+```bash
+cargo run -p ritma_cli -- investigate diff --last \
+  --namespace ns://demo/dev/hello/world
 ```
 
 ### blame
 Find windows that introduced a needle (ip/proc/file).
 
 ```bash
-cargo run --bin ritma_cli -- blame --namespace ns://demo/dev/hello/world \
+cargo run -p ritma_cli -- blame --namespace ns://demo/dev/hello/world \
   --needle 1.2.3.4 --limit 10 --index-db /data/index_db.sqlite
 ```
 
@@ -88,40 +117,48 @@ cargo run --bin ritma_cli -- blame --namespace ns://demo/dev/hello/world \
 Add and list tags for ML windows.
 
 ```bash
-cargo run --bin ritma_cli -- tag-add --namespace ns://demo/dev/hello/world \
+cargo run -p ritma_cli -- tag-add --namespace ns://demo/dev/hello/world \
   --name incident/123 --ml-id <id>
 
-cargo run --bin ritma_cli -- tag-list --namespace ns://demo/dev/hello/world
+cargo run -p ritma_cli -- tag-list --namespace ns://demo/dev/hello/world
 ```
 
 ### commit-list / show-commit
 List or show ML window commits.
 
 ```bash
-cargo run --bin ritma_cli -- commit-list --namespace ns://demo/dev/hello/world --limit 5
-cargo run --bin ritma_cli -- show-commit --ml-id <id>
+cargo run -p ritma_cli -- commit-list --namespace ns://demo/dev/hello/world --limit 5
+cargo run -p ritma_cli -- show-commit --ml-id <id>
+```
+
+### dna status / dna trace
+Runtime DNA is a per-namespace, hash-chained commit log derived from windows and evidence hashes.
+
+```bash
+cargo run -p ritma_cli -- dna status --namespace ns://demo/dev/hello/world
+cargo run -p ritma_cli -- dna trace --namespace ns://demo/dev/hello/world --since 10
 ```
 
 ### init / up (sidecar templates)
 Generate and bring up local sidecar manifests (docker or k8s modes), for future live wiring.
 
 ```bash
-cargo run --bin ritma_cli -- init --output ritma.sidecar.yml --namespace ns://demo/dev/hello/world --mode docker
-cargo run --bin ritma_cli -- up --compose ritma.sidecar.yml --mode docker
+cargo run -p ritma_cli -- init --output ritma.sidecar.yml --namespace ns://demo/dev/hello/world --mode docker
+cargo run -p ritma_cli -- up --compose ritma.sidecar.yml --mode docker
 ```
 
 ### doctor
 Basic diagnostics over index DB and namespace context (scaffolding).
 
 ```bash
-cargo run --bin ritma_cli -- doctor --index-db /data/index_db.sqlite --namespace ns://demo/dev/hello/world
+cargo run -p ritma_cli -- doctor --index-db /data/index_db.sqlite --namespace ns://demo/dev/hello/world
 ```
 
 ### demo (legacy mini)
 Simulate a tiny incident and produce a simple proof.
 
 ```bash
-cargo run --bin ritma_cli -- demo --namespace ns://demo/dev/hello/world --window-secs 60
+cargo run -p ritma_cli -- demo --namespace ns://demo/dev/hello/world --window-secs 60
 ```
 
 Notes:

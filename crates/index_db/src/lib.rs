@@ -1,15 +1,11 @@
-use rusqlite::{params, Connection};
 use common_models::{
-    DecisionEvent as CmDecisionEvent,
+    hash_string_sha256, DecisionEvent as CmDecisionEvent, EvidencePackManifest as CmEvidencePack,
+    MLScore as CmMLScore, ProofPack as CmProofPack, TraceEvent as CmTraceEvent,
     Verdict as CmVerdict,
-    ProofPack as CmProofPack,
-    TraceEvent as CmTraceEvent,
-    MLScore as CmMLScore,
-    EvidencePackManifest as CmEvidencePack,
-    hash_string_sha256,
 };
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Error)]
 pub enum IndexDbError {
@@ -91,6 +87,21 @@ impl IndexDb {
                 event_id TEXT,
                 verdict_id TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS runtime_dna_chain (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                namespace_id TEXT NOT NULL,
+                ml_id TEXT NOT NULL,
+                start_ts INTEGER NOT NULL,
+                end_ts INTEGER NOT NULL,
+                payload_hash TEXT NOT NULL,
+                prev_chain_hash TEXT NOT NULL,
+                chain_hash TEXT NOT NULL,
+                chain_ts INTEGER NOT NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_dna_ns_mlid ON runtime_dna_chain(namespace_id, ml_id);
+            CREATE INDEX IF NOT EXISTS idx_runtime_dna_ns_ts ON runtime_dna_chain(namespace_id, end_ts);
 
             CREATE TABLE IF NOT EXISTS contracts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -248,7 +259,8 @@ impl IndexDb {
             public_inputs_hash: pack.public_inputs_hash.clone(),
             verification_key_id: pack.verification_key_id.clone(),
             status: status.to_string(),
-            receipt_refs: serde_json::to_value(&pack.receipt_refs).unwrap_or(serde_json::Value::Null),
+            receipt_refs: serde_json::to_value(&pack.receipt_refs)
+                .unwrap_or(serde_json::Value::Null),
             blob_ref: pack.proof_ref.clone(),
         };
         self.insert_proof_metadata(&row)
@@ -332,6 +344,18 @@ pub struct MlWindowRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeDnaCommitRow {
+    pub namespace_id: String,
+    pub ml_id: String,
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub payload_hash: String,
+    pub prev_chain_hash: String,
+    pub chain_hash: String,
+    pub chain_ts: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagRow {
     pub namespace_id: String,
     pub name: String,
@@ -406,16 +430,74 @@ impl IndexDb {
                     event_id: r.get(1)?,
                     ts: r.get(2)?,
                     event_type: r.get(3)?,
-                    actor: serde_json::from_str(&r.get::<_, String>(4)?).unwrap_or(serde_json::Value::Null),
-                    subject: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or(serde_json::Value::Null),
-                    action: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or(serde_json::Value::Null),
-                    context: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or(serde_json::Value::Null),
-                    env_stamp: serde_json::from_str(&r.get::<_, String>(8)?).unwrap_or(serde_json::Value::Null),
-                    redaction: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or(serde_json::Value::Null),
-                    stage_trace: serde_json::from_str(&r.get::<_, String>(10)?).unwrap_or(serde_json::Value::Null),
+                    actor: serde_json::from_str(&r.get::<_, String>(4)?)
+                        .unwrap_or(serde_json::Value::Null),
+                    subject: serde_json::from_str(&r.get::<_, String>(5)?)
+                        .unwrap_or(serde_json::Value::Null),
+                    action: serde_json::from_str(&r.get::<_, String>(6)?)
+                        .unwrap_or(serde_json::Value::Null),
+                    context: serde_json::from_str(&r.get::<_, String>(7)?)
+                        .unwrap_or(serde_json::Value::Null),
+                    env_stamp: serde_json::from_str(&r.get::<_, String>(8)?)
+                        .unwrap_or(serde_json::Value::Null),
+                    redaction: serde_json::from_str(&r.get::<_, String>(9)?)
+                        .unwrap_or(serde_json::Value::Null),
+                    stage_trace: serde_json::from_str(&r.get::<_, String>(10)?)
+                        .unwrap_or(serde_json::Value::Null),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    pub fn list_ml_windows_overlapping(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+        limit: i64,
+    ) -> Result<Vec<MlWindowRow>> {
+        let run = |s: i64, e: i64| -> Result<Vec<MlWindowRow>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT ml_id, namespace_id, start_ts, end_ts, final_ml_score, explain, models
+                 FROM ml_scores
+                 WHERE namespace_id = ?1 AND NOT (end_ts < ?2 OR start_ts > ?3)
+                 ORDER BY end_ts DESC
+                 LIMIT ?4",
+            )?;
+            let rows = stmt
+                .query_map(params![namespace_id, s, e, limit], |r| {
+                    Ok(MlWindowRow {
+                        ml_id: r.get(0)?,
+                        namespace_id: r.get(1)?,
+                        start_ts: r.get(2)?,
+                        end_ts: r.get(3)?,
+                        final_ml_score: r.get(4)?,
+                        explain: r.get(5).ok(),
+                        models: serde_json::from_str(&r.get::<_, String>(6)?)
+                            .unwrap_or(serde_json::json!({})),
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        };
+
+        let mut rows = run(start_ts, end_ts)?;
+
+        if rows.is_empty() {
+            // Some deployments store start/end in milliseconds while CLI inputs are unix seconds.
+            // To keep the API ergonomic, retry with a best-effort unit conversion.
+            const MS_THRESHOLD: i64 = 1_000_000_000_000; // ~2001-09-09 in milliseconds
+
+            if start_ts.abs() < MS_THRESHOLD && end_ts.abs() < MS_THRESHOLD {
+                if let (Some(s_ms), Some(e_ms)) = (start_ts.checked_mul(1000), end_ts.checked_mul(1000)) {
+                    rows = run(s_ms, e_ms)?;
+                }
+            } else {
+                rows = run(start_ts / 1000, end_ts / 1000)?;
+            }
+        }
 
         Ok(rows)
     }
@@ -544,25 +626,28 @@ impl IndexDb {
                     _ => common_models::TraceEventKind::Auth,
                 };
 
-                let actor: common_models::TraceActor = serde_json::from_str(&actor_s).unwrap_or(common_models::TraceActor {
-                    pid: 0,
-                    ppid: 0,
-                    uid: 0,
-                    gid: 0,
-                    container_id: None,
-                    service: None,
-                    build_hash: None,
-                });
-                let target: common_models::TraceTarget = serde_json::from_str(&target_s).unwrap_or(common_models::TraceTarget {
-                    path_hash: None,
-                    dst: None,
-                    domain_hash: None,
-                });
-                let attrs: common_models::TraceAttrs = serde_json::from_str(&attrs_s).unwrap_or(common_models::TraceAttrs {
-                    argv_hash: None,
-                    cwd_hash: None,
-                    bytes_out: None,
-                });
+                let actor: common_models::TraceActor =
+                    serde_json::from_str(&actor_s).unwrap_or(common_models::TraceActor {
+                        pid: 0,
+                        ppid: 0,
+                        uid: 0,
+                        gid: 0,
+                        container_id: None,
+                        service: None,
+                        build_hash: None,
+                    });
+                let target: common_models::TraceTarget =
+                    serde_json::from_str(&target_s).unwrap_or(common_models::TraceTarget {
+                        path_hash: None,
+                        dst: None,
+                        domain_hash: None,
+                    });
+                let attrs: common_models::TraceAttrs =
+                    serde_json::from_str(&attrs_s).unwrap_or(common_models::TraceAttrs {
+                        argv_hash: None,
+                        cwd_hash: None,
+                        bytes_out: None,
+                    });
 
                 Ok(CmTraceEvent {
                     trace_id,
@@ -667,7 +752,8 @@ impl IndexDb {
                     end_ts: r.get(3)?,
                     final_ml_score: r.get(4)?,
                     explain: r.get(5).ok(),
-                    models: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or(serde_json::json!({})),
+                    models: serde_json::from_str(&r.get::<_, String>(6)?)
+                        .unwrap_or(serde_json::json!({})),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -688,7 +774,8 @@ impl IndexDb {
                 end_ts: r.get(3)?,
                 final_ml_score: r.get(4)?,
                 explain: r.get(5).ok(),
-                models: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or(serde_json::json!({})),
+                models: serde_json::from_str(&r.get::<_, String>(6)?)
+                    .unwrap_or(serde_json::json!({})),
             };
             Ok(Some(row))
         } else {
@@ -726,7 +813,12 @@ impl IndexDb {
                     },
                     attack_graph_hash: r.get(5)?,
                     artifacts: serde_json::from_str(&artifacts_s).unwrap_or_default(),
-                    privacy: serde_json::from_str(&privacy_s).unwrap_or(common_models::PrivacyMeta { redactions: vec![], mode: "hash-only".to_string() }),
+                    privacy: serde_json::from_str(&privacy_s).unwrap_or(
+                        common_models::PrivacyMeta {
+                            redactions: vec![],
+                            mode: "hash-only".to_string(),
+                        },
+                    ),
                     contract_hash: r.get::<_, Option<String>>(8)?,
                     config_hash: r.get::<_, Option<String>>(9)?,
                 })
@@ -801,7 +893,12 @@ impl IndexDb {
         Ok(rows)
     }
 
-    pub fn get_attack_graph_edges(&self, namespace_id: &str, start_ts: i64, end_ts: i64) -> Result<Vec<AttackGraphEdgeRow>> {
+    pub fn get_attack_graph_edges(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Vec<AttackGraphEdgeRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT e.window_id, e.edge_type, e.src, e.dst, e.attrs 
              FROM attack_graph_edges e
@@ -823,8 +920,13 @@ impl IndexDb {
         Ok(rows)
     }
 
-    pub fn find_windows_referencing(&self, namespace_id: &str, needle: &str, limit: i64) -> Result<Vec<WindowRefRow>> {
-        let like = format!("%{}%", needle);
+    pub fn find_windows_referencing(
+        &self,
+        namespace_id: &str,
+        needle: &str,
+        limit: i64,
+    ) -> Result<Vec<WindowRefRow>> {
+        let like = format!("%{needle}%");
         let mut stmt = self.conn.prepare(
             "SELECT ws.window_id, ws.start_ts, ws.end_ts, COUNT(1) as hits
              FROM attack_graph_edges e
@@ -847,29 +949,71 @@ impl IndexDb {
         Ok(rows)
     }
 
-    pub fn get_ml_by_time(&self, namespace_id: &str, start_ts: i64, end_ts: i64) -> Result<Option<MlWindowRow>> {
+    pub fn get_ml_by_time(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Option<MlWindowRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT ml_id, namespace_id, start_ts, end_ts, final_ml_score, explain, models
              FROM ml_scores WHERE namespace_id = ?1 AND start_ts = ?2 AND end_ts = ?3 LIMIT 1",
         )?;
         let mut rows = stmt.query(params![namespace_id, start_ts, end_ts])?;
         if let Some(r) = rows.next()? {
-            let row = MlWindowRow {
+            return Ok(Some(MlWindowRow {
                 ml_id: r.get(0)?,
                 namespace_id: r.get(1)?,
                 start_ts: r.get(2)?,
                 end_ts: r.get(3)?,
                 final_ml_score: r.get(4)?,
-                explain: r.get(5).ok(),
-                models: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or(serde_json::json!({})),
-            };
-            Ok(Some(row))
-        } else {
-            Ok(None)
+                explain: r.get(5)?,
+                models: serde_json::from_str(&r.get::<_, String>(6)?)
+                    .unwrap_or(serde_json::Value::Null),
+            }));
         }
+        Ok(None)
     }
 
-    pub fn tag_commit(&self, namespace_id: &str, name: &str, ml_id: &str, created_ts: i64) -> Result<()> {
+    /// Resolve the ML window that contains a given timestamp.
+    ///
+    /// This supports "export by time" UX where the user has a single incident timestamp and
+    /// wants the relevant window output without manually finding an ml_id.
+    pub fn get_ml_containing_ts(
+        &self,
+        namespace_id: &str,
+        ts: i64,
+    ) -> Result<Option<MlWindowRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ml_id, namespace_id, start_ts, end_ts, final_ml_score, explain, models
+             FROM ml_scores
+             WHERE namespace_id = ?1 AND start_ts <= ?2 AND end_ts >= ?2
+             ORDER BY end_ts DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![namespace_id, ts])?;
+        if let Some(r) = rows.next()? {
+            return Ok(Some(MlWindowRow {
+                ml_id: r.get(0)?,
+                namespace_id: r.get(1)?,
+                start_ts: r.get(2)?,
+                end_ts: r.get(3)?,
+                final_ml_score: r.get(4)?,
+                explain: r.get(5)?,
+                models: serde_json::from_str(&r.get::<_, String>(6)?)
+                    .unwrap_or(serde_json::Value::Null),
+            }));
+        }
+        Ok(None)
+    }
+
+    pub fn tag_commit(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        ml_id: &str,
+        created_ts: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO tags (namespace_id, name, ml_id, created_ts)
              VALUES (?1, ?2, ?3, ?4)
@@ -894,6 +1038,14 @@ impl IndexDb {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn delete_tag(&self, namespace_id: &str, name: &str) -> Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM tags WHERE namespace_id = ?1 AND name = ?2",
+            params![namespace_id, name],
+        )?;
+        Ok(n)
     }
 
     pub fn get_last_receipt(&self, namespace_id: &str) -> Result<Option<(String, String, i64)>> {
@@ -931,13 +1083,158 @@ impl IndexDb {
         )?;
         Ok(())
     }
+
+    pub fn get_last_runtime_dna_commit(
+        &self,
+        namespace_id: &str,
+    ) -> Result<Option<RuntimeDnaCommitRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT namespace_id, ml_id, start_ts, end_ts, payload_hash, prev_chain_hash, chain_hash, chain_ts
+             FROM runtime_dna_chain
+             WHERE namespace_id = ?1
+             ORDER BY id DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![namespace_id])?;
+        if let Some(r) = rows.next()? {
+            Ok(Some(RuntimeDnaCommitRow {
+                namespace_id: r.get(0)?,
+                ml_id: r.get(1)?,
+                start_ts: r.get(2)?,
+                end_ts: r.get(3)?,
+                payload_hash: r.get(4)?,
+                prev_chain_hash: r.get(5)?,
+                chain_hash: r.get(6)?,
+                chain_ts: r.get(7)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_runtime_dna_commit(
+        &self,
+        namespace_id: &str,
+        ml_id: &str,
+    ) -> Result<Option<RuntimeDnaCommitRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT namespace_id, ml_id, start_ts, end_ts, payload_hash, prev_chain_hash, chain_hash, chain_ts
+             FROM runtime_dna_chain
+             WHERE namespace_id = ?1 AND ml_id = ?2
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![namespace_id, ml_id])?;
+        if let Some(r) = rows.next()? {
+            Ok(Some(RuntimeDnaCommitRow {
+                namespace_id: r.get(0)?,
+                ml_id: r.get(1)?,
+                start_ts: r.get(2)?,
+                end_ts: r.get(3)?,
+                payload_hash: r.get(4)?,
+                prev_chain_hash: r.get(5)?,
+                chain_hash: r.get(6)?,
+                chain_ts: r.get(7)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn insert_runtime_dna_commit(&self, row: &RuntimeDnaCommitRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO runtime_dna_chain (namespace_id, ml_id, start_ts, end_ts, payload_hash, prev_chain_hash, chain_hash, chain_ts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(namespace_id, ml_id) DO NOTHING",
+            params![
+                row.namespace_id,
+                row.ml_id,
+                row.start_ts,
+                row.end_ts,
+                row.payload_hash,
+                row.prev_chain_hash,
+                row.chain_hash,
+                row.chain_ts,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_runtime_dna_commits(
+        &self,
+        namespace_id: &str,
+        limit: i64,
+    ) -> Result<Vec<RuntimeDnaCommitRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT namespace_id, ml_id, start_ts, end_ts, payload_hash, prev_chain_hash, chain_hash, chain_ts
+             FROM runtime_dna_chain
+             WHERE namespace_id = ?1
+             ORDER BY id ASC
+             LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![namespace_id, limit], |r| {
+                Ok(RuntimeDnaCommitRow {
+                    namespace_id: r.get(0)?,
+                    ml_id: r.get(1)?,
+                    start_ts: r.get(2)?,
+                    end_ts: r.get(3)?,
+                    payload_hash: r.get(4)?,
+                    prev_chain_hash: r.get(5)?,
+                    chain_hash: r.get(6)?,
+                    chain_ts: r.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn count_runtime_dna_commits(&self, namespace_id: &str) -> Result<i64> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COUNT(1) FROM runtime_dna_chain WHERE namespace_id = ?1")?;
+        let n: i64 = stmt.query_row(params![namespace_id], |r| r.get(0))?;
+        Ok(n)
+    }
+
+    pub fn list_runtime_dna_tail(
+        &self,
+        namespace_id: &str,
+        n: i64,
+    ) -> Result<Vec<RuntimeDnaCommitRow>> {
+        if n <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT namespace_id, ml_id, start_ts, end_ts, payload_hash, prev_chain_hash, chain_hash, chain_ts
+             FROM runtime_dna_chain
+             WHERE namespace_id = ?1
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let mut rows: Vec<RuntimeDnaCommitRow> = stmt
+            .query_map(params![namespace_id, n], |r| {
+                Ok(RuntimeDnaCommitRow {
+                    namespace_id: r.get(0)?,
+                    ml_id: r.get(1)?,
+                    start_ts: r.get(2)?,
+                    end_ts: r.get(3)?,
+                    payload_hash: r.get(4)?,
+                    prev_chain_hash: r.get(5)?,
+                    chain_hash: r.get(6)?,
+                    chain_ts: r.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.reverse();
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use serde_json::json;
+    use tempfile::TempDir;
 
     #[test]
     fn index_db_smoke_test() {
@@ -995,7 +1292,8 @@ mod tests {
             blob_ref: None,
         };
 
-        db.insert_proof_metadata(&row).expect("insert_proof_metadata");
+        db.insert_proof_metadata(&row)
+            .expect("insert_proof_metadata");
     }
 
     #[test]
@@ -1016,7 +1314,8 @@ mod tests {
             receipt_refs: vec!["r_10".to_string()],
         };
 
-        db.insert_proof_from_pack(&pack, "pending").expect("insert_proof_from_pack");
+        db.insert_proof_from_pack(&pack, "pending")
+            .expect("insert_proof_from_pack");
     }
 
     #[test]
@@ -1032,17 +1331,37 @@ mod tests {
             namespace_id: "ns://test/prod/app/svc".into(),
             source: common_models::TraceSourceKind::Ebpf,
             kind: common_models::TraceEventKind::ProcExec,
-            actor: common_models::TraceActor { pid: 1, ppid: 0, uid: 1000, gid: 1000, container_id: None, service: Some("svc".into()), build_hash: Some("b1".into()) },
-            target: common_models::TraceTarget { path_hash: Some("/bin/sh#hash".into()), dst: None, domain_hash: None },
-            attrs: common_models::TraceAttrs { argv_hash: Some("argv#hash".into()), cwd_hash: None, bytes_out: Some(0) },
+            actor: common_models::TraceActor {
+                pid: 1,
+                ppid: 0,
+                uid: 1000,
+                gid: 1000,
+                container_id: None,
+                service: Some("svc".into()),
+                build_hash: Some("b1".into()),
+            },
+            target: common_models::TraceTarget {
+                path_hash: Some("/bin/sh#hash".into()),
+                dst: None,
+                domain_hash: None,
+            },
+            attrs: common_models::TraceAttrs {
+                argv_hash: Some("argv#hash".into()),
+                cwd_hash: None,
+                bytes_out: Some(0),
+            },
         };
-        db.insert_trace_event_from_model(&te).expect("insert_trace_event");
+        db.insert_trace_event_from_model(&te)
+            .expect("insert_trace_event");
 
         // MLScore
         let ms = CmMLScore {
             ml_id: "ml_1".into(),
             namespace_id: "ns://test/prod/app/svc".into(),
-            window: common_models::WindowRange { start: "2025-12-18T12:00:00Z".into(), end: "2025-12-18T12:05:00Z".into() },
+            window: common_models::WindowRange {
+                start: "2025-12-18T12:00:00Z".into(),
+                end: "2025-12-18T12:05:00Z".into(),
+            },
             models: common_models::MLModels::default(),
             final_ml_score: 0.7,
             explain: "test".into(),
@@ -1055,10 +1374,20 @@ mod tests {
             pack_id: "ep_1".into(),
             namespace_id: "ns://test/prod/app/svc".into(),
             created_at: "2025-12-18T12:06:00Z".into(),
-            window: common_models::WindowRange { start: "2025-12-18T12:00:00Z".into(), end: "2025-12-18T12:05:00Z".into() },
+            window: common_models::WindowRange {
+                start: "2025-12-18T12:00:00Z".into(),
+                end: "2025-12-18T12:05:00Z".into(),
+            },
             attack_graph_hash: "agh#1".into(),
-            artifacts: vec![common_models::ArtifactMeta { name: "trace_excerpt.jsonl".into(), sha256: "h#1".into(), size: 12 }],
-            privacy: common_models::PrivacyMeta { redactions: vec!["pii".into()], mode: "hash-only".into() },
+            artifacts: vec![common_models::ArtifactMeta {
+                name: "trace_excerpt.jsonl".into(),
+                sha256: "h#1".into(),
+                size: 12,
+            }],
+            privacy: common_models::PrivacyMeta {
+                redactions: vec!["pii".into()],
+                mode: "hash-only".into(),
+            },
             contract_hash: None,
             config_hash: None,
         };
@@ -1073,7 +1402,8 @@ mod tests {
             counts_json: json!({"PROC_EXEC": 10, "NET_CONNECT": 2}),
             attack_graph_hash: Some("agh#1".into()),
         };
-        db.insert_window_summary(&ws).expect("insert_window_summary");
+        db.insert_window_summary(&ws)
+            .expect("insert_window_summary");
 
         let edge = AttackGraphEdgeRow {
             window_id: "w_1".into(),
