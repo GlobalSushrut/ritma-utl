@@ -1,5 +1,5 @@
 # Tracer sidecar (auditd fallback tailer)
-FROM rust:1.79 as builder
+FROM rust:1.83 AS builder
 WORKDIR /app
 COPY . .
 RUN cargo build -p tracer_sidecar --release

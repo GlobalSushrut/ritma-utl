@@ -278,7 +278,7 @@ pub fn generate_merkle_proof(
 
     // Build proof path from leaf to root
     while current_level.len() > 1 {
-        let sibling_index = if current_index % 2 == 0 {
+        let sibling_index = if current_index.is_multiple_of(2) {
             // Left child, sibling is right
             positions.push(0);
             current_index + 1

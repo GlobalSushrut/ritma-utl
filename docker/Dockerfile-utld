@@ -1,5 +1,5 @@
 # Multi-stage build for UTLD daemon
-FROM rust:1.79 as builder
+FROM rust:1.83 AS builder
 WORKDIR /app
 COPY . .
 # Build only utld crate
