@@ -1,6 +1,6 @@
-use common_models::{TraceEvent, TraceEventKind, TraceSourceKind, TraceActor, TraceTarget, TraceAttrs};
-use index_db::IndexDb;
 use anyhow::Result;
+use common_models::TraceEvent;
+use index_db::IndexDb;
 
 /// eBPF Provider using Aya
 /// This is a stub implementation - full eBPF requires:
@@ -17,13 +17,13 @@ impl EbpfProvider {
     pub fn new(namespace_id: String, db: IndexDb) -> Self {
         Self { namespace_id, db }
     }
-    
+
     /// Check if eBPF is available
     pub fn is_available() -> bool {
         // Check for BPF FS
         std::path::Path::new("/sys/fs/bpf").exists()
     }
-    
+
     /// Start eBPF tracing
     /// Full implementation would:
     /// 1. Load eBPF programs for execve, connect, open, dns
@@ -34,21 +34,26 @@ impl EbpfProvider {
         if !Self::is_available() {
             anyhow::bail!("eBPF not available - /sys/fs/bpf not found");
         }
-        
-        log::info!("eBPF provider starting for namespace: {}", self.namespace_id);
-        
+
+        let _ = &self.db;
+
+        log::info!(
+            "eBPF provider starting for namespace: {}",
+            self.namespace_id
+        );
+
         // Stub: In full implementation, would:
         // - Load BPF programs from embedded bytecode
         // - Attach to kernel hooks
         // - Start event loop reading from ring buffer
         // - Convert BPF events to TraceEvent
         // - Insert into IndexDB
-        
+
         log::warn!("eBPF provider is stub implementation - falling back to auditd");
-        
+
         Ok(())
     }
-    
+
     /// Stop eBPF tracing
     pub async fn stop(&mut self) -> Result<()> {
         log::info!("eBPF provider stopping");
@@ -81,7 +86,7 @@ impl TraceProviderSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_provider_selection() {
         let provider = TraceProviderSelector::select_best();

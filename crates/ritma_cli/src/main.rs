@@ -226,7 +226,8 @@ fn cmd_dna_build(
         let evidence = db
             .find_evidence_for_window(&namespace, w.start_ts, w.end_ts)
             .map_err(|e| (1, format!("find_evidence_for_window: {e}")))?;
-        let payload_hash = compute_runtime_dna_payload_hash(&namespace, w, summary.as_ref(), &evidence);
+        let payload_hash =
+            compute_runtime_dna_payload_hash(&namespace, w, summary.as_ref(), &evidence);
         let chain_hash = compute_runtime_dna_chain_hash(
             &namespace,
             &w.ml_id,
@@ -271,7 +272,10 @@ fn cmd_dna_build(
         println!("Range (unix): {start} .. {end}");
         println!("Inserted: {inserted}");
         println!("Skipped (already present): {skipped_existing}");
-        println!("Tip: {}", &prev_chain_hash.chars().take(16).collect::<String>());
+        println!(
+            "Tip: {}",
+            &prev_chain_hash.chars().take(16).collect::<String>()
+        );
         println!("Next: ritma dna trace --namespace {namespace}");
     }
     Ok(())
@@ -644,7 +648,9 @@ fn bar_health_http_ok() -> bool {
     }
 
     let resp = String::from_utf8_lossy(&buf);
-    resp.contains("healthok") || resp.starts_with("HTTP/1.1 200") || resp.starts_with("HTTP/1.0 200")
+    resp.contains("healthok")
+        || resp.starts_with("HTTP/1.1 200")
+        || resp.starts_with("HTTP/1.0 200")
 }
 
 fn ritma_data_dir() -> PathBuf {
@@ -698,8 +704,7 @@ fn is_usable_host_path(p: &str) -> bool {
 }
 
 fn default_index_db_path() -> String {
-    if let Ok(p) = std::env::var("INDEX_DB_PATH")
-        .or_else(|_| std::env::var("RITMA_INDEX_DB_PATH"))
+    if let Ok(p) = std::env::var("INDEX_DB_PATH").or_else(|_| std::env::var("RITMA_INDEX_DB_PATH"))
     {
         // Ignore container-oriented defaults like /data/... when they aren't usable on host.
         if is_usable_host_path(&p) {
@@ -837,7 +842,11 @@ fn docker_volume_rm(name: &str) {
 
 fn cmd_ps(json: bool, mode: String) -> Result<(), (u8, String)> {
     let caps = detect_capabilities();
-    let names = if caps.docker { docker_ps_names() } else { Vec::new() };
+    let names = if caps.docker {
+        docker_ps_names()
+    } else {
+        Vec::new()
+    };
 
     let service_state = |service: &str| -> Option<String> {
         if !caps.docker {
@@ -849,9 +858,14 @@ fn cmd_ps(json: bool, mode: String) -> Result<(), (u8, String)> {
                 || n == &s2
                 || n.contains(service)
                 || n.contains(&s2)
-                || (service == "bar-daemon" && (n.contains("bar_daemon") || n.contains("bar-daemon")))
+                || (service == "bar-daemon"
+                    && (n.contains("bar_daemon") || n.contains("bar-daemon")))
         });
-        Some(if hit { "running".to_string() } else { "stopped".to_string() })
+        Some(if hit {
+            "running".to_string()
+        } else {
+            "stopped".to_string()
+        })
     };
 
     let utld = service_state("utld");
@@ -885,10 +899,22 @@ fn cmd_ps(json: bool, mode: String) -> Result<(), (u8, String)> {
     }
 
     println!("Services:");
-    println!("  utld:         {}", utld.unwrap_or_else(|| "unknown".into()));
-    println!("  bar-daemon:   {}", bar.unwrap_or_else(|| "unknown".into()));
-    println!("  tracer:       {}", tracer.unwrap_or_else(|| "unknown".into()));
-    println!("  orchestrator: {}", orch.unwrap_or_else(|| "unknown".into()));
+    println!(
+        "  utld:         {}",
+        utld.unwrap_or_else(|| "unknown".into())
+    );
+    println!(
+        "  bar-daemon:   {}",
+        bar.unwrap_or_else(|| "unknown".into())
+    );
+    println!(
+        "  tracer:       {}",
+        tracer.unwrap_or_else(|| "unknown".into())
+    );
+    println!(
+        "  orchestrator: {}",
+        orch.unwrap_or_else(|| "unknown".into())
+    );
     println!("Changed: none");
     println!("Where: ports 8088 (utld), 8090 (bar-daemon)");
     println!("Next: ritma logs --service bar-daemon");
@@ -923,10 +949,7 @@ fn cmd_investigate_parents(
         if e.edge_type != "PROC_PROC" {
             continue;
         }
-        parents
-            .entry(e.src)
-            .or_default()
-            .insert(e.dst);
+        parents.entry(e.src).or_default().insert(e.dst);
     }
 
     let mut rows: Vec<(String, Vec<String>)> = parents
@@ -935,10 +958,7 @@ fn cmd_investigate_parents(
         .collect();
 
     rows.sort_by(|(pa, ka), (pb, kb)| kb.len().cmp(&ka.len()).then_with(|| pa.cmp(pb)));
-    let rows = rows
-        .into_iter()
-        .take(top as usize)
-        .collect::<Vec<_>>();
+    let rows = rows.into_iter().take(top as usize).collect::<Vec<_>>();
 
     if json {
         let out: Vec<serde_json::Value> = rows
@@ -1040,7 +1060,10 @@ fn cmd_deploy_app(json: bool, out: PathBuf) -> Result<(), (u8, String)> {
     }
     println!("Changed: wrote app integration env");
     println!("Where: {}", env_out.display());
-    println!("Next: source {}  OR  use it in your app deployment", env_out.display());
+    println!(
+        "Next: source {}  OR  use it in your app deployment",
+        env_out.display()
+    );
     Ok(())
 }
 
@@ -1101,15 +1124,9 @@ fn write_compose_bundle(
         let tracer_df = format!("{root}/docker/Dockerfile-tracer");
         let orch_df = format!("{root}/docker/Dockerfile-orchestrator");
         (
-            format!(
-                "  bar-daemon:\n    build:\n      context: {root}\n      dockerfile: {bar_df}"
-            ),
-            format!(
-                "  utld:\n    build:\n      context: {root}\n      dockerfile: {utld_df}"
-            ),
-            format!(
-                "  tracer:\n    build:\n      context: {root}\n      dockerfile: {tracer_df}"
-            ),
+            format!("  bar-daemon:\n    build:\n      context: {root}\n      dockerfile: {bar_df}"),
+            format!("  utld:\n    build:\n      context: {root}\n      dockerfile: {utld_df}"),
+            format!("  tracer:\n    build:\n      context: {root}\n      dockerfile: {tracer_df}"),
             format!(
                 "  orchestrator:\n    build:\n      context: {root}\n      dockerfile: {orch_df}"
             ),
@@ -1168,8 +1185,7 @@ services:
     let tpl_v2 = tpl_v1.replacen("version: \"3.3\"", "version: \"3.9\"", 1);
 
     if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| (1, format!("mkdir {}: {e}", parent.display())))?;
+        fs::create_dir_all(parent).map_err(|e| (1, format!("mkdir {}: {e}", parent.display())))?;
     }
 
     fs::write(&v1_path, &tpl_v1)
@@ -1190,15 +1206,24 @@ fn cmd_deploy_export(json: bool, out: PathBuf, namespace: String) -> Result<(), 
 
     let compose_out = out.join("ritma.sidecar.yml");
     let root = guess_repo_root();
-    let _ = write_compose_bundle(&compose_out, &namespace, "/var/ritma/data", false, Some(&root))?;
+    let _ = write_compose_bundle(
+        &compose_out,
+        &namespace,
+        "/var/ritma/data",
+        false,
+        Some(&root),
+    )?;
 
     let k8s_out = out.join("k8s");
     write_k8s_manifests(&k8s_out, &namespace)?;
 
     let systemd_out = out.join("ritma-security-host.service");
     let compose_abs = fs::canonicalize(&compose_out).unwrap_or(compose_out.clone());
-    fs::write(&systemd_out, systemd_unit_template(&compose_abs, &namespace))
-        .map_err(|e| (1, format!("write {}: {e}", systemd_out.display())))?;
+    fs::write(
+        &systemd_out,
+        systemd_unit_template(&compose_abs, &namespace),
+    )
+    .map_err(|e| (1, format!("write {}: {e}", systemd_out.display())))?;
 
     if json {
         println!(
@@ -1216,14 +1241,21 @@ fn cmd_deploy_export(json: bool, out: PathBuf, namespace: String) -> Result<(), 
 
     println!("Changed: wrote deploy artifacts");
     println!("Where: {}", out.display());
-    println!("Next: ritma deploy k8s --dir {}  OR  ritma deploy systemd --out {} --install", k8s_out.display(), out.display());
+    println!(
+        "Next: ritma deploy k8s --dir {}  OR  ritma deploy systemd --out {} --install",
+        k8s_out.display(),
+        out.display()
+    );
     Ok(())
 }
 
 fn cmd_deploy_k8s(json: bool, dir: PathBuf, namespace: String) -> Result<(), (u8, String)> {
     let caps = detect_capabilities();
     if !caps.kubectl {
-        return Err((1, "kubectl not found. Next: install kubectl, then run: ritma deploy k8s".into()));
+        return Err((
+            1,
+            "kubectl not found. Next: install kubectl, then run: ritma deploy k8s".into(),
+        ));
     }
 
     write_k8s_manifests(&dir, &namespace)?;
@@ -1261,7 +1293,8 @@ fn cmd_deploy_systemd(
     if install && !caps.systemd {
         return Err((
             1,
-            "systemd not detected. Next: install systemd/systemctl or run: ritma deploy export".into(),
+            "systemd not detected. Next: install systemd/systemctl or run: ritma deploy export"
+                .into(),
         ));
     }
     fs::create_dir_all(&out).map_err(|e| (1, format!("mkdir {}: {e}", out.display())))?;
@@ -1298,7 +1331,10 @@ fn cmd_deploy_systemd(
             .status()
             .map_err(|e| (1, format!("systemctl daemon-reload failed: {e}")))?;
         if !status.success() {
-            return Err((1, format!("systemctl daemon-reload exited with status: {status}")));
+            return Err((
+                1,
+                format!("systemctl daemon-reload exited with status: {status}"),
+            ));
         }
         let status = ProcCommand::new("systemctl")
             .arg("enable")
@@ -1307,7 +1343,10 @@ fn cmd_deploy_systemd(
             .status()
             .map_err(|e| (1, format!("systemctl enable --now failed: {e}")))?;
         if !status.success() {
-            return Err((1, format!("systemctl enable --now exited with status: {status}")));
+            return Err((
+                1,
+                format!("systemctl enable --now exited with status: {status}"),
+            ));
         }
     }
 
@@ -1318,7 +1357,10 @@ fn cmd_deploy_systemd(
         );
         return Ok(());
     }
-    println!("Changed: wrote systemd unit{}", if install { " and installed" } else { "" });
+    println!(
+        "Changed: wrote systemd unit{}",
+        if install { " and installed" } else { "" }
+    );
     println!("Where: {}", unit_out.display());
     println!("Next: ritma deploy status");
     Ok(())
@@ -1479,18 +1521,26 @@ fn cmd_deploy_status(json: bool) -> Result<(), (u8, String)> {
                 );
             }
             "activating" => {
-                next_cmds.push("journalctl -u ritma-security-host.service -b --no-pager -n 200".to_string());
-                next_cmds.push("systemctl status ritma-security-host.service --no-pager -l".to_string());
+                next_cmds.push(
+                    "journalctl -u ritma-security-host.service -b --no-pager -n 200".to_string(),
+                );
+                next_cmds
+                    .push("systemctl status ritma-security-host.service --no-pager -l".to_string());
             }
             "failed" => {
-                next_cmds.push("systemctl status ritma-security-host.service --no-pager -l".to_string());
-                next_cmds.push("journalctl -u ritma-security-host.service -b --no-pager -n 200".to_string());
-                next_cmds.push("sudo systemctl reset-failed ritma-security-host.service".to_string());
+                next_cmds
+                    .push("systemctl status ritma-security-host.service --no-pager -l".to_string());
+                next_cmds.push(
+                    "journalctl -u ritma-security-host.service -b --no-pager -n 200".to_string(),
+                );
+                next_cmds
+                    .push("sudo systemctl reset-failed ritma-security-host.service".to_string());
                 next_cmds.push("sudo systemctl restart ritma-security-host.service".to_string());
             }
             "inactive" => {
                 next_cmds.push("sudo systemctl start ritma-security-host.service".to_string());
-                next_cmds.push("systemctl status ritma-security-host.service --no-pager -l".to_string());
+                next_cmds
+                    .push("systemctl status ritma-security-host.service --no-pager -l".to_string());
             }
             _ => {}
         }
@@ -1543,9 +1593,7 @@ fn cmd_logs(
         .unwrap_or(target.clone());
 
     let mut cmd = ProcCommand::new("docker");
-    cmd.arg("logs")
-        .arg("--tail")
-        .arg(format!("{tail}"));
+    cmd.arg("logs").arg("--tail").arg(format!("{tail}"));
     if follow {
         cmd.arg("-f");
     }
@@ -1613,12 +1661,19 @@ fn cmd_down(mode: String, compose: PathBuf, volumes: bool) -> Result<(), (u8, St
     }
 
     println!("Changed: stopped runtime");
-    println!("Where: volumes={}", if volumes { "removed" } else { "kept" });
+    println!(
+        "Where: volumes={}",
+        if volumes { "removed" } else { "kept" }
+    );
     println!("Next: ritma up");
     Ok(())
 }
 
-fn cmd_restart(mode: String, compose: PathBuf, service: Option<String>) -> Result<(), (u8, String)> {
+fn cmd_restart(
+    mode: String,
+    compose: PathBuf,
+    service: Option<String>,
+) -> Result<(), (u8, String)> {
     if mode == "k8s" {
         return Err((1, "k8s restart not implemented yet".into()));
     }
@@ -1847,9 +1902,8 @@ fn cmd_export_report(args: ExportReportArgs) -> Result<(), (u8, String)> {
     let idx = resolve_index_db_path(args.index_db);
     let db = IndexDb::open(&idx).map_err(|e| (1, format!("open index db {idx}: {e}")))?;
 
-    let overlaps = |w_start: i64, w_end: i64| -> bool {
-        !(w_end < args.start || w_start > args.end)
-    };
+    let overlaps =
+        |w_start: i64, w_end: i64| -> bool { !(w_end < args.start || w_start > args.end) };
 
     let mut windows = db
         .list_ml_windows_overlapping(&args.namespace, args.start, args.end, args.limit as i64)
@@ -1865,8 +1919,7 @@ fn cmd_export_report(args: ExportReportArgs) -> Result<(), (u8, String)> {
     }
     windows.sort_by(|a, b| b.end_ts.cmp(&a.end_ts));
 
-    fs::create_dir_all(&args.out)
-        .map_err(|e| (1, format!("mkdir {}: {e}", args.out.display())))?;
+    fs::create_dir_all(&args.out).map_err(|e| (1, format!("mkdir {}: {e}", args.out.display())))?;
 
     let mut index_rows: Vec<String> = Vec::new();
     let mut rendered_pages: Vec<PathBuf> = Vec::new();
@@ -1909,13 +1962,22 @@ fn cmd_export_report(args: ExportReportArgs) -> Result<(), (u8, String)> {
 
             match e.edge_type.as_str() {
                 "PROC_PROC" => {
-                    proc_children.entry(e.src.clone()).or_default().insert(e.dst.clone());
+                    proc_children
+                        .entry(e.src.clone())
+                        .or_default()
+                        .insert(e.dst.clone());
                 }
                 "PROC_FILE" => {
-                    proc_files.entry(e.src.clone()).or_default().insert(e.dst.clone());
+                    proc_files
+                        .entry(e.src.clone())
+                        .or_default()
+                        .insert(e.dst.clone());
                 }
                 "PROC_NET" => {
-                    proc_net.entry(e.src.clone()).or_default().insert(e.dst.clone());
+                    proc_net
+                        .entry(e.src.clone())
+                        .or_default()
+                        .insert(e.dst.clone());
                 }
                 "PRIV_ESC" => {
                     priv_edges += 1;
@@ -2192,10 +2254,7 @@ fn cmd_export_report(args: ExportReportArgs) -> Result<(), (u8, String)> {
         let index_pdf = args.out.join("index.pdf");
         try_render_pdf(&browser, &index_path, &index_pdf)?;
         for p in &rendered_pages {
-            let stem = p
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("window");
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("window");
             let pdf_path = args.out.join(format!("{stem}.pdf"));
             let _ = try_render_pdf(&browser, p, &pdf_path);
         }
@@ -2254,9 +2313,10 @@ fn cmd_export_proof_by_time(
     let ml = db
         .get_ml_containing_ts(&namespace, at_ts)
         .map_err(|e| (1, format!("get_ml_containing_ts: {e}")))?
-        .ok_or((1, format!(
-            "no ML window found containing ts={at_ts} for namespace={namespace}"
-        )))?;
+        .ok_or((
+            1,
+            format!("no ML window found containing ts={at_ts} for namespace={namespace}"),
+        ))?;
 
     cmd_export_proof(json, ml.ml_id, out, Some(PathBuf::from(idx)))
 }
@@ -2276,8 +2336,7 @@ struct ExportBundleArgs {
 }
 
 fn cmd_export_bundle(args: ExportBundleArgs) -> Result<(), (u8, String)> {
-    fs::create_dir_all(&args.out)
-        .map_err(|e| (1, format!("mkdir {}: {e}", args.out.display())))?;
+    fs::create_dir_all(&args.out).map_err(|e| (1, format!("mkdir {}: {e}", args.out.display())))?;
 
     let proof_dir = args.out.join("proof");
     let attest_dir = args.out.join("attest");
@@ -2343,22 +2402,20 @@ fn cmd_export_bundle(args: ExportBundleArgs) -> Result<(), (u8, String)> {
 
     // Auditor README
     let readme_path = args.out.join("README_AUDITOR.md");
-    let readme =
-        "# Ritma Auditor Bundle\n\n"
-            .to_string()
-            + "This folder is intended to be verified offline.\n\n"
-            + "## Contents\n\n"
-            + "- proof/: Proof export (proofpack.json, manifest.json, receipts/)\n"
-            + "- incident_manifest.json: incident manifest (time range)\n"
-            + "- attest/: repo/folder attestation (attestation.json + receipt)\n"
-            + "- CHECKSUMS.sha256: sha256 checksums for key files\n\n"
-            + "## Verify\n\n"
-            + "1) Verify checksums:\n\n"
-            + "```bash\nsha256sum -c CHECKSUMS.sha256\n```\n\n"
-            + "2) Verify ProofPack folder:\n\n"
-            + "```bash\nritma verify proof ./proof\n```\n\n"
-            + "3) Verify DigFile (if applicable):\n\n"
-            + "```bash\nritma verify digfile <file.dig.json>\n```\n";
+    let readme = "# Ritma Auditor Bundle\n\n".to_string()
+        + "This folder is intended to be verified offline.\n\n"
+        + "## Contents\n\n"
+        + "- proof/: Proof export (proofpack.json, manifest.json, receipts/)\n"
+        + "- incident_manifest.json: incident manifest (time range)\n"
+        + "- attest/: repo/folder attestation (attestation.json + receipt)\n"
+        + "- CHECKSUMS.sha256: sha256 checksums for key files\n\n"
+        + "## Verify\n\n"
+        + "1) Verify checksums:\n\n"
+        + "```bash\nsha256sum -c CHECKSUMS.sha256\n```\n\n"
+        + "2) Verify ProofPack folder:\n\n"
+        + "```bash\nritma verify proof ./proof\n```\n\n"
+        + "3) Verify DigFile (if applicable):\n\n"
+        + "```bash\nritma verify digfile <file.dig.json>\n```\n";
     fs::write(&readme_path, readme)
         .map_err(|e| (1, format!("write {}: {e}", readme_path.display())))?;
 
@@ -2498,9 +2555,13 @@ fn detect_runtime_state(caps: &Capabilities) -> RuntimeState {
 
     let names = docker_ps_names();
     let has_utld = names.iter().any(|n| n == "utld" || n.contains("utld"));
-    let has_bar = names.iter().any(|n| n == "bar_daemon" || n.contains("bar-daemon") || n.contains("bar_daemon"));
+    let has_bar = names
+        .iter()
+        .any(|n| n == "bar_daemon" || n.contains("bar-daemon") || n.contains("bar_daemon"));
     let has_tracer = names.iter().any(|n| n.contains("tracer"));
-    let has_orch = names.iter().any(|n| n.contains("orchestrator") || n.contains("bar_orchestrator"));
+    let has_orch = names
+        .iter()
+        .any(|n| n.contains("orchestrator") || n.contains("bar_orchestrator"));
 
     RuntimeState {
         minimal: has_utld && has_bar,
@@ -2529,7 +2590,11 @@ fn cmd_status(json: bool, mode: String) -> Result<(), (u8, String)> {
     };
 
     let health = if mode == "k8s" {
-        if caps.kubectl { "green" } else { "red" }
+        if caps.kubectl {
+            "green"
+        } else {
+            "red"
+        }
     } else if caps.compose_v2 || caps.compose_v1 || caps.docker {
         "green"
     } else {
@@ -2597,10 +2662,16 @@ fn compose_variant_paths(pointer: &Path) -> (PathBuf, PathBuf) {
         .and_then(|s| s.to_str())
         .unwrap_or("ritma");
     let base = stem.strip_suffix(".sidecar").unwrap_or(stem);
-    (dir.join(format!("{base}.compose.v1.yml")), dir.join(format!("{base}.compose.v2.yml")))
+    (
+        dir.join(format!("{base}.compose.v1.yml")),
+        dir.join(format!("{base}.compose.v2.yml")),
+    )
 }
 
-fn ensure_compose_compatible(compose_file: &Path, for_compose_v1: bool) -> Result<(), (u8, String)> {
+fn ensure_compose_compatible(
+    compose_file: &Path,
+    for_compose_v1: bool,
+) -> Result<(), (u8, String)> {
     let content = std::fs::read_to_string(compose_file)
         .map_err(|e| (1, format!("failed to read {}: {e}", compose_file.display())))?;
 
@@ -2636,8 +2707,12 @@ fn ensure_compose_compatible(compose_file: &Path, for_compose_v1: bool) -> Resul
     }
 
     if changed {
-        std::fs::write(compose_file, patched_lines)
-            .map_err(|e| (1, format!("failed to write {}: {e}", compose_file.display())))?;
+        std::fs::write(compose_file, patched_lines).map_err(|e| {
+            (
+                1,
+                format!("failed to write {}: {e}", compose_file.display()),
+            )
+        })?;
     }
     Ok(())
 }
@@ -2656,17 +2731,17 @@ fn compose_build_docker_v2(compose_file: &Path, services: &[&str]) -> Result<(),
         .status()
         .map_err(|e| (1, format!("failed to spawn docker compose build: {e}")))?;
     if !status.success() {
-        return Err((1, format!("docker compose build exited with status: {status}")));
+        return Err((
+            1,
+            format!("docker compose build exited with status: {status}"),
+        ));
     }
     Ok(())
 }
 
 fn compose_build_docker_v1(compose_file: &Path, services: &[&str]) -> Result<(), (u8, String)> {
     let mut cmd = ProcCommand::new("docker-compose");
-    cmd.arg("-f")
-        .arg(compose_file)
-        .arg("build")
-        .arg("--pull");
+    cmd.arg("-f").arg(compose_file).arg("build").arg("--pull");
     for s in services {
         cmd.arg(s);
     }
@@ -2674,7 +2749,10 @@ fn compose_build_docker_v1(compose_file: &Path, services: &[&str]) -> Result<(),
         .status()
         .map_err(|e| (1, format!("failed to spawn docker-compose build: {e}")))?;
     if !status.success() {
-        return Err((1, format!("docker-compose build exited with status: {status}")));
+        return Err((
+            1,
+            format!("docker-compose build exited with status: {status}"),
+        ));
     }
     Ok(())
 }
@@ -2688,7 +2766,7 @@ fn cmd_upgrade(
     no_prompt: bool,
 ) -> Result<(), (u8, String)> {
     if mode == "k8s" {
-        println!("Upgrade (k8s) is not yet implemented. Next: run `ritma up --mode k8s`." );
+        println!("Upgrade (k8s) is not yet implemented. Next: run `ritma up --mode k8s`.");
         return cmd_up_k8s();
     }
 
@@ -2818,8 +2896,8 @@ fn cmd_attest(
     let tree_sha = canonical_sha256_of_tree(&path)?;
     let git = git_info(&path);
     let created = chrono::Utc::now().to_rfc3339();
-    let out_dir = out
-        .unwrap_or_else(|| PathBuf::from("./ritma-attest-out").join(Uuid::new_v4().to_string()));
+    let out_dir =
+        out.unwrap_or_else(|| PathBuf::from("./ritma-attest-out").join(Uuid::new_v4().to_string()));
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| (1, format!("mkdir {}: {e}", out_dir.display())))?;
 
@@ -3764,37 +3842,36 @@ fn cmd_diff(
             get_count(b, keys) - get_count(a, keys)
         }
 
-        let entry = delta_counts(&a_win.counts_json, &b_win.counts_json, &[
-            "auth_attempts",
-            "auth",
-            "AUTH",
-            "login_attempts",
-        ]);
-        let exec = delta_counts(&a_win.counts_json, &b_win.counts_json, &[
-            "proc_exec",
-            "PROC_EXEC",
-            "exec",
-        ]);
-        let lineage = delta_counts(&a_win.counts_json, &b_win.counts_json, &[
-            "proc_lineage",
-            "lineage",
-            "PROC_LINEAGE",
-        ]);
-        let priv_esc = delta_counts(&a_win.counts_json, &b_win.counts_json, &[
-            "priv_esc",
-            "PRIV_ESC",
-            "privilege_escalation",
-        ]);
-        let file_open = delta_counts(&a_win.counts_json, &b_win.counts_json, &[
-            "file_open",
-            "FILE_OPEN",
-            "open",
-        ]);
-        let egress = delta_counts(&a_win.counts_json, &b_win.counts_json, &[
-            "net_connect",
-            "NET_CONNECT",
-            "connect",
-        ]);
+        let entry = delta_counts(
+            &a_win.counts_json,
+            &b_win.counts_json,
+            &["auth_attempts", "auth", "AUTH", "login_attempts"],
+        );
+        let exec = delta_counts(
+            &a_win.counts_json,
+            &b_win.counts_json,
+            &["proc_exec", "PROC_EXEC", "exec"],
+        );
+        let lineage = delta_counts(
+            &a_win.counts_json,
+            &b_win.counts_json,
+            &["proc_lineage", "lineage", "PROC_LINEAGE"],
+        );
+        let priv_esc = delta_counts(
+            &a_win.counts_json,
+            &b_win.counts_json,
+            &["priv_esc", "PRIV_ESC", "privilege_escalation"],
+        );
+        let file_open = delta_counts(
+            &a_win.counts_json,
+            &b_win.counts_json,
+            &["file_open", "FILE_OPEN", "open"],
+        );
+        let egress = delta_counts(
+            &a_win.counts_json,
+            &b_win.counts_json,
+            &["net_connect", "NET_CONNECT", "connect"],
+        );
 
         let mut sample_files: BTreeSet<String> = BTreeSet::new();
         let mut sample_ips: BTreeSet<String> = BTreeSet::new();
@@ -3825,7 +3902,8 @@ fn cmd_diff(
         if entry > 0 || exec > 0 || lineage > 0 || priv_esc > 0 || file_open > 0 || egress > 0 {
             has_story = true;
         }
-        if !sample_files.is_empty() || !sample_ips.is_empty() || priv_edges > 0 || egress_edges > 0 {
+        if !sample_files.is_empty() || !sample_ips.is_empty() || priv_edges > 0 || egress_edges > 0
+        {
             has_story = true;
         }
         if has_story {
@@ -4897,7 +4975,11 @@ fn cmd_doctor(
     let has_proc = fs_metadata("/proc").is_ok();
     let idx_exists_host = fs_metadata(&idx).is_ok();
 
-    let docker_names = if caps.docker { docker_ps_names() } else { Vec::new() };
+    let docker_names = if caps.docker {
+        docker_ps_names()
+    } else {
+        Vec::new()
+    };
     let orch_container = docker_names
         .iter()
         .find(|n| n.contains("orchestrator") || n.contains("bar_orchestrator"))
@@ -5087,7 +5169,9 @@ fn cmd_doctor(
             println!("  • index_db will be created by orchestrator when it writes its first window; run `ritma demo` to generate a window");
         }
         if !has_proc {
-            println!("  • /proc not visible: run with host pid namespace or ensure container has access");
+            println!(
+                "  • /proc not visible: run with host pid namespace or ensure container has access"
+            );
         }
     }
 
@@ -5101,8 +5185,7 @@ fn cmd_commit_list(
     index_db: Option<PathBuf>,
 ) -> Result<(), (u8, String)> {
     let idx = resolve_index_db_path(index_db);
-    let db =
-        IndexDb::open(&idx).map_err(|e| (1, format!("failed to open index db {idx}: {e}")))?;
+    let db = IndexDb::open(&idx).map_err(|e| (1, format!("failed to open index db {idx}: {e}")))?;
     let rows = db
         .list_ml_windows(&namespace, limit as i64)
         .map_err(|e| (1, format!("list_ml_windows: {e}")))?;
@@ -5173,7 +5256,10 @@ fn cmd_commit_list(
                 .collect::<Vec<_>>()
                 .join(", ");
             if signals.is_empty() {
-                println!("[{label}] {}  [{} .. {}]  score={:.2}", r.ml_id, start, end, r.final_ml_score);
+                println!(
+                    "[{label}] {}  [{} .. {}]  score={:.2}",
+                    r.ml_id, start, end, r.final_ml_score
+                );
             } else {
                 println!(
                     "[{label}] {}  [{} .. {}]  score={:.2}  signals={signals}",
@@ -5192,8 +5278,7 @@ fn cmd_show_commit(
     index_db: Option<PathBuf>,
 ) -> Result<(), (u8, String)> {
     let idx = resolve_index_db_path(index_db);
-    let db =
-        IndexDb::open(&idx).map_err(|e| (1, format!("failed to open index db {idx}: {e}")))?;
+    let db = IndexDb::open(&idx).map_err(|e| (1, format!("failed to open index db {idx}: {e}")))?;
     let win = db
         .get_ml_score(&ml_id)
         .map_err(|e| (1, format!("get_ml_score: {e}")))?;
@@ -5657,7 +5742,9 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Commands::Deploy { cmd } => match cmd {
-            DeployCommands::Export { out, namespace } => cmd_deploy_export(cli.json, out, namespace),
+            DeployCommands::Export { out, namespace } => {
+                cmd_deploy_export(cli.json, out, namespace)
+            }
             DeployCommands::K8s { dir, namespace } => cmd_deploy_k8s(cli.json, dir, namespace),
             DeployCommands::Systemd {
                 out,
@@ -5673,9 +5760,10 @@ fn main() -> ExitCode {
             DeployCommands::Status { json } => cmd_deploy_status(cli.json || json),
         },
         Commands::Dna { cmd } => match cmd {
-            DnaCommands::Status { namespace, index_db } => {
-                cmd_dna_status(cli.json, namespace, index_db)
-            }
+            DnaCommands::Status {
+                namespace,
+                index_db,
+            } => cmd_dna_status(cli.json, namespace, index_db),
             DnaCommands::Build {
                 namespace,
                 start,
@@ -5698,8 +5786,12 @@ fn main() -> ExitCode {
                     limit,
                     index_db,
                 } => cmd_commit_list(json2, namespace, limit, index_db),
-                InvestigateCommands::Show { ml_id, index_db } => cmd_show_commit(json2, ml_id, index_db),
-                InvestigateCommands::Explain { ml_id, index_db } => cmd_show_commit(json2, ml_id, index_db),
+                InvestigateCommands::Show { ml_id, index_db } => {
+                    cmd_show_commit(json2, ml_id, index_db)
+                }
+                InvestigateCommands::Explain { ml_id, index_db } => {
+                    cmd_show_commit(json2, ml_id, index_db)
+                }
                 InvestigateCommands::Diff {
                     a,
                     b,
@@ -5735,9 +5827,10 @@ fn main() -> ExitCode {
                         name,
                         index_db,
                     } => cmd_tag_rm(json2, namespace, name, index_db),
-                    InvestigateTagCommands::List { namespace, index_db } => {
-                        cmd_tag_list(json2, namespace, index_db)
-                    }
+                    InvestigateTagCommands::List {
+                        namespace,
+                        index_db,
+                    } => cmd_tag_list(json2, namespace, index_db),
                 },
                 InvestigateCommands::Parents {
                     ml_id,
@@ -6180,7 +6273,9 @@ fn cmd_bar_run_observe_only(json: bool) -> Result<(), (u8, String)> {
                 escape_json(&kind),
             );
         } else {
-            println!("BAR observe-only: namespace={namespace_id} kind={kind} decision=observe_only");
+            println!(
+                "BAR observe-only: namespace={namespace_id} kind={kind} decision=observe_only"
+            );
             println!(
                 "  Verdict: decision={:?} reason={}",
                 verdict.decision,
@@ -6246,9 +6341,7 @@ fn cmd_export_incident(
                 signer.sign(&mut manifest).map_err(|e| {
                     (
                         1,
-                        format!(
-                            "failed to sign incident package with keystore key {key_id}: {e}",
-                        ),
+                        format!("failed to sign incident package with keystore key {key_id}: {e}",),
                     )
                 })?;
                 eprintln!(

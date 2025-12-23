@@ -1,4 +1,4 @@
-use common_models::{NamespaceId, hash_string_sha256};
+use common_models::hash_string_sha256;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -219,15 +219,15 @@ mod tests {
     fn registry_basic_operations() {
         let mut registry = ContractRegistry::new();
         let contract = create_test_contract();
-        
+
         let hash = registry.register(contract.clone()).expect("register");
-        
+
         let retrieved = registry.get(&hash).expect("get");
         assert_eq!(retrieved.contract_id, "contract_1");
-        
+
         let for_ns = registry.find_for_namespace("ns://acme/prod/payments/api");
         assert_eq!(for_ns.len(), 1);
-        
+
         registry.remove(&hash).expect("remove");
         assert!(registry.get(&hash).is_err());
     }

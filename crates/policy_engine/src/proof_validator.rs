@@ -2,7 +2,7 @@
 // Generates and verifies cryptographic proofs of policy decisions
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Types of proofs supported
 #[derive(Debug, Clone, Serialize, Deserialize)]

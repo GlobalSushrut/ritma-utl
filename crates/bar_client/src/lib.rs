@@ -36,7 +36,8 @@ impl BarClient {
     /// Construct a client using the same default/env logic as bar_daemon.
     /// BAR_SOCKET env var is honored, falling back to /tmp/bar_daemon.sock.
     pub fn from_env() -> Self {
-        let socket_path = std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/tmp/bar_daemon.sock".to_string());
+        let socket_path =
+            std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/tmp/bar_daemon.sock".to_string());
         Self { socket_path }
     }
 
@@ -48,7 +49,7 @@ impl BarClient {
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let json = serde_json::to_string(event)?;
         debug!("sending ObservedEvent to BAR: {}", json);
-        writeln!(stream, "{}", json)?;
+        writeln!(stream, "{json}")?;
         stream.flush()?;
 
         let mut reader = BufReader::new(stream);

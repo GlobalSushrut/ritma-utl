@@ -45,11 +45,11 @@ pub struct ProcessInjectionEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InjectionType {
-    PtracePokeText,      // PTRACE_POKETEXT
-    PtraceSetRegs,       // PTRACE_SETREGS
-    ProcessVmWritev,     // process_vm_writev syscall
-    ProcMemWrite,        // Write to /proc/[pid]/mem
-    LdPreload,           // LD_PRELOAD hijacking
+    PtracePokeText,  // PTRACE_POKETEXT
+    PtraceSetRegs,   // PTRACE_SETREGS
+    ProcessVmWritev, // process_vm_writev syscall
+    ProcMemWrite,    // Write to /proc/[pid]/mem
+    LdPreload,       // LD_PRELOAD hijacking
     Unknown,
 }
 
@@ -111,19 +111,19 @@ pub enum FilelessEvidence {
 pub struct FilelessDetector {
     /// Track memfd file descriptors by PID
     memfd_tracker: HashMap<i32, Vec<MemfdInfo>>,
-    
+
     /// Track process injection events
     injection_monitor: ProcessInjectionMonitor,
-    
+
     /// Track /dev/shm executions
     shm_monitor: ShmExecutionMonitor,
-    
+
     /// Alert history
     alerts: Vec<FilelessAlert>,
-    
+
     /// eBPF hook manager (optional - requires root)
     ebpf_manager: Option<ebpf_hooks::FilelessEbpfManager>,
-    
+
     /// eBPF hardening manager (evasion detection)
     hardening_manager: Option<ebpf_hardening::EbpfHardeningManager>,
 }
@@ -139,13 +139,14 @@ impl FilelessDetector {
             hardening_manager: None,
         }
     }
-    
+
     /// Create detector with eBPF hooks enabled (requires root)
     pub fn new_with_ebpf(config: ebpf_hooks::EbpfHookConfig) -> Result<Self> {
         let mut ebpf_manager = ebpf_hooks::FilelessEbpfManager::new(config);
-        ebpf_manager.initialize()
-            .map_err(|e| FilelessDetectorError::MemfdMonitorError(format!("eBPF init failed: {}", e)))?;
-        
+        ebpf_manager.initialize().map_err(|e| {
+            FilelessDetectorError::MemfdMonitorError(format!("eBPF init failed: {e}"))
+        })?;
+
         Ok(Self {
             memfd_tracker: HashMap::new(),
             injection_monitor: ProcessInjectionMonitor::new(),
@@ -155,28 +156,29 @@ impl FilelessDetector {
             hardening_manager: None,
         })
     }
-    
+
     /// Create detector with eBPF hooks AND hardening (full protection)
     pub fn new_with_hardening(
         hook_config: ebpf_hooks::EbpfHookConfig,
         enable_hardening: bool,
     ) -> Result<Self> {
         let mut ebpf_manager = ebpf_hooks::FilelessEbpfManager::new(hook_config);
-        ebpf_manager.initialize()
-            .map_err(|e| FilelessDetectorError::MemfdMonitorError(format!("eBPF init failed: {}", e)))?;
-        
+        ebpf_manager.initialize().map_err(|e| {
+            FilelessDetectorError::MemfdMonitorError(format!("eBPF init failed: {e}"))
+        })?;
+
         let hardening_manager = if enable_hardening {
             Some(ebpf_hardening::EbpfHardeningManager::new(
-                10000,  // buffer_size
-                60,     // check_interval_secs
-                3,      // ngram_size
-                0.8,    // anomaly_threshold
-                true,   // auto_heal
+                10000, // buffer_size
+                60,    // check_interval_secs
+                3,     // ngram_size
+                0.8,   // anomaly_threshold
+                true,  // auto_heal
             ))
         } else {
             None
         };
-        
+
         Ok(Self {
             memfd_tracker: HashMap::new(),
             injection_monitor: ProcessInjectionMonitor::new(),
@@ -186,7 +188,7 @@ impl FilelessDetector {
             hardening_manager,
         })
     }
-    
+
     /// Get evasion statistics
     pub fn get_evasion_stats(&self) -> Option<EvasionStats> {
         self.hardening_manager.as_ref().map(|hm| EvasionStats {
@@ -195,14 +197,14 @@ impl FilelessDetector {
             syscall_anomaly_count: hm.get_anomalies().len() as u64,
         })
     }
-    
+
     /// Process eBPF events and generate alerts
     pub fn process_ebpf_events(&mut self) -> Result<Vec<FilelessAlert>> {
         let mut new_alerts = Vec::new();
-        
+
         if let Some(ref mut manager) = self.ebpf_manager {
             let events = manager.poll_events();
-            
+
             for event in events {
                 match event {
                     ebpf_hooks::FilelessEbpfEvent::MemfdCreate(e) => {
@@ -215,8 +217,8 @@ impl FilelessDetector {
                     }
                     ebpf_hooks::FilelessEbpfEvent::Ptrace(e) => {
                         let injection_type = match e.request {
-                            1 => InjectionType::PtracePokeText,  // PTRACE_POKETEXT
-                            13 => InjectionType::PtraceSetRegs,  // PTRACE_SETREGS
+                            1 => InjectionType::PtracePokeText, // PTRACE_POKETEXT
+                            13 => InjectionType::PtraceSetRegs, // PTRACE_SETREGS
                             _ => InjectionType::Unknown,
                         };
                         if let Some(alert) = self.detect_process_injection(
@@ -224,7 +226,7 @@ impl FilelessDetector {
                             e.target_pid,
                             injection_type,
                             Some(e.addr),
-                            8,  // ptrace writes 8 bytes at a time
+                            8, // ptrace writes 8 bytes at a time
                         )? {
                             new_alerts.push(alert);
                         }
@@ -259,12 +261,18 @@ impl FilelessDetector {
                 }
             }
         }
-        
+
         Ok(new_alerts)
     }
-    
+
     /// Track a memfd_create syscall
-    pub fn track_memfd_create(&mut self, pid: i32, fd: i32, name: String, flags: u32) -> Result<()> {
+    pub fn track_memfd_create(
+        &mut self,
+        pid: i32,
+        fd: i32,
+        name: String,
+        flags: u32,
+    ) -> Result<()> {
         let info = MemfdInfo {
             pid,
             fd,
@@ -274,20 +282,23 @@ impl FilelessDetector {
             flags,
             executed: false,
         };
-        
-        self.memfd_tracker.entry(pid).or_insert_with(Vec::new).push(info.clone());
-        
-        log::info!("Tracked memfd_create: pid={}, fd={}, name={}", pid, fd, name);
-        
+
+        self.memfd_tracker
+            .entry(pid)
+            .or_default()
+            .push(info.clone());
+
+        log::info!("Tracked memfd_create: pid={pid}, fd={fd}, name={name}");
+
         Ok(())
     }
-    
+
     /// Track memfd execution (when execve is called on memfd)
     pub fn track_memfd_execution(&mut self, pid: i32, fd: i32) -> Result<Option<FilelessAlert>> {
         if let Some(memfds) = self.memfd_tracker.get_mut(&pid) {
             if let Some(memfd) = memfds.iter_mut().find(|m| m.fd == fd) {
                 memfd.executed = true;
-                
+
                 let alert = FilelessAlert {
                     alert_id: uuid::Uuid::new_v4().to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
@@ -300,17 +311,17 @@ impl FilelessDetector {
                     evidence: FilelessEvidence::Memfd(memfd.clone()),
                     recommended_action: "Investigate process lineage, capture memory dump, check for C2 communication".to_string(),
                 };
-                
+
                 log::warn!("FILELESS EXECUTION DETECTED: {}", alert.description);
                 self.alerts.push(alert.clone());
-                
+
                 return Ok(Some(alert));
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Detect process injection
     pub fn detect_process_injection(
         &mut self,
@@ -329,30 +340,35 @@ impl FilelessDetector {
             bytes_written,
             severity: Severity::Critical,
         };
-        
+
         self.injection_monitor.record_injection(event.clone());
-        
+
         let alert = FilelessAlert {
             alert_id: uuid::Uuid::new_v4().to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
             alert_type: FilelessAlertType::ProcessInjection,
             severity: Severity::Critical,
             description: format!(
-                "Process injection detected: PID {} injected into PID {} using {:?}",
-                injector_pid, target_pid, injection_type
+                "Process injection detected: PID {injector_pid} injected into PID {target_pid} using {injection_type:?}"
             ),
             evidence: FilelessEvidence::Injection(event),
-            recommended_action: "Terminate injector process, capture memory dump of target, analyze injected code".to_string(),
+            recommended_action:
+                "Terminate injector process, capture memory dump of target, analyze injected code"
+                    .to_string(),
         };
-        
+
         log::warn!("PROCESS INJECTION DETECTED: {}", alert.description);
         self.alerts.push(alert.clone());
-        
+
         Ok(Some(alert))
     }
-    
+
     /// Track /dev/shm execution
-    pub fn track_shm_execution(&mut self, pid: i32, file_path: PathBuf) -> Result<Option<FilelessAlert>> {
+    pub fn track_shm_execution(
+        &mut self,
+        pid: i32,
+        file_path: PathBuf,
+    ) -> Result<Option<FilelessAlert>> {
         let event = ShmExecutionEvent {
             timestamp: chrono::Utc::now().to_rfc3339(),
             pid,
@@ -361,9 +377,9 @@ impl FilelessDetector {
             file_size: std::fs::metadata(&file_path)?.len(),
             executed: true,
         };
-        
+
         self.shm_monitor.record_execution(event.clone());
-        
+
         let alert = FilelessAlert {
             alert_id: uuid::Uuid::new_v4().to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -371,23 +387,25 @@ impl FilelessDetector {
             severity: Severity::High,
             description: format!(
                 "Shared memory execution detected: PID {} executed {}",
-                pid, file_path.display()
+                pid,
+                file_path.display()
             ),
             evidence: FilelessEvidence::Shm(event),
-            recommended_action: "Capture file from /dev/shm, analyze for malware, check process lineage".to_string(),
+            recommended_action:
+                "Capture file from /dev/shm, analyze for malware, check process lineage".to_string(),
         };
-        
+
         log::warn!("SHM EXECUTION DETECTED: {}", alert.description);
         self.alerts.push(alert.clone());
-        
+
         Ok(Some(alert))
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[FilelessAlert] {
         &self.alerts
     }
-    
+
     /// Get alerts by severity
     pub fn get_alerts_by_severity(&self, severity: Severity) -> Vec<FilelessAlert> {
         self.alerts.iter()
@@ -395,7 +413,7 @@ impl FilelessDetector {
             .cloned()
             .collect()
     }
-    
+
     /// Clear old alerts (older than specified hours)
     pub fn clear_old_alerts(&mut self, hours: i64) {
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
@@ -407,13 +425,13 @@ impl FilelessDetector {
             }
         });
     }
-    
+
     fn compute_file_hash(&self, path: &PathBuf) -> Result<String> {
         use std::io::Read;
         let mut file = std::fs::File::open(path)?;
         let mut hasher = sha2::Sha256::new();
         let mut buffer = [0; 8192];
-        
+
         loop {
             let n = file.read(&mut buffer)?;
             if n == 0 {
@@ -422,7 +440,7 @@ impl FilelessDetector {
             use sha2::Digest;
             hasher.update(&buffer[..n]);
         }
-        
+
         use sha2::Digest;
         Ok(format!("{:x}", hasher.finalize()))
     }
@@ -445,13 +463,14 @@ impl ProcessInjectionMonitor {
             injection_events: Vec::new(),
         }
     }
-    
+
     pub fn record_injection(&mut self, event: ProcessInjectionEvent) {
         self.injection_events.push(event);
     }
-    
+
     pub fn get_injections_by_pid(&self, pid: i32) -> Vec<&ProcessInjectionEvent> {
-        self.injection_events.iter()
+        self.injection_events
+            .iter()
             .filter(|e| e.injector_pid == pid || e.target_pid == pid)
             .collect()
     }
@@ -474,15 +493,13 @@ impl ShmExecutionMonitor {
             executions: Vec::new(),
         }
     }
-    
+
     pub fn record_execution(&mut self, event: ShmExecutionEvent) {
         self.executions.push(event);
     }
-    
+
     pub fn get_executions_by_pid(&self, pid: i32) -> Vec<&ShmExecutionEvent> {
-        self.executions.iter()
-            .filter(|e| e.pid == pid)
-            .collect()
+        self.executions.iter().filter(|e| e.pid == pid).collect()
     }
 }
 
@@ -495,45 +512,57 @@ impl Default for ShmExecutionMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_memfd_tracking() {
         let mut detector = FilelessDetector::new();
-        
-        detector.track_memfd_create(1000, 3, "malware".to_string(), 0).unwrap();
-        
+
+        detector
+            .track_memfd_create(1000, 3, "malware".to_string(), 0)
+            .unwrap();
+
         assert_eq!(detector.memfd_tracker.len(), 1);
         assert_eq!(detector.memfd_tracker.get(&1000).unwrap().len(), 1);
     }
-    
+
     #[test]
     fn test_memfd_execution_alert() {
         let mut detector = FilelessDetector::new();
-        
-        detector.track_memfd_create(1000, 3, "malware".to_string(), 0).unwrap();
+
+        detector
+            .track_memfd_create(1000, 3, "malware".to_string(), 0)
+            .unwrap();
         let alert = detector.track_memfd_execution(1000, 3).unwrap();
-        
+
         assert!(alert.is_some());
         let alert = alert.unwrap();
-        assert!(matches!(alert.alert_type, FilelessAlertType::MemfdExecution));
+        assert!(matches!(
+            alert.alert_type,
+            FilelessAlertType::MemfdExecution
+        ));
         assert!(matches!(alert.severity, Severity::Critical));
     }
-    
+
     #[test]
     fn test_process_injection_detection() {
         let mut detector = FilelessDetector::new();
-        
-        let alert = detector.detect_process_injection(
-            1000,
-            2000,
-            InjectionType::PtracePokeText,
-            Some(0x7fff0000),
-            4096,
-        ).unwrap();
-        
+
+        let alert = detector
+            .detect_process_injection(
+                1000,
+                2000,
+                InjectionType::PtracePokeText,
+                Some(0x7fff0000),
+                4096,
+            )
+            .unwrap();
+
         assert!(alert.is_some());
         let alert = alert.unwrap();
-        assert!(matches!(alert.alert_type, FilelessAlertType::ProcessInjection));
+        assert!(matches!(
+            alert.alert_type,
+            FilelessAlertType::ProcessInjection
+        ));
         assert!(matches!(alert.severity, Severity::Critical));
     }
 }

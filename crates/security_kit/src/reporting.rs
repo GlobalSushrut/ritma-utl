@@ -1,11 +1,11 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 
-use compliance_index::ControlEvalRecord;
-use security_events::DecisionEvent;
-use dig_index::DigIndexEntry;
 use clock::TimeTick;
+use compliance_index::ControlEvalRecord;
+use dig_index::DigIndexEntry;
+use security_events::DecisionEvent;
 
 use crate::containers::ParamBundle;
 use crate::observability;
@@ -79,7 +79,8 @@ impl SecurityReport {
                 title: "SecurityKit infra report".to_string(),
                 generated_at: now,
                 tenant_id: tenant_filter.map(|s| s.to_string()),
-                summary: "Consolidated compliance, incident, and evidence coverage report".to_string(),
+                summary: "Consolidated compliance, incident, and evidence coverage report"
+                    .to_string(),
                 control_posture,
                 incidents,
                 dig_coverage,
@@ -148,8 +149,9 @@ fn aggregate_controls(tenant_filter: Option<&str>) -> std::io::Result<Vec<Contro
     };
     let reader = BufReader::new(file);
 
-    let mut stats: BTreeMap<(String, String, Option<String>, Option<String>), (u64, u64)> =
-        BTreeMap::new();
+    type StatsKey = (String, String, Option<String>, Option<String>);
+    type StatsValue = (u64, u64);
+    let mut stats: BTreeMap<StatsKey, StatsValue> = BTreeMap::new();
 
     for line_res in reader.lines() {
         let line = line_res?;
@@ -196,7 +198,10 @@ fn aggregate_controls(tenant_filter: Option<&str>) -> std::io::Result<Vec<Contro
     Ok(rows)
 }
 
-fn aggregate_incidents(tenant_filter: Option<&str>, limit: usize) -> std::io::Result<Vec<IncidentRow>> {
+fn aggregate_incidents(
+    tenant_filter: Option<&str>,
+    limit: usize,
+) -> std::io::Result<Vec<IncidentRow>> {
     use std::fs::File;
 
     let path = std::env::var("UTLD_DECISION_EVENTS")
@@ -262,8 +267,8 @@ fn aggregate_incidents(tenant_filter: Option<&str>, limit: usize) -> std::io::Re
 fn aggregate_dig_coverage(tenant_filter: Option<&str>) -> std::io::Result<Vec<DigCoverageRow>> {
     use std::fs::File;
 
-    let index_path = std::env::var("UTLD_DIG_INDEX")
-        .unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let index_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
 
     let file = match File::open(&index_path) {
         Ok(f) => f,

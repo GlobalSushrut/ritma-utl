@@ -98,7 +98,7 @@ fn normalize_node_id(raw: &str) -> String {
     if trimmed.starts_with("node:") {
         trimmed
     } else {
-        format!("node:{}", trimmed)
+        format!("node:{trimmed}")
     }
 }
 
@@ -225,7 +225,7 @@ struct ReplayJob {
     status: String,
     created_at: u64,
     note: Option<String>,
-     /// Optional policy decision filter for this replay (e.g. "deny").
+    /// Optional policy decision filter for this replay (e.g. "deny").
     policy_decision: Option<String>,
     /// Human-readable summary of what the replay found.
     result_summary: Option<String>,
@@ -516,13 +516,13 @@ async fn list_org_plans(State(state): State<AppState>) -> Json<Vec<OrgPlan>> {
     Json(inner.org_plans.clone())
 }
 
-async fn create_org(
-    State(state): State<AppState>,
-    Json(req): Json<OrgCreateRequest>,
-) -> Json<Org> {
+async fn create_org(State(state): State<AppState>, Json(req): Json<OrgCreateRequest>) -> Json<Org> {
     let org = {
         let mut inner = state.inner.write().await;
-        let org = Org { id: req.id, name: req.name };
+        let org = Org {
+            id: req.id,
+            name: req.name,
+        };
         inner.orgs.push(org.clone());
         org
     };
@@ -543,7 +543,11 @@ async fn create_tenant(
 ) -> Json<Tenant> {
     let tenant = {
         let mut inner = state.inner.write().await;
-        let tenant = Tenant { id: req.id, org_id: req.org_id, name: req.name };
+        let tenant = Tenant {
+            id: req.id,
+            org_id: req.org_id,
+            name: req.name,
+        };
         inner.tenants.push(tenant.clone());
         tenant
     };
@@ -644,7 +648,12 @@ async fn list_nodes(
 ) -> Json<Vec<NodeWallet>> {
     let inner = state.inner.read().await;
     let nodes: Vec<NodeWallet> = match q.org_id {
-        Some(org) => inner.nodes.iter().cloned().filter(|n| n.org_id == org).collect(),
+        Some(org) => inner
+            .nodes
+            .iter()
+            .filter(|n| n.org_id == org)
+            .cloned()
+            .collect(),
         None => inner.nodes.clone(),
     };
     Json(nodes)
@@ -711,7 +720,7 @@ async fn create_replay_job(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let id = format!("rj-{}", now);
+    let id = format!("rj-{now}");
 
     let job = {
         let mut inner = state.inner.write().await;
@@ -788,10 +797,8 @@ async fn get_replay_job_results(
         None => return Err(StatusCode::NOT_FOUND),
     };
 
-    let (dig_stats_opt, decision_stats_opt) = tokio::join!(
-        run_dig_index_replay(&job),
-        run_decision_log_replay(&job),
-    );
+    let (dig_stats_opt, decision_stats_opt) =
+        tokio::join!(run_dig_index_replay(&job), run_decision_log_replay(&job),);
 
     let dig_raw = dig_stats_opt.unwrap_or(ReplaySourceStats {
         total: 0,
@@ -933,8 +940,7 @@ async fn run_replay_job_worker(state: AppState, job_id: String) {
         .as_secs();
 
     let summary = format!(
-        "dig_index_total={} decision_events_total={} dig_index_by_policy={} decision_events_by_policy={}",
-        dig_total, decision_total, dig_policy_json, decision_policy_json
+        "dig_index_total={dig_total} decision_events_total={decision_total} dig_index_by_policy={dig_policy_json} decision_events_by_policy={decision_policy_json}"
     );
 
     {
@@ -992,10 +998,7 @@ async fn run_dig_index_replay(job: &ReplayJob) -> Option<ReplaySourceStats> {
                         .unwrap_or_else(|| "unknown".to_string());
                     *policy_map.entry(policy_key).or_insert(0) += 1;
 
-                    let tenant_key = e
-                        .tenant_id
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let tenant_key = e.tenant_id.clone().unwrap_or_else(|| "unknown".to_string());
                     *tenant_map.entry(tenant_key).or_insert(0) += 1;
 
                     let name_key = e
@@ -1011,7 +1014,10 @@ async fn run_dig_index_replay(job: &ReplayJob) -> Option<ReplaySourceStats> {
 
                 let mut by_policy_decision: Vec<PolicyDecisionCount> = policy_map
                     .into_iter()
-                    .map(|(policy_decision, count)| PolicyDecisionCount { policy_decision, count })
+                    .map(|(policy_decision, count)| PolicyDecisionCount {
+                        policy_decision,
+                        count,
+                    })
                     .collect();
                 by_policy_decision.sort_by(|a, b| a.policy_decision.cmp(&b.policy_decision));
 
@@ -1036,7 +1042,7 @@ async fn run_dig_index_replay(job: &ReplayJob) -> Option<ReplaySourceStats> {
                 })
             }
             Err(e) => {
-                eprintln!("replay dig_index query failed: {}", e);
+                eprintln!("replay dig_index query failed: {e}");
                 None
             }
         }
@@ -1118,7 +1124,10 @@ async fn run_decision_log_replay(job: &ReplayJob) -> Option<ReplaySourceStats> {
 
         let mut by_policy_decision: Vec<PolicyDecisionCount> = policy_map
             .into_iter()
-            .map(|(policy_decision, count)| PolicyDecisionCount { policy_decision, count })
+            .map(|(policy_decision, count)| PolicyDecisionCount {
+                policy_decision,
+                count,
+            })
             .collect();
         by_policy_decision.sort_by(|a, b| a.policy_decision.cmp(&b.policy_decision));
 
@@ -1237,10 +1246,10 @@ async fn auditor_list_reports(
         .collect();
 
     if let Some(ref tenant_id) = q.tenant_id {
-        out.retain(|r| r.tenant_id.as_ref().map_or(false, |t| t == tenant_id));
+        out.retain(|r| r.tenant_id.as_ref() == Some(tenant_id));
     }
     if let Some(ref framework) = q.framework {
-        out.retain(|r| r.framework.as_ref().map_or(false, |f| f == framework));
+        out.retain(|r| r.framework.as_ref() == Some(framework));
     }
 
     Json(out)
@@ -1327,7 +1336,8 @@ async fn get_report_proof(
         evidence: evidence.clone(),
     };
 
-    let manifest_bytes = serde_json::to_vec(&manifest).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let manifest_bytes =
+        serde_json::to_vec(&manifest).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let manifest_sha = Sha256::digest(&manifest_bytes);
     let manifest_sha_hex = hex::encode(manifest_sha);
 
@@ -1406,7 +1416,7 @@ async fn create_report(
         .evidence
         .iter()
         .filter(|e| e.org_id == req.org_id)
-        .filter(|e| req.tenant_id.as_ref().map_or(true, |t| &e.tenant_id == t))
+        .filter(|e| req.tenant_id.as_ref().is_none_or(|t| &e.tenant_id == t))
         .filter(|e| e.scope == req.scope)
         .map(|e| e.package_id.clone())
         .collect();
@@ -1705,13 +1715,11 @@ async fn enable_org_rulepack(
     };
 
     // Avoid duplicate bindings.
-    if !inner
-        .org_rulepacks
-        .iter()
-        .any(|b| b.org_id == binding.org_id
+    if !inner.org_rulepacks.iter().any(|b| {
+        b.org_id == binding.org_id
             && b.tenant_id == binding.tenant_id
-            && b.rulepack_id == binding.rulepack_id)
-    {
+            && b.rulepack_id == binding.rulepack_id
+    }) {
         inner.org_rulepacks.push(binding.clone());
     }
 
@@ -1726,17 +1734,13 @@ async fn disable_org_rulepack(
     let mut inner = state.inner.write().await;
 
     inner.org_rulepacks.retain(|b| {
-        !(b.org_id == org_id
-            && b.rulepack_id == req.rulepack_id
-            && b.tenant_id == req.tenant_id)
+        !(b.org_id == org_id && b.rulepack_id == req.rulepack_id && b.tenant_id == req.tenant_id)
     });
 
     Json(())
 }
 
-async fn list_slo_summary(
-    State(state): State<AppState>,
-) -> Json<Vec<SloOverviewResponse>> {
+async fn list_slo_summary(State(state): State<AppState>) -> Json<Vec<SloOverviewResponse>> {
     let inner = state.inner.read().await;
 
     let mut out: Vec<SloOverviewResponse> = Vec::new();
@@ -1766,28 +1770,14 @@ async fn list_slo_summary(
     Json(out)
 }
 
-async fn org_usage(
-    State(state): State<AppState>,
-) -> Json<Vec<UsageSummary>> {
+async fn org_usage(State(state): State<AppState>) -> Json<Vec<UsageSummary>> {
     let inner = state.inner.read().await;
 
     let mut out = Vec::new();
     for org in &inner.orgs {
-        let tenants = inner
-            .tenants
-            .iter()
-            .filter(|t| t.org_id == org.id)
-            .count() as u64;
-        let nodes = inner
-            .nodes
-            .iter()
-            .filter(|n| n.org_id == org.id)
-            .count() as u64;
-        let evidence = inner
-            .evidence
-            .iter()
-            .filter(|e| e.org_id == org.id)
-            .count() as u64;
+        let tenants = inner.tenants.iter().filter(|t| t.org_id == org.id).count() as u64;
+        let nodes = inner.nodes.iter().filter(|n| n.org_id == org.id).count() as u64;
+        let evidence = inner.evidence.iter().filter(|e| e.org_id == org.id).count() as u64;
         let slo_events: u64 = inner
             .slos
             .iter()
@@ -1808,20 +1798,14 @@ async fn org_usage(
     Json(out)
 }
 
-async fn org_overview(
-    State(state): State<AppState>,
-) -> Json<Vec<OverviewResponse>> {
+async fn org_overview(State(state): State<AppState>) -> Json<Vec<OverviewResponse>> {
     let inner = state.inner.read().await;
 
     let mut out = Vec::new();
     for org in &inner.orgs {
         let tenant_count = inner.tenants.iter().filter(|t| t.org_id == org.id).count();
         let node_count = inner.nodes.iter().filter(|n| n.org_id == org.id).count();
-        let evidence_count = inner
-            .evidence
-            .iter()
-            .filter(|e| e.org_id == org.id)
-            .count();
+        let evidence_count = inner.evidence.iter().filter(|e| e.org_id == org.id).count();
 
         out.push(OverviewResponse {
             org_id: org.id.clone(),
@@ -1855,12 +1839,12 @@ async fn init_pg_pool_from_env() -> Option<PgPool> {
     match PgPool::connect(&dsn).await {
         Ok(pool) => {
             if let Err(e) = run_migrations(&pool).await {
-                eprintln!("ritma_cloud: failed to run PostgreSQL migrations: {}", e);
+                eprintln!("ritma_cloud: failed to run PostgreSQL migrations: {e}");
             }
             Some(pool)
         }
         Err(e) => {
-            eprintln!("ritma_cloud: failed to connect to PostgreSQL ({}), running in-memory only", e);
+            eprintln!("ritma_cloud: failed to connect to PostgreSQL ({e}), running in-memory only");
             None
         }
     }
@@ -1881,23 +1865,17 @@ async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "ALTER TABLE replay_jobs ADD COLUMN IF NOT EXISTS policy_decision TEXT",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("ALTER TABLE replay_jobs ADD COLUMN IF NOT EXISTS policy_decision TEXT")
+        .execute(pool)
+        .await?;
 
-    sqlx::query(
-        "ALTER TABLE replay_jobs ADD COLUMN IF NOT EXISTS result_summary TEXT",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("ALTER TABLE replay_jobs ADD COLUMN IF NOT EXISTS result_summary TEXT")
+        .execute(pool)
+        .await?;
 
-    sqlx::query(
-        "ALTER TABLE replay_jobs ADD COLUMN IF NOT EXISTS completed_at BIGINT",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("ALTER TABLE replay_jobs ADD COLUMN IF NOT EXISTS completed_at BIGINT")
+        .execute(pool)
+        .await?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS tenants (\n             id     TEXT PRIMARY KEY,\n             org_id TEXT NOT NULL,\n             name   TEXT NOT NULL\n         )",
@@ -1923,11 +1901,9 @@ async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "ALTER TABLE keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("ALTER TABLE keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'")
+        .execute(pool)
+        .await?;
 
     sqlx::query("ALTER TABLE keys ADD COLUMN IF NOT EXISTS created_at BIGINT")
         .execute(pool)
@@ -1941,17 +1917,13 @@ async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
 
-    sqlx::query(
-        "ALTER TABLE keys ADD COLUMN IF NOT EXISTS replaced_by_key_id TEXT",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("ALTER TABLE keys ADD COLUMN IF NOT EXISTS replaced_by_key_id TEXT")
+        .execute(pool)
+        .await?;
 
-    sqlx::query(
-        "ALTER TABLE keys ADD COLUMN IF NOT EXISTS governance_note TEXT",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("ALTER TABLE keys ADD COLUMN IF NOT EXISTS governance_note TEXT")
+        .execute(pool)
+        .await?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS slos (\n             org_id       TEXT NOT NULL,\n             tenant_id    TEXT,\n             node_id      TEXT NOT NULL,\n             component    TEXT NOT NULL,\n             operation    TEXT NOT NULL,\n             outcome      TEXT NOT NULL,\n             count        BIGINT NOT NULL,\n             window_start BIGINT NOT NULL,\n             window_end   BIGINT NOT NULL\n         )",
@@ -1969,7 +1941,10 @@ async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 
 async fn hydrate_state_from_db(pool: &PgPool, inner: Arc<RwLock<InMemoryState>>) {
-    if let Ok(rows) = sqlx::query("SELECT id, name FROM orgs").fetch_all(pool).await {
+    if let Ok(rows) = sqlx::query("SELECT id, name FROM orgs")
+        .fetch_all(pool)
+        .await
+    {
         let orgs = rows
             .into_iter()
             .map(|row| Org {
@@ -1982,7 +1957,10 @@ async fn hydrate_state_from_db(pool: &PgPool, inner: Arc<RwLock<InMemoryState>>)
         state.orgs = orgs;
     }
 
-    if let Ok(rows) = sqlx::query("SELECT id, org_id, name FROM tenants").fetch_all(pool).await {
+    if let Ok(rows) = sqlx::query("SELECT id, org_id, name FROM tenants")
+        .fetch_all(pool)
+        .await
+    {
         let tenants = rows
             .into_iter()
             .map(|row| Tenant {
@@ -1996,7 +1974,10 @@ async fn hydrate_state_from_db(pool: &PgPool, inner: Arc<RwLock<InMemoryState>>)
         state.tenants = tenants;
     }
 
-    if let Ok(rows) = sqlx::query("SELECT id, org_id FROM nodes").fetch_all(pool).await {
+    if let Ok(rows) = sqlx::query("SELECT id, org_id FROM nodes")
+        .fetch_all(pool)
+        .await
+    {
         let nodes = rows
             .into_iter()
             .map(|row| NodeWallet {
@@ -2118,10 +2099,7 @@ async fn hydrate_state_from_db(pool: &PgPool, inner: Arc<RwLock<InMemoryState>>)
                 let features = if features_str.is_empty() {
                     Vec::new()
                 } else {
-                    features_str
-                        .split(',')
-                        .map(|s| s.to_string())
-                        .collect()
+                    features_str.split(',').map(|s| s.to_string()).collect()
                 };
 
                 OrgPlan {
@@ -2229,7 +2207,10 @@ async fn main() {
         .route("/rulepacks", get(list_rulepacks).post(create_rulepack))
         .route("/orgs/:org_id/rulepacks", get(list_org_rulepacks))
         .route("/orgs/:org_id/rulepacks/enable", post(enable_org_rulepack))
-        .route("/orgs/:org_id/rulepacks/disable", post(disable_org_rulepack))
+        .route(
+            "/orgs/:org_id/rulepacks/disable",
+            post(disable_org_rulepack),
+        )
         .route("/nodes", get(list_nodes))
         .route("/nodes/register", post(register_node))
         .route("/nodes/:node_id/heartbeat", post(node_heartbeat))
@@ -2250,7 +2231,10 @@ async fn main() {
         .route("/slo/summary", get(list_slo_summary))
         .route("/overview", get(org_overview))
         .route("/usage", get(org_usage))
-        .route("/replay_jobs", get(list_replay_jobs).post(create_replay_job))
+        .route(
+            "/replay_jobs",
+            get(list_replay_jobs).post(create_replay_job),
+        )
         .route("/replay_jobs/:id/results", get(get_replay_job_results))
         .route_layer(middleware::from_fn(require_api_key));
 
@@ -2264,7 +2248,7 @@ async fn main() {
         .parse()
         .expect("invalid RITMA_CLOUD_ADDR");
 
-    println!("ritma_cloud listening on {}", addr);
+    println!("ritma_cloud listening on {addr}");
 
     axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app)
         .await

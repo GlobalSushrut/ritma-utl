@@ -139,14 +139,14 @@ pub struct DkomEvidence {
     pub object_address: u64,
     pub list_manipulation: bool,
     pub structure_modification: Vec<String>,
-    pub hidden_from: Vec<String>,  // e.g., "PsActiveProcessHead", "EPROCESS list"
+    pub hidden_from: Vec<String>, // e.g., "PsActiveProcessHead", "EPROCESS list"
 }
 
 /// Rootkit detector
 pub struct RootkitDetector {
     /// Known good syscall addresses
     syscall_baseline: HashMap<String, u64>,
-    
+
     /// Detected rootkits
     alerts: Vec<RootkitAlert>,
 }
@@ -158,14 +158,18 @@ impl RootkitDetector {
             alerts: Vec::new(),
         }
     }
-    
+
     /// Establish baseline for syscall addresses
     pub fn establish_baseline(&mut self, syscall_name: String, address: u64) {
         self.syscall_baseline.insert(syscall_name, address);
     }
-    
+
     /// Check for syscall hooking
-    pub fn check_syscall_hooks(&mut self, syscall_name: &str, current_address: u64) -> Option<RootkitAlert> {
+    pub fn check_syscall_hooks(
+        &mut self,
+        syscall_name: &str,
+        current_address: u64,
+    ) -> Option<RootkitAlert> {
         if let Some(&baseline_address) = self.syscall_baseline.get(syscall_name) {
             if baseline_address != current_address {
                 let alert = RootkitAlert {
@@ -173,8 +177,9 @@ impl RootkitDetector {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     rootkit_type: RootkitType::SyscallHooking,
                     severity: Severity::Critical,
-                    description: format!("Syscall hook detected: {} (baseline: 0x{:x}, current: 0x{:x})",
-                                       syscall_name, baseline_address, current_address),
+                    description: format!(
+                        "Syscall hook detected: {syscall_name} (baseline: 0x{baseline_address:x}, current: 0x{current_address:x})"
+                    ),
                     evidence: RootkitEvidence {
                         hooked_functions: vec![syscall_name.to_string()],
                         hidden_processes: vec![],
@@ -187,33 +192,41 @@ impl RootkitDetector {
                             modified_bytes: current_address.to_le_bytes().to_vec(),
                         }],
                     },
-                    recommended_action: "System compromised - immediate forensic analysis required".to_string(),
+                    recommended_action: "System compromised - immediate forensic analysis required"
+                        .to_string(),
                 };
-                
-                log::error!("🔴 ROOTKIT DETECTED: Syscall hook on {}", syscall_name);
+
+                log::error!("🔴 ROOTKIT DETECTED: Syscall hook on {syscall_name}");
                 self.alerts.push(alert.clone());
                 return Some(alert);
             }
         }
         None
     }
-    
+
     /// Detect hidden processes
-    pub fn detect_hidden_processes(&mut self, visible_pids: &[i32], all_pids: &[i32]) -> Option<RootkitAlert> {
+    pub fn detect_hidden_processes(
+        &mut self,
+        visible_pids: &[i32],
+        all_pids: &[i32],
+    ) -> Option<RootkitAlert> {
         let visible_set: HashSet<_> = visible_pids.iter().collect();
-        let hidden_pids: Vec<i32> = all_pids.iter()
+        let hidden_pids: Vec<i32> = all_pids
+            .iter()
             .filter(|pid| !visible_set.contains(pid))
             .copied()
             .collect();
-        
+
         if !hidden_pids.is_empty() {
             let alert = RootkitAlert {
                 alert_id: format!("rootkit_{}", uuid::Uuid::new_v4()),
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 rootkit_type: RootkitType::KernelMode,
                 severity: Severity::Critical,
-                description: format!("Hidden processes detected: {} processes hidden from userspace",
-                                   hidden_pids.len()),
+                description: format!(
+                    "Hidden processes detected: {} processes hidden from userspace",
+                    hidden_pids.len()
+                ),
                 evidence: RootkitEvidence {
                     hooked_functions: vec![],
                     hidden_processes: hidden_pids.clone(),
@@ -221,17 +234,22 @@ impl RootkitDetector {
                     hidden_network_connections: vec![],
                     kernel_memory_modifications: vec![],
                 },
-                recommended_action: "Kernel-mode rootkit detected - system reboot from clean media required".to_string(),
+                recommended_action:
+                    "Kernel-mode rootkit detected - system reboot from clean media required"
+                        .to_string(),
             };
-            
-            log::error!("🔴 ROOTKIT DETECTED: {} hidden processes", hidden_pids.len());
+
+            log::error!(
+                "🔴 ROOTKIT DETECTED: {} hidden processes",
+                hidden_pids.len()
+            );
             self.alerts.push(alert.clone());
             return Some(alert);
         }
-        
+
         None
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[RootkitAlert] {
         &self.alerts
@@ -248,7 +266,7 @@ impl Default for RootkitDetector {
 pub struct KernelModuleAnalyzer {
     /// Known good module hashes
     trusted_modules: HashMap<String, String>,
-    
+
     /// Suspicious modules
     suspicious_modules: Vec<KernelModuleInfo>,
 }
@@ -260,61 +278,63 @@ impl KernelModuleAnalyzer {
             suspicious_modules: Vec::new(),
         }
     }
-    
+
     /// Register a trusted kernel module
     pub fn register_trusted_module(&mut self, name: String, hash: String) {
         self.trusted_modules.insert(name, hash);
     }
-    
+
     /// Analyze a kernel module
     pub fn analyze_module(&mut self, mut module: KernelModuleInfo) -> bool {
         let mut suspicious = false;
         let mut reasons = Vec::new();
-        
+
         // Check signature
         if !module.signature_valid {
             suspicious = true;
             reasons.push("Invalid or missing signature".to_string());
         }
-        
+
         // Check against trusted list
         if let Some(trusted_hash) = self.trusted_modules.get(&module.name) {
             if trusted_hash != &module.hash {
                 suspicious = true;
-                reasons.push(format!("Hash mismatch (expected: {}, actual: {})",
-                                   trusted_hash, module.hash));
+                reasons.push(format!(
+                    "Hash mismatch (expected: {}, actual: {})",
+                    trusted_hash, module.hash
+                ));
             }
         } else {
             // Unknown module
             suspicious = true;
             reasons.push("Unknown module (not in trusted list)".to_string());
         }
-        
+
         // Check for suspicious names
         let suspicious_patterns = ["rootkit", "hide", "hook", "stealth", "backdoor"];
         for pattern in &suspicious_patterns {
             if module.name.to_lowercase().contains(pattern) {
                 suspicious = true;
-                reasons.push(format!("Suspicious name pattern: {}", pattern));
+                reasons.push(format!("Suspicious name pattern: {pattern}"));
             }
         }
-        
+
         // Check for unusual load addresses
         if module.load_address < 0xffffffff80000000 {
             suspicious = true;
             reasons.push("Unusual load address (outside kernel space)".to_string());
         }
-        
+
         if suspicious {
             module.suspicious = true;
             module.suspicious_reasons = reasons;
             log::warn!("Suspicious kernel module detected: {}", module.name);
             self.suspicious_modules.push(module);
         }
-        
+
         suspicious
     }
-    
+
     /// Get suspicious modules
     pub fn get_suspicious_modules(&self) -> &[KernelModuleInfo] {
         &self.suspicious_modules
@@ -331,7 +351,7 @@ impl Default for KernelModuleAnalyzer {
 pub struct MemoryInjectionDetector {
     /// Tracked processes
     process_memory: HashMap<i32, Vec<MemoryRegion>>,
-    
+
     /// Injection alerts
     alerts: Vec<MemoryInjectionAlert>,
 }
@@ -351,12 +371,12 @@ impl MemoryInjectionDetector {
             alerts: Vec::new(),
         }
     }
-    
+
     /// Track process memory regions
     pub fn track_memory_region(&mut self, pid: i32, region: MemoryRegion) {
-        self.process_memory.entry(pid).or_insert_with(Vec::new).push(region);
+        self.process_memory.entry(pid).or_default().push(region);
     }
-    
+
     /// Detect memory injection
     pub fn detect_injection(
         &mut self,
@@ -376,16 +396,18 @@ impl MemoryInjectionDetector {
             injected_address,
             injected_size,
             severity: Severity::Critical,
-            description: format!("Memory injection detected in process {} (PID: {})",
-                               target_process, target_pid),
+            description: format!(
+                "Memory injection detected in process {target_process} (PID: {target_pid})"
+            ),
         };
-        
-        log::error!("🔴 MEMORY INJECTION: {} bytes at 0x{:x} in PID {}",
-                   injected_size, injected_address, target_pid);
+
+        log::error!(
+            "🔴 MEMORY INJECTION: {injected_size} bytes at 0x{injected_address:x} in PID {target_pid}"
+        );
         self.alerts.push(alert.clone());
         alert
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[MemoryInjectionAlert] {
         &self.alerts
@@ -402,7 +424,7 @@ impl Default for MemoryInjectionDetector {
 pub struct DkomDetector {
     /// Known kernel object addresses
     kernel_objects: HashMap<String, u64>,
-    
+
     /// DKOM alerts
     alerts: Vec<DkomAlert>,
 }
@@ -414,12 +436,12 @@ impl DkomDetector {
             alerts: Vec::new(),
         }
     }
-    
+
     /// Register a kernel object
     pub fn register_kernel_object(&mut self, name: String, address: u64) {
         self.kernel_objects.insert(name, address);
     }
-    
+
     /// Detect DKOM - process hiding
     pub fn detect_process_hiding(
         &mut self,
@@ -434,24 +456,25 @@ impl DkomDetector {
                 dkom_type: DkomType::ProcessHiding,
                 affected_object: process_name.to_string(),
                 severity: Severity::Critical,
-                description: format!("DKOM detected: Process {} hidden via list manipulation",
-                                   process_name),
+                description: format!(
+                    "DKOM detected: Process {process_name} hidden via list manipulation"
+                ),
                 evidence: DkomEvidence {
-                    object_address: 0,  // Would be filled with actual EPROCESS address
+                    object_address: 0, // Would be filled with actual EPROCESS address
                     list_manipulation: true,
                     structure_modification: vec!["ActiveProcessLinks".to_string()],
                     hidden_from: vec!["PsActiveProcessHead".to_string()],
                 },
             };
-            
+
             log::error!("🔴 DKOM DETECTED: Process hiding via list manipulation");
             self.alerts.push(alert.clone());
             return Some(alert);
         }
-        
+
         None
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[DkomAlert] {
         &self.alerts
@@ -481,32 +504,35 @@ impl MemoryForensicsManager {
             dkom_detector: DkomDetector::new(),
         }
     }
-    
+
     /// Get rootkit detector
     pub fn rootkit_detector(&mut self) -> &mut RootkitDetector {
         &mut self.rootkit_detector
     }
-    
+
     /// Get kernel module analyzer
     pub fn kernel_module_analyzer(&mut self) -> &mut KernelModuleAnalyzer {
         &mut self.kernel_module_analyzer
     }
-    
+
     /// Get memory injection detector
     pub fn memory_injection_detector(&mut self) -> &mut MemoryInjectionDetector {
         &mut self.memory_injection_detector
     }
-    
+
     /// Get DKOM detector
     pub fn dkom_detector(&mut self) -> &mut DkomDetector {
         &mut self.dkom_detector
     }
-    
+
     /// Get comprehensive forensics report
     pub fn get_forensics_report(&self) -> MemoryForensicsReport {
         MemoryForensicsReport {
             rootkit_alerts: self.rootkit_detector.get_alerts().to_vec(),
-            suspicious_modules: self.kernel_module_analyzer.get_suspicious_modules().to_vec(),
+            suspicious_modules: self
+                .kernel_module_analyzer
+                .get_suspicious_modules()
+                .to_vec(),
             injection_alerts: self.memory_injection_detector.get_alerts().to_vec(),
             dkom_alerts: self.dkom_detector.get_alerts().to_vec(),
         }
@@ -530,34 +556,34 @@ pub struct MemoryForensicsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_syscall_hook_detection() {
         let mut detector = RootkitDetector::new();
-        
+
         detector.establish_baseline("sys_read".to_string(), 0xffffffff81000000);
-        
+
         let alert = detector.check_syscall_hooks("sys_read", 0xffffffff82000000);
         assert!(alert.is_some());
     }
-    
+
     #[test]
     fn test_hidden_process_detection() {
         let mut detector = RootkitDetector::new();
-        
+
         let visible_pids = vec![1, 2, 3];
-        let all_pids = vec![1, 2, 3, 666, 1337];  // 666 and 1337 are hidden
-        
+        let all_pids = vec![1, 2, 3, 666, 1337]; // 666 and 1337 are hidden
+
         let alert = detector.detect_hidden_processes(&visible_pids, &all_pids);
         assert!(alert.is_some());
     }
-    
+
     #[test]
     fn test_kernel_module_analysis() {
         let mut analyzer = KernelModuleAnalyzer::new();
-        
+
         analyzer.register_trusted_module("legitimate".to_string(), "abc123".to_string());
-        
+
         let suspicious_module = KernelModuleInfo {
             name: "rootkit_module".to_string(),
             size: 4096,
@@ -569,31 +595,26 @@ mod tests {
             suspicious: false,
             suspicious_reasons: vec![],
         };
-        
+
         let is_suspicious = analyzer.analyze_module(suspicious_module);
         assert!(is_suspicious);
     }
-    
+
     #[test]
     fn test_memory_injection_detection() {
         let mut detector = MemoryInjectionDetector::new();
-        
-        let alert = detector.detect_injection(
-            1337,
-            "victim".to_string(),
-            0x7fff00000000,
-            4096,
-            Some(666),
-        );
-        
+
+        let alert =
+            detector.detect_injection(1337, "victim".to_string(), 0x7fff00000000, 4096, Some(666));
+
         assert_eq!(alert.target_pid, 1337);
         assert_eq!(alert.injector_pid, Some(666));
     }
-    
+
     #[test]
     fn test_dkom_detection() {
         let mut detector = DkomDetector::new();
-        
+
         let alert = detector.detect_process_hiding("malware", true, false);
         assert!(alert.is_some());
     }

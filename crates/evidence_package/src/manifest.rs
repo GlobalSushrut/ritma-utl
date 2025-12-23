@@ -11,20 +11,20 @@ pub struct EvidencePackageManifest {
     pub format_version: u32,
     pub created_at: u64,
     pub created_by: Option<String>, // DID or API key ID
-    
+
     // Scope
     pub tenant_id: String,
     pub scope: PackageScope,
-    
+
     // Chain heads (tamper-evident anchors)
     pub chain_heads: PackageChainHeads,
-    
+
     // Artifacts included
     pub artifacts: Vec<PackageArtifact>,
-    
+
     // Security
     pub security: PackageSecurity,
-    
+
     // Metadata
     #[serde(default)]
     pub metadata: HashMap<String, String>,
@@ -76,7 +76,7 @@ pub struct PackageArtifact {
     pub path: Option<String>, // Relative path in archive or absolute
     pub hash: String,
     pub size_bytes: Option<u64>,
-    
+
     // Type-specific metadata
     #[serde(default)]
     pub metadata: ArtifactMetadata,
@@ -104,13 +104,13 @@ pub struct ArtifactMetadata {
     pub infra_version_id: Option<String>,
     pub camera_frames: Option<Vec<String>>,
     pub actor_dids: Option<Vec<String>>,
-    
+
     // Burn metadata
     pub burn_hash: Option<String>,
     pub prev_burn_hash: Option<String>,
     pub framework: Option<String>,
     pub pass_rate: Option<f64>,
-    
+
     // Time metadata
     pub time_start: Option<u64>,
     pub time_end: Option<u64>,
@@ -145,30 +145,30 @@ pub enum SignatureType {
 impl EvidencePackageManifest {
     /// Compute canonical hash of manifest (excluding signature)
     pub fn compute_hash(&self) -> Result<String, String> {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         // Clone and zero out signature
         let mut canonical = self.clone();
         canonical.security.signature = None;
         canonical.security.package_hash = String::new();
-        
+
         let json = serde_json::to_vec(&canonical)
-            .map_err(|e| format!("failed to serialize manifest: {}", e))?;
-        
+            .map_err(|e| format!("failed to serialize manifest: {e}"))?;
+
         let mut hasher = Sha256::new();
         hasher.update(&json);
         let hash = hasher.finalize();
-        
+
         Ok(hex::encode(hash))
     }
-    
+
     /// Verify package hash matches
     pub fn verify_hash(&self) -> Result<(), String> {
         let computed = self.compute_hash()?;
         if computed != self.security.package_hash {
             return Err(format!(
-                "package hash mismatch: expected {}, got {}",
-                self.security.package_hash, computed
+                "package hash mismatch: expected {}, got {computed}",
+                self.security.package_hash
             ));
         }
         Ok(())
@@ -206,7 +206,7 @@ mod tests {
             },
             metadata: HashMap::new(),
         };
-        
+
         let hash = manifest.compute_hash().expect("compute hash");
         assert_eq!(hash.len(), 64); // SHA256 hex
     }

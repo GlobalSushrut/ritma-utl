@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 pub type HashBytes = [u8; 32];
 
@@ -47,6 +47,12 @@ impl UID {
     pub fn new() -> Self {
         let id = Uuid::new_v4();
         Self(id.as_u128())
+    }
+}
+
+impl Default for UID {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

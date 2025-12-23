@@ -1,14 +1,14 @@
 use std::net::SocketAddr;
 
 use axum::Router;
-use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::TlsAcceptor;
 use hyper::body::Incoming;
 use hyper::Request;
 use hyper_util::rt::TokioIo;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::TlsAcceptor;
 use tower::Service;
 
-use security_os::{MtlsConfig, Did};
+use security_os::{Did, MtlsConfig};
 
 /// Extension type to carry the DID derived from a client cert.
 #[derive(Clone, Debug)]
@@ -22,7 +22,7 @@ pub async fn serve_https_tokio_rustls(
     app: Router,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server_config = security_os::build_rustls_server_config_from_mtls(&cfg)
-        .map_err(|e| format!("failed to build rustls config: {}", e))?;
+        .map_err(|e| format!("failed to build rustls config: {e}"))?;
     let acceptor = TlsAcceptor::from(server_config);
 
     let listener = TcpListener::bind(addr).await?;

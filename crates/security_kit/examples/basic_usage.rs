@@ -1,14 +1,13 @@
 /// Basic SecurityKit usage example showing the developer-facing API.
 ///
 /// Run with: cargo run --example basic_usage
-
 use security_kit::{
-    SecurityKit,
-    containers::{ParamBundle, GeneralParams, SecretParams, SnapshotParams},
     connectors::ConnectorKind,
-    rbac::{RbacManager, Role, RoleId, User, UserId, Permission},
+    containers::{GeneralParams, ParamBundle, SecretParams, SnapshotParams},
     env::EnvManager,
+    rbac::{Permission, RbacManager, Role, RoleId, User, UserId},
     reporting::SecurityReport,
+    SecurityKit,
 };
 use std::collections::BTreeMap;
 
@@ -16,9 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== SecurityKit Basic Usage Example ===\n");
 
     // 1. Build environment manager
-    let mut env = EnvManager::new()
-        .with_tenant("acme_corp");
-    
+    let mut env = EnvManager::new().with_tenant("acme_corp");
+
     env.set_general("APP_ENV", "production");
     env.set_general("LOG_LEVEL", "info");
     env.set_secret("DATABASE_URL", "postgres://...");
@@ -40,14 +38,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Permission("read".to_string()),
             Permission("write".to_string()),
             Permission("deploy".to_string()),
-        ].into_iter().collect(),
+        ]
+        .into_iter()
+        .collect(),
     };
 
     let viewer_role = Role {
         id: RoleId("viewer".to_string()),
-        permissions: vec![
-            Permission("read".to_string()),
-        ].into_iter().collect(),
+        permissions: vec![Permission("read".to_string())].into_iter().collect(),
     };
 
     rbac.upsert_role(admin_role);
@@ -68,9 +66,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rbac.upsert_user(bob);
 
     println!("RBAC configured:");
-    println!("  alice can deploy: {}", rbac.check(&UserId("alice".to_string()), &Permission("deploy".to_string()))?);
-    println!("  bob can deploy: {}", rbac.check(&UserId("bob".to_string()), &Permission("deploy".to_string()))?);
-    println!("  bob can read: {}", rbac.check(&UserId("bob".to_string()), &Permission("read".to_string()))?);
+    println!(
+        "  alice can deploy: {}",
+        rbac.check(
+            &UserId("alice".to_string()),
+            &Permission("deploy".to_string())
+        )?
+    );
+    println!(
+        "  bob can deploy: {}",
+        rbac.check(
+            &UserId("bob".to_string()),
+            &Permission("deploy".to_string())
+        )?
+    );
+    println!(
+        "  bob can read: {}",
+        rbac.check(&UserId("bob".to_string()), &Permission("read".to_string()))?
+    );
     println!();
 
     // 3. Build SecurityKit with connectors
@@ -99,7 +112,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fields: vec![
             ("git_sha".to_string(), "abc123".to_string()),
             ("deployer".to_string(), "alice".to_string()),
-        ].into_iter().collect(),
+        ]
+        .into_iter()
+        .collect(),
     };
 
     let bundle = ParamBundle {
@@ -111,7 +126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Param bundle created:");
     println!("  general keys: {}", bundle.general.0.len());
     println!("  secret keys: {}", bundle.secrets.0.len());
-    println!("  snapshot: {:?}", bundle.snapshot.as_ref().map(|s| &s.label));
+    println!(
+        "  snapshot: {:?}",
+        bundle.snapshot.as_ref().map(|s| &s.label)
+    );
     println!();
 
     // 5. Dry-run connectors (safe validation)
@@ -126,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 6. Generate a security report from params
     let report = SecurityReport::from_params("Deployment Security Report", &bundle);
     let report_json = serde_json::to_string_pretty(&report)?;
-    
+
     println!("Security Report (from params):");
     println!("{}", report_json);
     println!();

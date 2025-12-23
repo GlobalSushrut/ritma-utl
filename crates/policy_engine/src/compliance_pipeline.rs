@@ -1,10 +1,10 @@
 // Multi-stage compliance pipeline with consensus and proof validation
 // Orchestrates policy evaluation, consensus, proofs, and evidence emission
 
-use serde::{Deserialize, Serialize};
-use crate::consensus::{ConsensusEngine, ConsensusVote, ConsensusResult};
+use crate::consensus::{ConsensusEngine, ConsensusResult, ConsensusVote};
+use crate::cue_integration::{ComplianceStage, CueComplianceConfig};
 use crate::proof_validator::ProofValidator;
-use crate::cue_integration::{CueComplianceConfig, ComplianceStage};
+use serde::{Deserialize, Serialize};
 
 /// Result of a single pipeline stage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +79,7 @@ impl CompliancePipeline {
         // Execute each stage in order
         for stage in &self.config.stages {
             let result = self.execute_stage(stage, policy_hash, context, tenant_id);
-            
+
             if !result.success {
                 all_passed = false;
                 // Early exit on failure (fail-fast)
@@ -103,7 +103,11 @@ impl CompliancePipeline {
             policy_name: policy_name.to_string(),
             tenant_id: tenant_id.to_string(),
             stages: stage_results,
-            final_decision: if all_passed { final_decision } else { "deny".to_string() },
+            final_decision: if all_passed {
+                final_decision
+            } else {
+                "deny".to_string()
+            },
             all_stages_passed: all_passed,
             consensus_hash,
             proof_aggregate,
@@ -120,7 +124,7 @@ impl CompliancePipeline {
         tenant_id: &str,
     ) -> StageResult {
         match stage {
-            ComplianceStage::PolicyEvaluation {  .. } => {
+            ComplianceStage::PolicyEvaluation { .. } => {
                 // Stub: would call PolicyEngine here
                 StageResult {
                     stage_name: "policy_evaluation".to_string(),
@@ -132,17 +136,18 @@ impl CompliancePipeline {
                 }
             }
 
-            ComplianceStage::ProofValidation { proof_type, required } => {
-                let proof = self.proof_validator.generate_proof(
-                    policy_hash,
-                    "allow",
-                    context,
-                );
+            ComplianceStage::ProofValidation {
+                proof_type,
+                required,
+            } => {
+                let proof = self
+                    .proof_validator
+                    .generate_proof(policy_hash, "allow", context);
 
                 let valid = self.proof_validator.verify_proof(&proof, policy_hash);
 
                 StageResult {
-                    stage_name: format!("proof_validation_{}", proof_type),
+                    stage_name: format!("proof_validation_{proof_type}"),
                     success: valid || !required,
                     decision: if valid { "allow" } else { "deny" }.to_string(),
                     proof: Some(proof.proof_data),
@@ -155,16 +160,20 @@ impl CompliancePipeline {
                 }
             }
 
-            ComplianceStage::Consensus { min_validators, threshold } => {
+            ComplianceStage::Consensus {
+                min_validators,
+                threshold: _,
+            } => {
                 // Stub: would collect votes from validators
                 // For now, simulate consensus with mock votes
                 let votes = self.simulate_consensus_votes(tenant_id, *min_validators);
-                
+
                 if let Some(ref engine) = self.consensus_engine {
                     let result = engine.evaluate_with_domain(
                         &votes,
                         Some(tenant_id),
-                        self.config.consensus_requirements
+                        self.config
+                            .consensus_requirements
                             .as_ref()
                             .and_then(|cr| cr.max_vote_age_secs),
                     );
@@ -195,10 +204,13 @@ impl CompliancePipeline {
                 }
             }
 
-            ComplianceStage::ControlEvaluation { framework, controls } => {
+            ComplianceStage::ControlEvaluation {
+                framework,
+                controls: _,
+            } => {
                 // Stub: would call ComplianceEngine here
                 StageResult {
-                    stage_name: format!("control_evaluation_{}", framework),
+                    stage_name: format!("control_evaluation_{framework}"),
                     success: true,
                     decision: "allow".to_string(),
                     proof: None,
@@ -210,7 +222,7 @@ impl CompliancePipeline {
             ComplianceStage::EvidenceEmission { index } => {
                 // Stub: would write to compliance_index here
                 StageResult {
-                    stage_name: format!("evidence_emission_{}", index),
+                    stage_name: format!("evidence_emission_{index}"),
                     success: true,
                     decision: "allow".to_string(),
                     proof: None,
@@ -233,8 +245,8 @@ impl CompliancePipeline {
                 validator_id: format!("did:ritma:validator:node{}", i + 1),
                 decision: "allow".to_string(),
                 timestamp: now,
-                proof: Some(format!("proof_{}", i)),
-                signature: format!("sig_{}", i),
+                proof: Some(format!("proof_{i}")),
+                signature: format!("sig_{i}"),
                 domain: Some(tenant_id.to_string()),
             })
             .collect()
@@ -242,12 +254,9 @@ impl CompliancePipeline {
 
     /// Aggregate proofs from all stages
     fn aggregate_stage_proofs(&self, stages: &[StageResult]) -> Option<String> {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
 
-        let proofs: Vec<String> = stages
-            .iter()
-            .filter_map(|s| s.proof.clone())
-            .collect();
+        let proofs: Vec<String> = stages.iter().filter_map(|s| s.proof.clone()).collect();
 
         if proofs.is_empty() {
             return None;
@@ -266,7 +275,6 @@ impl CompliancePipeline {
 mod tests {
     use super::*;
     use crate::cue_integration::ProofRequirements;
-    
 
     #[test]
     fn pipeline_executes_all_stages() {

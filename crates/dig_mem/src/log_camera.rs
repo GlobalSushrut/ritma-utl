@@ -1,9 +1,9 @@
 // Log Camera - CCTV-Style Snapshot System for Immutable Evidence
 // Captures "frames" of system state transitions with full audit trail
 
-use serde::{Deserialize, Serialize};
-use core_types::{Hash, hash_bytes, UID};
 use clock::TimeTick;
+use core_types::{hash_bytes, Hash, UID};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A single "frame" captured by the log camera
@@ -11,25 +11,25 @@ use std::collections::HashMap;
 pub struct LogFrame {
     /// Unique frame ID
     pub frame_id: UID,
-    
+
     /// Frame number in sequence
     pub frame_number: u64,
-    
+
     /// Timestamp when frame was captured
     pub timestamp: TimeTick,
-    
+
     /// State snapshot at this frame
     pub state_snapshot: StateSnapshot,
-    
+
     /// Transition that led to this frame
     pub transition: Option<Transition>,
-    
+
     /// Hash of previous frame (chain)
     pub prev_frame_hash: Option<Hash>,
-    
+
     /// Hash of this frame
     pub frame_hash: Hash,
-    
+
     /// Merkle root of all events in this frame
     pub events_merkle_root: Hash,
 }
@@ -39,16 +39,16 @@ pub struct LogFrame {
 pub struct StateSnapshot {
     /// Active DIDs in system
     pub active_dids: Vec<String>,
-    
+
     /// Active policies
     pub active_policies: Vec<String>,
-    
+
     /// Resource states (cgroups, eBPF, network)
     pub resource_states: HashMap<String, ResourceState>,
-    
+
     /// Pending decisions
     pub pending_decisions: Vec<String>,
-    
+
     /// System metrics
     pub metrics: SystemMetrics,
 }
@@ -79,22 +79,22 @@ pub struct SystemMetrics {
 pub struct Transition {
     /// Transition ID
     pub transition_id: UID,
-    
+
     /// Type of transition
     pub transition_type: TransitionType,
-    
+
     /// Actor who triggered transition
     pub actor_did: Option<String>,
-    
+
     /// Events that occurred during transition
     pub events: Vec<TransitionEvent>,
-    
+
     /// Before state hash
     pub before_hash: Hash,
-    
+
     /// After state hash
     pub after_hash: Hash,
-    
+
     /// Transition duration (microseconds)
     pub duration_us: u64,
 }
@@ -133,20 +133,20 @@ pub struct TransitionEvent {
 /// Log Camera - captures and stores frames
 pub struct LogCamera {
     /// Camera ID
-    camera_id: UID,
-    
+    _camera_id: UID,
+
     /// Current frame number
     frame_number: u64,
-    
+
     /// Frames buffer (in-memory before flush)
     frames_buffer: Vec<LogFrame>,
-    
+
     /// Last frame hash (for chaining)
     last_frame_hash: Option<Hash>,
-    
+
     /// Frame rate (frames per second)
     frame_rate_fps: u32,
-    
+
     /// Last capture time
     last_capture_us: u64,
 }
@@ -154,7 +154,7 @@ pub struct LogCamera {
 impl LogCamera {
     pub fn new(camera_id: UID, frame_rate_fps: u32) -> Self {
         Self {
-            camera_id,
+            _camera_id: camera_id,
             frame_number: 0,
             frames_buffer: Vec::new(),
             last_frame_hash: None,
@@ -245,11 +245,13 @@ impl LogCamera {
         // Verify chain linkage
         for i in 1..frames.len() {
             let prev_hash = frames[i - 1].frame_hash.clone();
-            let current_prev = frames[i].prev_frame_hash.clone()
-                .ok_or_else(|| format!("Frame {} missing prev_frame_hash", i))?;
-            
+            let current_prev = frames[i]
+                .prev_frame_hash
+                .clone()
+                .ok_or_else(|| format!("Frame {i} missing prev_frame_hash"))?;
+
             if prev_hash.0 != current_prev.0 {
-                return Err(format!("Chain broken at frame {}", i));
+                return Err(format!("Chain broken at frame {i}"));
             }
         }
 
@@ -260,31 +262,31 @@ impl LogCamera {
 /// Compute hash of a frame
 fn compute_frame_hash(frame: &LogFrame) -> Hash {
     let mut buffer = Vec::new();
-    
+
     // Frame metadata
     buffer.extend_from_slice(&frame.frame_id.0.to_le_bytes());
     buffer.extend_from_slice(&frame.frame_number.to_le_bytes());
     buffer.extend_from_slice(&frame.timestamp.raw_time.to_le_bytes());
-    
+
     // Previous frame hash
     if let Some(ref prev) = frame.prev_frame_hash {
         buffer.extend_from_slice(&prev.0);
     }
-    
+
     // Events merkle root
     buffer.extend_from_slice(&frame.events_merkle_root.0);
-    
+
     // State snapshot hash
     let state_json = serde_json::to_string(&frame.state_snapshot).unwrap_or_default();
     buffer.extend_from_slice(state_json.as_bytes());
-    
+
     // Transition hash
     if let Some(ref t) = frame.transition {
         buffer.extend_from_slice(&t.transition_id.0.to_le_bytes());
         buffer.extend_from_slice(&t.before_hash.0);
         buffer.extend_from_slice(&t.after_hash.0);
     }
-    
+
     hash_bytes(&buffer)
 }
 
@@ -294,10 +296,7 @@ fn compute_events_merkle_root(events: &[TransitionEvent]) -> Hash {
         return hash_bytes(&[]);
     }
 
-    let leaves: Vec<[u8; 32]> = events
-        .iter()
-        .map(|e| e.event_hash.0)
-        .collect();
+    let leaves: Vec<[u8; 32]> = events.iter().map(|e| e.event_hash.0).collect();
 
     use rs_merkle::{algorithms::Sha256, MerkleTree};
     let tree = MerkleTree::<Sha256>::from_leaves(&leaves);
@@ -335,9 +334,11 @@ impl LogCameraRecorder {
         state: StateSnapshot,
         transition: Option<Transition>,
     ) -> Result<LogFrame, String> {
-        let camera = self.cameras.get_mut(camera_name)
-            .ok_or_else(|| format!("Camera {} not found", camera_name))?;
-        
+        let camera = self
+            .cameras
+            .get_mut(camera_name)
+            .ok_or_else(|| format!("Camera {camera_name} not found"))?;
+
         Ok(camera.capture_frame(timestamp, state, transition))
     }
 
@@ -345,7 +346,7 @@ impl LogCameraRecorder {
     pub fn flush_all(&mut self) -> Result<usize, String> {
         let mut total_frames = 0;
         let camera_names: Vec<String> = self.cameras.keys().cloned().collect();
-        
+
         for name in camera_names {
             if let Some(camera) = self.cameras.get_mut(&name) {
                 let frames = camera.flush_frames();
@@ -355,7 +356,7 @@ impl LogCameraRecorder {
                 }
             }
         }
-        
+
         Ok(total_frames)
     }
 
@@ -365,24 +366,23 @@ impl LogCameraRecorder {
         use std::io::Write;
 
         let filename = format!("{}/{}_frames.jsonl", self.storage_path, camera_name);
-        
+
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&filename)
-            .map_err(|e| format!("Failed to open file: {}", e))?;
+            .map_err(|e| format!("Failed to open file: {e}"))?;
 
         for frame in frames {
             let json = serde_json::to_string(frame)
-                .map_err(|e| format!("Failed to serialize frame: {}", e))?;
+                .map_err(|e| format!("Failed to serialize frame: {e}"))?;
             file.write_all(json.as_bytes())
-                .map_err(|e| format!("Failed to write frame: {}", e))?;
+                .map_err(|e| format!("Failed to write frame: {e}"))?;
             file.write_all(b"\n")
-                .map_err(|e| format!("Failed to write newline: {}", e))?;
+                .map_err(|e| format!("Failed to write newline: {e}"))?;
         }
 
-        file.flush()
-            .map_err(|e| format!("Failed to flush: {}", e))?;
+        file.flush().map_err(|e| format!("Failed to flush: {e}"))?;
 
         Ok(())
     }
@@ -412,9 +412,12 @@ mod tests {
     #[test]
     fn log_camera_captures_frames() {
         let mut camera = LogCamera::new(UID::new(), 10);
-        
+
         let frame = camera.capture_frame(
-            TimeTick { raw_time: 100, mock_time: 100.0 },
+            TimeTick {
+                raw_time: 100,
+                mock_time: 100.0,
+            },
             create_test_state(),
             None,
         );
@@ -426,15 +429,21 @@ mod tests {
     #[test]
     fn log_camera_chains_frames() {
         let mut camera = LogCamera::new(UID::new(), 10);
-        
+
         let frame1 = camera.capture_frame(
-            TimeTick { raw_time: 100, mock_time: 100.0 },
+            TimeTick {
+                raw_time: 100,
+                mock_time: 100.0,
+            },
             create_test_state(),
             None,
         );
 
         let frame2 = camera.capture_frame(
-            TimeTick { raw_time: 200, mock_time: 200.0 },
+            TimeTick {
+                raw_time: 200,
+                mock_time: 200.0,
+            },
             create_test_state(),
             None,
         );
@@ -445,15 +454,21 @@ mod tests {
     #[test]
     fn verify_frames_validates_chain() {
         let mut camera = LogCamera::new(UID::new(), 10);
-        
+
         let frame1 = camera.capture_frame(
-            TimeTick { raw_time: 100, mock_time: 100.0 },
+            TimeTick {
+                raw_time: 100,
+                mock_time: 100.0,
+            },
             create_test_state(),
             None,
         );
 
         let frame2 = camera.capture_frame(
-            TimeTick { raw_time: 200, mock_time: 200.0 },
+            TimeTick {
+                raw_time: 200,
+                mock_time: 200.0,
+            },
             create_test_state(),
             None,
         );
@@ -472,7 +487,10 @@ mod tests {
 
         let frame = recorder.capture(
             "main",
-            TimeTick { raw_time: 100, mock_time: 100.0 },
+            TimeTick {
+                raw_time: 100,
+                mock_time: 100.0,
+            },
             create_test_state(),
             None,
         );

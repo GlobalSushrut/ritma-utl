@@ -1,8 +1,8 @@
 //! Temporal analysis: hourly/daily baselines, off-hours and velocity
 
-use std::collections::HashMap;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use common_models::DecisionEvent;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct TemporalAnomaly {
@@ -19,12 +19,14 @@ pub struct TemporalAnalyzer {
     total_events: u64,
 
     // Per-actor velocity (EMA of interarrival seconds)
-    actor_last_seen: HashMap<String, DateTime<Utc>>,    
-    actor_avg_interarrival: HashMap<String, f64>,        // seconds
+    actor_last_seen: HashMap<String, DateTime<Utc>>,
+    actor_avg_interarrival: HashMap<String, f64>, // seconds
 }
 
 impl TemporalAnalyzer {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn track_event(&mut self, event: &DecisionEvent) {
         if let Ok(ts) = DateTime::parse_from_rfc3339(&event.ts) {
@@ -40,7 +42,10 @@ impl TemporalAnalyzer {
             if let Some(prev) = self.actor_last_seen.get(actor) {
                 let delta = (ts_utc - *prev).num_seconds().max(0) as f64;
                 if delta > 0.0 {
-                    let avg = self.actor_avg_interarrival.entry(actor.clone()).or_insert(delta);
+                    let avg = self
+                        .actor_avg_interarrival
+                        .entry(actor.clone())
+                        .or_insert(delta);
                     // EMA with alpha=0.1
                     *avg = 0.9 * *avg + 0.1 * delta;
                 }
@@ -54,7 +59,9 @@ impl TemporalAnalyzer {
         if self.total_events < 50 {
             return None;
         }
-        let ts = DateTime::parse_from_rfc3339(&event.ts).ok()?.with_timezone(&Utc);
+        let ts = DateTime::parse_from_rfc3339(&event.ts)
+            .ok()?
+            .with_timezone(&Utc);
         let hour = ts.hour();
         let weekday = ts.weekday().num_days_from_monday();
 
@@ -68,7 +75,7 @@ impl TemporalAnalyzer {
         // Off-hours anomaly if this hour historically low
         if off_hours && hour_count < avg_per_hour * 0.5 {
             return Some(TemporalAnomaly {
-                reason: format!("Off-hours activity at {:02}h with low historical frequency", hour),
+                reason: format!("Off-hours activity at {hour:02}h with low historical frequency"),
                 severity: 0.6,
                 hour,
                 weekday,
@@ -81,10 +88,13 @@ impl TemporalAnalyzer {
                 let delta = (ts - *prev).num_seconds().max(0) as f64;
                 if *avg > 0.0 {
                     let ratio = delta / *avg; // < 1.0 means faster than usual
-                    if ratio < 0.6 { // significantly faster (<60% of avg)
+                    if ratio < 0.6 {
+                        // significantly faster (<60% of avg)
                         let severity = ((1.0 - ratio) * 0.8).min(0.8); // up to 0.8 weight
                         return Some(TemporalAnomaly {
-                            reason: format!("Velocity spike: interarrival {:.1}s vs avg {:.1}s", delta, avg),
+                            reason: format!(
+                                "Velocity spike: interarrival {delta:.1}s vs avg {avg:.1}s"
+                            ),
                             severity,
                             hour,
                             weekday,

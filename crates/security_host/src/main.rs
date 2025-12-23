@@ -3,26 +3,31 @@ use std::io::{BufRead, BufReader};
 use std::process::Command;
 
 use security_events::DecisionEvent;
-use security_os::{CgroupController, Did, DidKind, FlowDecision, FirewallController, IsolationProfile, IsolationScope};
 #[cfg(target_os = "linux")]
 use security_os::linux::CgroupV2Controller;
+use security_os::{
+    CgroupController, Did, DidKind, FirewallController, FlowDecision, IsolationProfile,
+    IsolationScope,
+};
 use tracing::{info, warn};
 
 struct LoggingFirewallController;
 
 impl FirewallController for LoggingFirewallController {
     fn enforce_flow(&self, src: &Did, dst: &Did, decision: FlowDecision) -> Result<(), String> {
-        println!("[firewall] src={} dst={} decision={:?}", src.as_str(), dst.as_str(), decision);
+        println!(
+            "[firewall] src={} dst={} decision={:?}",
+            src.as_str(),
+            dst.as_str(),
+            decision
+        );
         Ok(())
     }
 }
 
 fn derive_flow_decision(ev: &DecisionEvent) -> FlowDecision {
     // Basic mapping from policy_decision + actions to FlowDecision.
-    let has_quarantine = ev
-        .policy_actions
-        .iter()
-        .any(|a| a == "network_quarantine");
+    let has_quarantine = ev.policy_actions.iter().any(|a| a == "network_quarantine");
 
     match ev.policy_decision.as_str() {
         "deny" => {
@@ -104,7 +109,9 @@ impl FirewallController for ExternalFirewallController {
 fn build_firewall_controller() -> Box<dyn FirewallController> {
     if let Ok(helper) = std::env::var("SECURITY_HOST_FIREWALL_HELPER") {
         if !helper.trim().is_empty() {
-            return Box::new(ExternalFirewallController { helper_path: helper });
+            return Box::new(ExternalFirewallController {
+                helper_path: helper,
+            });
         }
     }
     Box::new(LoggingFirewallController)
@@ -125,9 +132,13 @@ impl ServiceLauncher for SystemdServiceLauncher {
             .arg("start")
             .arg(spec)
             .status()
-            .map_err(|e| format!("failed to run systemctl start {}: {}", spec, e))?;
+            .map_err(|e| format!("failed to run systemctl start {spec}: {e}"))?;
         if !status.success() {
-            return Err(format!("systemctl start {} exited with {:?}", spec, status.code()));
+            return Err(format!(
+                "systemctl start {} exited with {:?}",
+                spec,
+                status.code()
+            ));
         }
         Ok(())
     }
@@ -138,9 +149,13 @@ impl ServiceLauncher for SystemdServiceLauncher {
             .arg("restart")
             .arg(spec)
             .status()
-            .map_err(|e| format!("failed to run systemctl restart {}: {}", spec, e))?;
+            .map_err(|e| format!("failed to run systemctl restart {spec}: {e}"))?;
         if !status.success() {
-            return Err(format!("systemctl restart {} exited with {:?}", spec, status.code()));
+            return Err(format!(
+                "systemctl restart {} exited with {:?}",
+                spec,
+                status.code()
+            ));
         }
         Ok(())
     }
@@ -151,9 +166,13 @@ impl ServiceLauncher for SystemdServiceLauncher {
             .arg("stop")
             .arg(spec)
             .status()
-            .map_err(|e| format!("failed to run systemctl stop {}: {}", spec, e))?;
+            .map_err(|e| format!("failed to run systemctl stop {spec}: {e}"))?;
         if !status.success() {
-            return Err(format!("systemctl stop {} exited with {:?}", spec, status.code()));
+            return Err(format!(
+                "systemctl stop {} exited with {:?}",
+                spec,
+                status.code()
+            ));
         }
         Ok(())
     }
@@ -176,8 +195,18 @@ fn build_cgroup_controller() -> Box<dyn CgroupController> {
 struct LoggingCgroupController;
 
 impl CgroupController for LoggingCgroupController {
-    fn apply_profile(&self, scope: IsolationScope, did: &Did, profile: IsolationProfile) -> Result<(), String> {
-        println!("[cgroup] scope={:?} did={} profile={:?}", scope, did.as_str(), profile);
+    fn apply_profile(
+        &self,
+        scope: IsolationScope,
+        did: &Did,
+        profile: IsolationProfile,
+    ) -> Result<(), String> {
+        println!(
+            "[cgroup] scope={:?} did={} profile={:?}",
+            scope,
+            did.as_str(),
+            profile
+        );
         Ok(())
     }
 }
@@ -209,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ev: DecisionEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("skipping malformed decision event: {}", e);
+                eprintln!("skipping malformed decision event: {e}");
                 continue;
             }
         };
@@ -230,18 +259,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let (Ok(src_did), Ok(dst_did)) = (Did::parse(src), Did::parse(dst)) {
                 let flow_decision = derive_flow_decision(&ev);
 
-                let fw_outcome = if let Err(e) = fw.enforce_flow(&src_did, &dst_did, flow_decision.clone()) {
-                    warn!(
-                        target = "security_host::firewall",
-                        src = %src_did.as_str(),
-                        dst = %dst_did.as_str(),
-                        error = %e,
-                        "failed to enforce firewall flow",
-                    );
-                    "error"
-                } else {
-                    "ok"
-                };
+                let fw_outcome =
+                    if let Err(e) = fw.enforce_flow(&src_did, &dst_did, flow_decision.clone()) {
+                        warn!(
+                            target = "security_host::firewall",
+                            src = %src_did.as_str(),
+                            dst = %dst_did.as_str(),
+                            error = %e,
+                            "failed to enforce firewall flow",
+                        );
+                        "error"
+                    } else {
+                        "ok"
+                    };
                 emit_enforcement_slo(&ev, "firewall_enforce", fw_outcome);
 
                 if !matches!(flow_decision, FlowDecision::Allow) {
@@ -278,15 +308,30 @@ fn handle_service_actions<L: ServiceLauncher>(launcher: &L, did: &Did, actions: 
     for act in actions {
         if let Some(spec) = act.strip_prefix("launch_service:") {
             if let Err(e) = launcher.launch(did, spec) {
-                eprintln!("failed to launch service {} for did {}: {}", spec, did.as_str(), e);
+                eprintln!(
+                    "failed to launch service {} for did {}: {}",
+                    spec,
+                    did.as_str(),
+                    e
+                );
             }
         } else if let Some(spec) = act.strip_prefix("restart_service:") {
             if let Err(e) = launcher.restart(did, spec) {
-                eprintln!("failed to restart service {} for did {}: {}", spec, did.as_str(), e);
+                eprintln!(
+                    "failed to restart service {} for did {}: {}",
+                    spec,
+                    did.as_str(),
+                    e
+                );
             }
         } else if let Some(spec) = act.strip_prefix("stop_service:") {
             if let Err(e) = launcher.stop(did, spec) {
-                eprintln!("failed to stop service {} for did {}: {}", spec, did.as_str(), e);
+                eprintln!(
+                    "failed to stop service {} for did {}: {}",
+                    spec,
+                    did.as_str(),
+                    e
+                );
             }
         }
     }

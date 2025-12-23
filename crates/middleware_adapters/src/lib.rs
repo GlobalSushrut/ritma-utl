@@ -11,7 +11,9 @@
 //!
 //! All adapters implement the `MiddlewareAdapter` trait for consistent processing.
 
-use common_models::{DecisionEvent, Actor, ActorType, Subject, Action, Context, EnvStamp, RedactionInfo};
+use common_models::{
+    Action, Actor, ActorType, Context, DecisionEvent, EnvStamp, RedactionInfo, Subject,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -20,13 +22,13 @@ use thiserror::Error;
 pub enum AdapterError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     #[error("Missing required field: {0}")]
     MissingField(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Adapter not available: {0}")]
     AdapterUnavailable(String),
 }
@@ -35,10 +37,10 @@ pub enum AdapterError {
 pub trait MiddlewareAdapter: Send + Sync {
     /// Convert adapter-specific input to canonical DecisionEvent
     fn adapt(&self, input: &[u8]) -> Result<DecisionEvent, AdapterError>;
-    
+
     /// Get adapter name
     fn adapter_name(&self) -> &str;
-    
+
     /// Check if adapter is available
     fn is_available(&self) -> bool;
 }
@@ -82,10 +84,7 @@ impl Default for HttpAdapterConfig {
                 "cookie".to_string(),
                 "x-api-key".to_string(),
             ],
-            redact_query_params: vec![
-                "token".to_string(),
-                "api_key".to_string(),
-            ],
+            redact_query_params: vec!["token".to_string(), "api_key".to_string()],
         }
     }
 }
@@ -99,14 +98,14 @@ impl HttpAdapter {
     pub fn new(config: HttpAdapterConfig) -> Self {
         Self { config }
     }
-    
+
     /// Hash a string value for privacy
     fn hash_value(value: &str) -> String {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(value.as_bytes());
         hex::encode(hash)
     }
-    
+
     /// Extract actor from HTTP request
     fn extract_actor(&self, req: &HttpRequestData) -> Actor {
         // Try to extract user ID from headers or use IP hash
@@ -119,14 +118,14 @@ impl HttpAdapter {
         } else {
             "anonymous".to_string()
         };
-        
+
         Actor {
             r#type: ActorType::User,
             id_hash,
             roles: vec![],
         }
     }
-    
+
     /// Extract subject from HTTP request
     fn extract_subject(&self, req: &HttpRequestData) -> Subject {
         // Subject is the resource being accessed (path)
@@ -135,7 +134,7 @@ impl HttpAdapter {
             id_hash: Self::hash_value(&req.path),
         }
     }
-    
+
     /// Extract action from HTTP request
     fn extract_action(&self, req: &HttpRequestData) -> Action {
         // Action is the HTTP method + any body hash
@@ -144,7 +143,7 @@ impl HttpAdapter {
             params_hash: req.body_hash.clone(),
         }
     }
-    
+
     /// Extract context from HTTP request
     fn extract_context(&self, req: &HttpRequestData) -> Context {
         Context {
@@ -154,25 +153,25 @@ impl HttpAdapter {
             user_agent_hash: req.user_agent.as_ref().map(|ua| Self::hash_value(ua)),
         }
     }
-    
+
     /// Create redaction info
     fn create_redaction(&self, req: &HttpRequestData) -> RedactionInfo {
         let mut applied = Vec::new();
-        
+
         // Check for redacted headers
         for header in &self.config.redact_headers {
             if req.headers.contains_key(header) {
-                applied.push(format!("header:{}", header));
+                applied.push(format!("header:{header}"));
             }
         }
-        
+
         // Check for redacted query params
         for param in &self.config.redact_query_params {
             if req.query_params.contains_key(param) {
-                applied.push(format!("query:{}", param));
+                applied.push(format!("query:{param}"));
             }
         }
-        
+
         let has_redactions = !applied.is_empty();
         RedactionInfo {
             applied,
@@ -190,13 +189,13 @@ impl MiddlewareAdapter for HttpAdapter {
         // Parse input as JSON
         let req: HttpRequestData = serde_json::from_slice(input)
             .map_err(|e| AdapterError::SerializationError(e.to_string()))?;
-        
+
         // Generate event ID
         let event_id = format!("http_evt_{}", uuid::Uuid::new_v4());
-        
+
         // Get current timestamp
         let ts = chrono::Utc::now().to_rfc3339();
-        
+
         Ok(DecisionEvent {
             event_id,
             namespace_id: self.config.namespace_id.clone(),
@@ -217,11 +216,11 @@ impl MiddlewareAdapter for HttpAdapter {
             stage_trace: vec![],
         })
     }
-    
+
     fn adapter_name(&self) -> &str {
         "http"
     }
-    
+
     fn is_available(&self) -> bool {
         true
     }
@@ -254,7 +253,7 @@ impl OtelAdapter {
             service_name,
         }
     }
-    
+
     fn hash_value(value: &str) -> String {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(value.as_bytes());
@@ -266,21 +265,25 @@ impl MiddlewareAdapter for OtelAdapter {
     fn adapt(&self, input: &[u8]) -> Result<DecisionEvent, AdapterError> {
         let span: OtelSpanData = serde_json::from_slice(input)
             .map_err(|e| AdapterError::SerializationError(e.to_string()))?;
-        
+
         // Extract actor from span attributes (e.g., user.id, http.user_agent)
-        let actor_id = span.attributes.get("user.id")
+        let actor_id = span
+            .attributes
+            .get("user.id")
             .or_else(|| span.attributes.get("http.client_ip"))
             .and_then(|v| v.as_str())
             .map(Self::hash_value)
             .unwrap_or_else(|| "anonymous".to_string());
-        
+
         // Extract subject from span name or target
-        let subject_id = span.attributes.get("http.target")
+        let subject_id = span
+            .attributes
+            .get("http.target")
             .or_else(|| span.attributes.get("db.statement"))
             .and_then(|v| v.as_str())
             .map(Self::hash_value)
             .unwrap_or_else(|| Self::hash_value(&span.name));
-        
+
         Ok(DecisionEvent {
             event_id: format!("otel_evt_{}", span.span_id),
             namespace_id: self.namespace_id.clone(),
@@ -319,11 +322,11 @@ impl MiddlewareAdapter for OtelAdapter {
             stage_trace: vec![],
         })
     }
-    
+
     fn adapter_name(&self) -> &str {
         "otel"
     }
-    
+
     fn is_available(&self) -> bool {
         true
     }
@@ -353,7 +356,7 @@ impl GatewayAdapter {
     pub fn new(namespace_id: String) -> Self {
         Self { namespace_id }
     }
-    
+
     fn hash_value(value: &str) -> String {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(value.as_bytes());
@@ -365,11 +368,13 @@ impl MiddlewareAdapter for GatewayAdapter {
     fn adapt(&self, input: &[u8]) -> Result<DecisionEvent, AdapterError> {
         let log: GatewayLogData = serde_json::from_slice(input)
             .map_err(|e| AdapterError::SerializationError(e.to_string()))?;
-        
+
         // Actor is the API client
-        let actor_id = log.api_key_hash.clone()
+        let actor_id = log
+            .api_key_hash
+            .clone()
             .unwrap_or_else(|| Self::hash_value(&log.client_ip));
-        
+
         Ok(DecisionEvent {
             event_id: format!("gw_evt_{}", log.request_id),
             namespace_id: self.namespace_id.clone(),
@@ -396,7 +401,9 @@ impl MiddlewareAdapter for GatewayAdapter {
             },
             env_stamp: EnvStamp {
                 env: "prod".to_string(),
-                service: log.upstream_service.unwrap_or_else(|| "gateway".to_string()),
+                service: log
+                    .upstream_service
+                    .unwrap_or_else(|| "gateway".to_string()),
                 build_hash: "unknown".to_string(),
                 region: "unknown".to_string(),
                 trust_flags: vec![],
@@ -412,11 +419,11 @@ impl MiddlewareAdapter for GatewayAdapter {
             stage_trace: vec![],
         })
     }
-    
+
     fn adapter_name(&self) -> &str {
         "gateway"
     }
-    
+
     fn is_available(&self) -> bool {
         true
     }
@@ -425,7 +432,7 @@ impl MiddlewareAdapter for GatewayAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn http_adapter_converts_request() {
         let config = HttpAdapterConfig {
@@ -436,9 +443,9 @@ mod tests {
             region: "us-east-1".to_string(),
             ..Default::default()
         };
-        
+
         let adapter = HttpAdapter::new(config);
-        
+
         let req = HttpRequestData {
             method: "GET".to_string(),
             path: "/api/users/123".to_string(),
@@ -454,24 +461,22 @@ mod tests {
             request_id: Some("req_789".to_string()),
             trace_id: Some("trace_abc".to_string()),
         };
-        
+
         let input = serde_json::to_vec(&req).unwrap();
         let event = adapter.adapt(&input).expect("adapt");
-        
+
         assert_eq!(event.namespace_id, "ns://test/prod/app/svc");
         assert_eq!(event.event_type, "HTTP_GET");
         assert_eq!(event.subject.r#type, "http_resource");
         assert_eq!(event.action.name, "GET");
         assert_eq!(event.context.request_id, Some("req_789".to_string()));
     }
-    
+
     #[test]
     fn otel_adapter_converts_span() {
-        let adapter = OtelAdapter::new(
-            "ns://test/prod/app/svc".to_string(),
-            "test_svc".to_string(),
-        );
-        
+        let adapter =
+            OtelAdapter::new("ns://test/prod/app/svc".to_string(), "test_svc".to_string());
+
         let span = OtelSpanData {
             span_id: "span_123".to_string(),
             trace_id: "trace_456".to_string(),
@@ -487,19 +492,19 @@ mod tests {
             },
             events: vec![],
         };
-        
+
         let input = serde_json::to_vec(&span).unwrap();
         let event = adapter.adapt(&input).expect("adapt");
-        
+
         assert_eq!(event.namespace_id, "ns://test/prod/app/svc");
         assert_eq!(event.event_type, "OTEL_SERVER");
         assert_eq!(event.context.trace_id, Some("trace_456".to_string()));
     }
-    
+
     #[test]
     fn gateway_adapter_converts_log() {
         let adapter = GatewayAdapter::new("ns://test/prod/app/svc".to_string());
-        
+
         let log = GatewayLogData {
             request_id: "req_123".to_string(),
             timestamp: "2025-12-18T00:00:00Z".to_string(),
@@ -512,10 +517,10 @@ mod tests {
             api_key_hash: Some("key_hash_456".to_string()),
             upstream_service: Some("orders_svc".to_string()),
         };
-        
+
         let input = serde_json::to_vec(&log).unwrap();
         let event = adapter.adapt(&input).expect("adapt");
-        
+
         assert_eq!(event.namespace_id, "ns://test/prod/app/svc");
         assert_eq!(event.event_type, "GATEWAY_POST");
         assert_eq!(event.subject.r#type, "gateway_route");

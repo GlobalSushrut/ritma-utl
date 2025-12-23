@@ -410,7 +410,9 @@ mod tests {
                 summary: Some("test".to_string()),
                 evidence_refs: vec!["idx:1".to_string()],
             },
-            ranges_used: VerdictRangesUsed { json: serde_json::json!({"time": {"not_before": "..."}}) },
+            ranges_used: VerdictRangesUsed {
+                json: serde_json::json!({"time": {"not_before": "..."}}),
+            },
             contract_hash: Some("contract_hash".to_string()),
             policy_pack: Some("pack://baseline@1.2.0".to_string()),
         };

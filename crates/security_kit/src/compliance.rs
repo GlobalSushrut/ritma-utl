@@ -2,21 +2,17 @@
 ///
 /// This module wires SecurityKit into the existing compliance_index and
 /// evidence_package infrastructure for enterprise-grade audit trails.
+use serde::{Deserialize, Serialize};
 
-use serde::{Serialize, Deserialize};
-
-use compliance_index::{ControlEvalRecord, append_records};
-use security_events::{DecisionEvent, append_decision_event};
+use compliance_index::{append_records, ControlEvalRecord};
 use evidence_package::{
-    PackageBuilder, PackageSigner, PackageVerifier, SigningKey,
-    PackageScope, EvidencePackageManifest,
+    EvidencePackageManifest, PackageBuilder, PackageScope, PackageSigner, PackageVerifier,
+    SigningKey,
 };
-use node_keystore::{NodeKeystore, KeystoreKey};
+use node_keystore::{KeystoreKey, NodeKeystore};
+use security_events::{append_decision_event, DecisionEvent};
 
-use crate::{
-    observability,
-    Result, SecurityKitError,
-};
+use crate::{observability, Result, SecurityKitError};
 
 /// Compliance event generated from SecurityKit operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,11 +108,8 @@ impl ComplianceRecorder {
     /// Record a batch of compliance events.
     pub fn record_compliance_events(events: &[ComplianceEvent]) -> std::io::Result<()> {
         let start = std::time::Instant::now();
-        let records: Vec<ControlEvalRecord> = events
-            .iter()
-            .map(|e| e.to_eval_record())
-            .collect();
-        let tenant = events.get(0).and_then(|e| e.tenant_id.as_deref());
+        let records: Vec<ControlEvalRecord> = events.iter().map(|e| e.to_eval_record()).collect();
+        let tenant = events.first().and_then(|e| e.tenant_id.as_deref());
 
         let res = append_records(&records);
 
@@ -203,12 +196,12 @@ impl EvidenceBuilder {
     /// Build evidence package manifest.
     pub fn build(self) -> Result<EvidencePackageManifest> {
         let start = std::time::Instant::now();
-        let dig_index_db = std::env::var("UTLD_DIG_INDEX_DB")
-            .unwrap_or_else(|_| "./dig_index.sqlite".to_string());
-        let dig_storage = std::env::var("UTLD_DIG_STORAGE")
-            .unwrap_or_else(|_| "./digs".to_string());
-        let burn_storage = std::env::var("UTLD_BURN_STORAGE")
-            .unwrap_or_else(|_| "./burns".to_string());
+        let dig_index_db =
+            std::env::var("UTLD_DIG_INDEX_DB").unwrap_or_else(|_| "./dig_index.sqlite".to_string());
+        let dig_storage =
+            std::env::var("UTLD_DIG_STORAGE").unwrap_or_else(|_| "./digs".to_string());
+        let burn_storage =
+            std::env::var("UTLD_BURN_STORAGE").unwrap_or_else(|_| "./burns".to_string());
 
         // Apply optional framework override into scope where applicable.
         let mut scope = self.scope;
@@ -218,7 +211,11 @@ impl EvidenceBuilder {
                     commit_id,
                     framework: Some(fw),
                 },
-                PackageScope::TimeRange { time_start, time_end, .. } => PackageScope::TimeRange {
+                PackageScope::TimeRange {
+                    time_start,
+                    time_end,
+                    ..
+                } => PackageScope::TimeRange {
                     time_start,
                     time_end,
                     framework: Some(fw),
@@ -232,7 +229,8 @@ impl EvidenceBuilder {
             .dig_storage_root(dig_storage)
             .burn_storage_root(burn_storage);
 
-        let res = builder.build()
+        let res = builder
+            .build()
             .map_err(|e| SecurityKitError::PipelineError(e.to_string()));
 
         let latency = Some(start.elapsed().as_millis() as u64);
@@ -267,7 +265,8 @@ impl EvidenceBuilder {
         let mut manifest = self.build()?;
 
         let signer = PackageSigner::new(signing_key, "security_kit".to_string());
-        let res = signer.sign(&mut manifest)
+        let res = signer
+            .sign(&mut manifest)
             .map_err(|e| SecurityKitError::PipelineError(e.to_string()));
 
         let latency = Some(start.elapsed().as_millis() as u64);
@@ -301,8 +300,7 @@ impl EvidenceBuilder {
     pub fn build_and_sign_with_keystore_env(self) -> Result<EvidencePackageManifest> {
         let key_id = std::env::var("RITMA_KEY_ID").map_err(|e| {
             SecurityKitError::PipelineError(format!(
-                "RITMA_KEY_ID not set for keystore-based signing: {}",
-                e,
+                "RITMA_KEY_ID not set for keystore-based signing: {e}",
             ))
         })?;
 
@@ -318,16 +316,13 @@ impl EvidenceBuilder {
     ) -> Result<EvidencePackageManifest> {
         let ks = NodeKeystore::from_env().map_err(|e| {
             SecurityKitError::PipelineError(format!(
-                "failed to load node keystore for signing: {}",
-                e,
+                "failed to load node keystore for signing: {e}",
             ))
         })?;
 
         let keystore_key = ks.key_for_signing(key_id).map_err(|e| {
             SecurityKitError::PipelineError(format!(
-                "failed to load signing key {} from keystore: {}",
-                key_id,
-                e,
+                "failed to load signing key {key_id} from keystore: {e}",
             ))
         })?;
 
@@ -341,10 +336,7 @@ impl EvidenceBuilder {
 }
 
 /// Verify an evidence package manifest.
-pub fn verify_evidence_package(
-    manifest: &EvidencePackageManifest,
-    skip_artifacts: bool,
-) -> bool {
+pub fn verify_evidence_package(manifest: &EvidencePackageManifest, skip_artifacts: bool) -> bool {
     let mut verifier = PackageVerifier::new();
     if skip_artifacts {
         verifier = verifier.skip_artifacts();

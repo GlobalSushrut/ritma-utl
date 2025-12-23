@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use crate::{Result, SecurityKitError};
 use crate::containers::ParamBundle;
 use crate::observability;
+use crate::{Result, SecurityKitError};
+use serde::{Deserialize, Serialize};
 
 /// High-level connector kind (clouds, k8s, storage, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,8 +43,12 @@ impl NoopConnector {
 }
 
 impl Connector for NoopConnector {
-    fn name(&self) -> &str { &self.cfg.name }
-    fn kind(&self) -> &ConnectorKind { &self.cfg.kind }
+    fn name(&self) -> &str {
+        &self.cfg.name
+    }
+    fn kind(&self) -> &ConnectorKind {
+        &self.cfg.kind
+    }
 
     fn dry_run(&self, _params: &ParamBundle) -> Result<()> {
         // Intentionally no-op; this is safe to call in any environment.
@@ -55,7 +59,7 @@ impl Connector for NoopConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::containers::{ParamBundle, GeneralParams, SecretParams};
+    use crate::containers::{GeneralParams, ParamBundle, SecretParams};
     use std::collections::BTreeMap;
 
     fn empty_bundle() -> ParamBundle {
@@ -94,10 +98,19 @@ mod tests {
     fn aws_requires_account_and_creds_or_role() {
         let conn = AwsConnector::new("aws-test");
         let mut bundle = empty_bundle();
-        bundle.general.0.insert("aws_account_id".into(), "123456789012".into());
+        bundle
+            .general
+            .0
+            .insert("aws_account_id".into(), "123456789012".into());
         bundle.general.0.insert("region".into(), "us-east-1".into());
-        bundle.secrets.0.insert("aws_access_key_id".into(), "AKIA...".into());
-        bundle.secrets.0.insert("aws_secret_access_key".into(), "secret".into());
+        bundle
+            .secrets
+            .0
+            .insert("aws_access_key_id".into(), "AKIA...".into());
+        bundle
+            .secrets
+            .0
+            .insert("aws_secret_access_key".into(), "secret".into());
 
         assert!(conn.dry_run(&bundle).is_ok());
     }
@@ -120,8 +133,12 @@ impl KubernetesConnector {
 }
 
 impl Connector for KubernetesConnector {
-    fn name(&self) -> &str { &self.cfg.name }
-    fn kind(&self) -> &ConnectorKind { &self.cfg.kind }
+    fn name(&self) -> &str {
+        &self.cfg.name
+    }
+    fn kind(&self) -> &ConnectorKind {
+        &self.cfg.kind
+    }
 
     fn dry_run(&self, params: &ParamBundle) -> Result<()> {
         let start = std::time::Instant::now();
@@ -234,8 +251,12 @@ impl AwsConnector {
 }
 
 impl Connector for AwsConnector {
-    fn name(&self) -> &str { &self.cfg.name }
-    fn kind(&self) -> &ConnectorKind { &self.cfg.kind }
+    fn name(&self) -> &str {
+        &self.cfg.name
+    }
+    fn kind(&self) -> &ConnectorKind {
+        &self.cfg.kind
+    }
 
     fn dry_run(&self, params: &ParamBundle) -> Result<()> {
         let start = std::time::Instant::now();
@@ -272,19 +293,22 @@ impl Connector for AwsConnector {
         if strict {
             // CloudTrail must be enabled.
             match general.get("cloudtrail_enabled") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.cloudtrail_enabled=true"),
             }
 
             // AWS Config must be enabled.
             match general.get("config_enabled") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.config_enabled=true"),
             }
 
             // GuardDuty must be enabled.
             match general.get("guardduty_enabled") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.guardduty_enabled=true"),
             }
         }
@@ -338,8 +362,12 @@ impl GcpConnector {
 }
 
 impl Connector for GcpConnector {
-    fn name(&self) -> &str { &self.cfg.name }
-    fn kind(&self) -> &ConnectorKind { &self.cfg.kind }
+    fn name(&self) -> &str {
+        &self.cfg.name
+    }
+    fn kind(&self) -> &ConnectorKind {
+        &self.cfg.kind
+    }
 
     fn dry_run(&self, params: &ParamBundle) -> Result<()> {
         let start = std::time::Instant::now();
@@ -370,12 +398,14 @@ impl Connector for GcpConnector {
 
         if strict {
             match general.get("audit_log_enabled") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.audit_log_enabled=true"),
             }
 
             match general.get("org_policies_enforced") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enforced") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enforced") => {}
                 _ => missing.push("general.org_policies_enforced=true"),
             }
         }
@@ -429,8 +459,12 @@ impl StorageConnector {
 }
 
 impl Connector for StorageConnector {
-    fn name(&self) -> &str { &self.cfg.name }
-    fn kind(&self) -> &ConnectorKind { &self.cfg.kind }
+    fn name(&self) -> &str {
+        &self.cfg.name
+    }
+    fn kind(&self) -> &ConnectorKind {
+        &self.cfg.kind
+    }
 
     fn dry_run(&self, params: &ParamBundle) -> Result<()> {
         let start = std::time::Instant::now();
@@ -480,17 +514,20 @@ impl Connector for StorageConnector {
 
         if strict {
             match general.get("encryption_at_rest") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.encryption_at_rest=true"),
             }
 
             match general.get("versioning_enabled") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.versioning_enabled=true"),
             }
 
             match general.get("public_access_blocked") {
-                Some(v) if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
+                Some(v)
+                    if matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "enabled") => {}
                 _ => missing.push("general.public_access_blocked=true"),
             }
         }

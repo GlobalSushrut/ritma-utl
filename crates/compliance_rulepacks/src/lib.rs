@@ -31,7 +31,7 @@ impl Rulepack {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         Self {
             metadata: RulepackMetadata {
                 id,
@@ -45,8 +45,8 @@ impl Rulepack {
 }
 
 fn compute_rulepack_hash(controls: &[Control]) -> Result<String, Box<dyn std::error::Error>> {
-    use sha2::{Sha256, Digest};
-    
+    use sha2::{Digest, Sha256};
+
     let json = serde_json::to_string(controls)?;
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
@@ -109,45 +109,42 @@ pub fn hipaa_rulepack() -> Rulepack {
 }
 
 pub fn hipaa_controls() -> Vec<Control> {
-    vec![
-        Control {
-            control_id: "164.308(a)(1)(ii)(D)".to_string(),
-            framework: "HIPAA".to_string(),
-            intent: "Information system activity is regularly reviewed (audit logs, access reports).".to_string(),
-            requirements: vec![
-                "All PHI access events must be tagged with tenant and zone.".to_string(),
-                "Decision events for PHI must be retained and queryable by auditor.".to_string(),
-            ],
-            evidence: vec![
-                EvidenceKind::TransitionLogs,
-                EvidenceKind::DigFiles,
-            ],
-            validation: ValidationSpec {
-                script: "event.event_kind == 'phi_access' -> event.tenant_id != null".to_string(),
-            },
+    vec![Control {
+        control_id: "164.308(a)(1)(ii)(D)".to_string(),
+        framework: "HIPAA".to_string(),
+        intent: "Information system activity is regularly reviewed (audit logs, access reports)."
+            .to_string(),
+        requirements: vec![
+            "All PHI access events must be tagged with tenant and zone.".to_string(),
+            "Decision events for PHI must be retained and queryable by auditor.".to_string(),
+        ],
+        evidence: vec![EvidenceKind::TransitionLogs, EvidenceKind::DigFiles],
+        validation: ValidationSpec {
+            script: "event.event_kind == 'phi_access' -> event.tenant_id != null".to_string(),
         },
-    ]
+    }]
 }
 
 pub fn ai_safety_controls() -> Vec<Control> {
-    vec![
-        Control {
-            control_id: "AIS-TRANS-1".to_string(),
-            framework: "AI-SAFETY".to_string(),
-            intent: "High-risk model actions are logged with full causal trace and proof anchors.".to_string(),
-            requirements: vec![
-                "All high-risk decisions must be linked to a DigFile and micro-proof.".to_string(),
-            ],
-            evidence: vec![
-                EvidenceKind::TransitionLogs,
-                EvidenceKind::DigFiles,
-                EvidenceKind::MicroProofs,
-            ],
-            validation: ValidationSpec {
-                script: "event.event_kind == 'ai_high_risk' -> event.policy_decision in ['deny','flag']".to_string(),
-            },
+    vec![Control {
+        control_id: "AIS-TRANS-1".to_string(),
+        framework: "AI-SAFETY".to_string(),
+        intent: "High-risk model actions are logged with full causal trace and proof anchors."
+            .to_string(),
+        requirements: vec![
+            "All high-risk decisions must be linked to a DigFile and micro-proof.".to_string(),
+        ],
+        evidence: vec![
+            EvidenceKind::TransitionLogs,
+            EvidenceKind::DigFiles,
+            EvidenceKind::MicroProofs,
+        ],
+        validation: ValidationSpec {
+            script:
+                "event.event_kind == 'ai_high_risk' -> event.policy_decision in ['deny','flag']"
+                    .to_string(),
         },
-    ]
+    }]
 }
 
 #[cfg(test)]

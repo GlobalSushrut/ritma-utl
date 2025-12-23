@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 
 use common_models::{
-    TraceEvent, DecisionEvent, Verdict, TriggerVerdict, MLScore,
-    EvidencePackManifest, ProofPack, WindowRange,
+    DecisionEvent, EvidencePackManifest, MLScore, ProofPack, TraceEvent, TriggerVerdict, Verdict,
+    WindowRange,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -52,7 +52,12 @@ pub trait IndexStore: Send + Sync {
     fn insert_trace_event(&self, te: &TraceEvent) -> Result<()>;
     fn insert_ml_score(&self, ms: &MLScore) -> Result<()>;
     fn insert_evidence_manifest(&self, ep: &EvidencePackManifest) -> Result<()>;
-    fn link_receipt(&self, proof: &ProofPack, event_id: Option<&str>, verdict_id: Option<&str>) -> Result<()>;
+    fn link_receipt(
+        &self,
+        proof: &ProofPack,
+        event_id: Option<&str>,
+        verdict_id: Option<&str>,
+    ) -> Result<()>;
 }
 
 /// 3) Tracer – collection plane
@@ -69,7 +74,12 @@ pub trait Tracer: Send + Sync {
 pub trait MlRunner: Send + Sync {
     /// Score a window of correlated signals, produce explainable MLScore.
     /// final_ml_score ∈ [0,1]. Must NOT change truth; advisory only.
-    fn score_window(&self, namespace_id: &str, window: &WindowRange, features: &serde_json::Value) -> Result<MLScore>;
+    fn score_window(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+        features: &serde_json::Value,
+    ) -> Result<MLScore>;
 }
 
 /// 5) Snapshotter – forensic capture
@@ -81,6 +91,7 @@ pub trait Snapshotter: Send + Sync {
 /// 6) UTL client – truth layer (append-only receipts + verify)
 pub trait UtldClient: Send + Sync {
     /// Seal a commit: hash (event/verdict/ml/evidence manifest/contract/config) and append.
+    #[allow(clippy::too_many_arguments)]
     fn append_receipt(
         &self,
         namespace_id: &str,
@@ -105,10 +116,19 @@ pub trait BarEngine: Send {
     fn handle_trace_event(&self, te: &TraceEvent) -> Result<()>;
 
     /// Build AttackGraph/window summary (Stage 3)
-    fn correlate_window(&self, namespace_id: &str, window: &WindowRange) -> Result<serde_json::Value>;
+    fn correlate_window(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+    ) -> Result<serde_json::Value>;
 
     /// Run ML (Stage 4) – advisory only
-    fn run_ml(&self, namespace_id: &str, window: &WindowRange, window_features: &serde_json::Value) -> Result<MLScore>;
+    fn run_ml(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+        window_features: &serde_json::Value,
+    ) -> Result<MLScore>;
 
     /// Judge via packs/contracts (Stage 5) – combine drift, patterns, ML (confidence-only)
     fn judge(
@@ -123,6 +143,7 @@ pub trait BarEngine: Send {
     fn maybe_snapshot(&self, trigger: &TriggerVerdict) -> Result<Option<EvidencePackManifest>>;
 
     /// Seal (Stage 7) via UTL
+    #[allow(clippy::too_many_arguments)]
     fn seal(
         &self,
         namespace_id: &str,

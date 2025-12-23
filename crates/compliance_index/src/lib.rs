@@ -2,12 +2,15 @@ pub mod burn;
 pub mod burn_process;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
-use std::io::{Write, BufRead, BufReader};
-use sha2::{Sha256, Digest};
+use std::io::{BufRead, BufReader, Write};
 
-pub use burn::{ComplianceBurn, BurnBuilder, BurnSummary, MerkleProof, generate_merkle_proof, verify_merkle_proof, verify_burn_chain};
-pub use burn_process::{BurnProcess, BurnConfig};
+pub use burn::{
+    generate_merkle_proof, verify_burn_chain, verify_merkle_proof, BurnBuilder, BurnSummary,
+    ComplianceBurn, MerkleProof,
+};
+pub use burn_process::{BurnConfig, BurnProcess};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlEvalRecord {
@@ -37,7 +40,7 @@ pub struct ControlEvalRecord {
     /// Hash of this record (hex)
     #[serde(default)]
     pub record_hash: Option<String>,
-    
+
     // SVC (Security Version Control) metadata
     /// SVC control/rulepack commit ID
     #[serde(default)]
@@ -58,10 +61,7 @@ pub fn append_records(records: &[ControlEvalRecord]) -> std::io::Result<()> {
     }
 
     let path = index_path_from_env();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     let mut prev_hash = read_last_record_hash(&path)?;
 
@@ -74,8 +74,7 @@ pub fn append_records(records: &[ControlEvalRecord]) -> std::io::Result<()> {
         enriched.record_hash = Some(record_hash.clone());
         prev_hash = Some(record_hash);
 
-        let line = serde_json::to_string(&enriched)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let line = serde_json::to_string(&enriched).map_err(std::io::Error::other)?;
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
     }
@@ -99,7 +98,7 @@ fn read_last_record_hash(path: &str) -> std::io::Result<Option<String>> {
         if line.trim().is_empty() {
             continue;
         }
-        
+
         // Parse and extract record_hash
         if let Ok(record) = serde_json::from_str::<ControlEvalRecord>(&line) {
             last_hash = record.record_hash;
@@ -115,8 +114,7 @@ fn compute_record_hash(record: &ControlEvalRecord) -> std::io::Result<String> {
     let mut hashable = record.clone();
     hashable.record_hash = None;
 
-    let json = serde_json::to_string(&hashable)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string(&hashable).map_err(std::io::Error::other)?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());

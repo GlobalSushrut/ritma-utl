@@ -3,7 +3,7 @@
 // weighted voting, and quorum tracking.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 /// Trait for signature verification of consensus votes.
@@ -45,12 +45,20 @@ impl ConsensusDecision {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "allow" => ConsensusDecision::Allow,
             "deny" => ConsensusDecision::Deny,
             other => ConsensusDecision::Other(other.to_string()),
         }
+    }
+}
+
+impl std::str::FromStr for ConsensusDecision {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(ConsensusDecision::parse(s))
     }
 }
 
@@ -155,7 +163,7 @@ impl ConsensusEngine {
         let threshold = header.consensus_threshold.unwrap_or(2);
         let validator_count = validator_weights.len() as u32;
         let min_validators = threshold.min(validator_count / 2 + 1);
-        
+
         Self {
             threshold,
             min_validators,
@@ -189,13 +197,13 @@ impl ConsensusEngine {
                     Some(d) => v.domain.as_deref() == Some(d),
                     None => true,
                 };
-                
+
                 // Staleness check
                 let fresh = match max_age_secs {
                     Some(max_age) => now.saturating_sub(v.timestamp) <= max_age,
                     None => true,
                 };
-                
+
                 domain_ok && fresh
             })
             .collect();
@@ -263,17 +271,16 @@ impl ConsensusEngine {
 
         let validator_count = participating_validators.len() as u32;
 
-        let threshold_met =
-            count >= self.threshold
-                && validator_count >= self.min_validators
-                && self
-                    .weight_threshold
-                    .map(|wt| total_weight_for_decision >= wt)
-                    .unwrap_or(true);
+        let threshold_met = count >= self.threshold
+            && validator_count >= self.min_validators
+            && self
+                .weight_threshold
+                .map(|wt| total_weight_for_decision >= wt)
+                .unwrap_or(true);
 
         let quorum_reached = validator_count >= self.min_validators;
 
-        let decision_kind = ConsensusDecision::from_str(&decision);
+        let decision_kind = ConsensusDecision::parse(&decision);
 
         ConsensusResult {
             decision: if threshold_met {
@@ -299,7 +306,7 @@ impl ConsensusEngine {
     /// Compute hash of all votes for tamper detection
     fn compute_consensus_hash(&self, votes: &[ConsensusVote]) -> String {
         let mut hasher = Sha256::new();
-        
+
         for vote in votes {
             let vote_json = serde_json::to_string(vote).unwrap_or_default();
             hasher.update(vote_json.as_bytes());
@@ -310,10 +317,7 @@ impl ConsensusEngine {
 
     /// Aggregate proofs from all votes
     fn aggregate_proofs(&self, votes: &[ConsensusVote]) -> Option<String> {
-        let proofs: Vec<String> = votes
-            .iter()
-            .filter_map(|v| v.proof.clone())
-            .collect();
+        let proofs: Vec<String> = votes.iter().filter_map(|v| v.proof.clone()).collect();
 
         if proofs.is_empty() {
             return None;
@@ -369,7 +373,10 @@ mod tests {
 
     #[test]
     fn consensus_requires_threshold() {
-        let engine = ConsensusEngine::new(2, vec!["v1".to_string(), "v2".to_string(), "v3".to_string()]);
+        let engine = ConsensusEngine::new(
+            2,
+            vec!["v1".to_string(), "v2".to_string(), "v3".to_string()],
+        );
 
         let votes = vec![
             ConsensusVote {
@@ -396,7 +403,10 @@ mod tests {
 
     #[test]
     fn consensus_met_with_majority() {
-        let engine = ConsensusEngine::new(2, vec!["v1".to_string(), "v2".to_string(), "v3".to_string()]);
+        let engine = ConsensusEngine::new(
+            2,
+            vec!["v1".to_string(), "v2".to_string(), "v3".to_string()],
+        );
 
         let votes = vec![
             ConsensusVote {
@@ -424,7 +434,10 @@ mod tests {
 
     #[test]
     fn domain_filtering_excludes_wrong_domain() {
-        let engine = ConsensusEngine::new(2, vec!["v1".to_string(), "v2".to_string(), "v3".to_string()]);
+        let engine = ConsensusEngine::new(
+            2,
+            vec!["v1".to_string(), "v2".to_string(), "v3".to_string()],
+        );
 
         let votes = vec![
             ConsensusVote {

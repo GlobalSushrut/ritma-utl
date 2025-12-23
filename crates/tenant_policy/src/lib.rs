@@ -33,9 +33,18 @@ pub struct When {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Condition {
-    FieldEquals { field: String, value: JsonValue },
-    FieldNotIn { field: String, values: Vec<JsonValue> },
-    FieldGreaterEqual { field: String, threshold: JsonValue },
+    FieldEquals {
+        field: String,
+        value: JsonValue,
+    },
+    FieldNotIn {
+        field: String,
+        values: Vec<JsonValue>,
+    },
+    FieldGreaterEqual {
+        field: String,
+        threshold: JsonValue,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,4 +112,3 @@ pub fn validate_lawbook(lb: &Lawbook) -> Result<(), String> {
 
     Ok(())
 }
-

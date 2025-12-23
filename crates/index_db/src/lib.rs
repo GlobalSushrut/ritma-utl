@@ -491,7 +491,9 @@ impl IndexDb {
             const MS_THRESHOLD: i64 = 1_000_000_000_000; // ~2001-09-09 in milliseconds
 
             if start_ts.abs() < MS_THRESHOLD && end_ts.abs() < MS_THRESHOLD {
-                if let (Some(s_ms), Some(e_ms)) = (start_ts.checked_mul(1000), end_ts.checked_mul(1000)) {
+                if let (Some(s_ms), Some(e_ms)) =
+                    (start_ts.checked_mul(1000), end_ts.checked_mul(1000))
+                {
                     rows = run(s_ms, e_ms)?;
                 }
             } else {
@@ -979,11 +981,7 @@ impl IndexDb {
     ///
     /// This supports "export by time" UX where the user has a single incident timestamp and
     /// wants the relevant window output without manually finding an ml_id.
-    pub fn get_ml_containing_ts(
-        &self,
-        namespace_id: &str,
-        ts: i64,
-    ) -> Result<Option<MlWindowRow>> {
+    pub fn get_ml_containing_ts(&self, namespace_id: &str, ts: i64) -> Result<Option<MlWindowRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT ml_id, namespace_id, start_ts, end_ts, final_ml_score, explain, models
              FROM ml_scores

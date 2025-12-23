@@ -9,7 +9,11 @@ use tenant_policy::Lawbook;
 use truthscript::Policy as TsPolicy;
 
 #[derive(Parser)]
-#[command(name = "utl_cue", about = "CUE tooling for Ritma / UTL policies", version)]
+#[command(
+    name = "utl_cue",
+    about = "CUE tooling for Ritma / UTL policies",
+    version
+)]
 struct Cli {
     /// Override CUE binary name or path (defaults to `cue`).
     #[arg(long)]
@@ -64,42 +68,43 @@ fn build_policy_json(cue_bin: &str, file: &str) -> Result<String, String> {
     let raw = run_cue_export(cue_bin, file)?;
 
     let value: JsonValue = serde_json::from_str(&raw)
-        .map_err(|e| format!("cue export did not produce valid JSON: {}", e))?;
+        .map_err(|e| format!("cue export did not produce valid JSON: {e}"))?;
 
     let policy: TsPolicy = serde_json::from_value(value)
-        .map_err(|e| format!("failed to parse TruthScript Policy from JSON: {}", e))?;
+        .map_err(|e| format!("failed to parse TruthScript Policy from JSON: {e}"))?;
 
     serde_json::to_string_pretty(&policy)
-        .map_err(|e| format!("failed to serialize Policy JSON: {}", e))
+        .map_err(|e| format!("failed to serialize Policy JSON: {e}"))
 }
 
 fn build_lawbook_json(cue_bin: &str, file: &str) -> Result<String, String> {
     let raw = run_cue_export(cue_bin, file)?;
 
     let value: JsonValue = serde_json::from_str(&raw)
-        .map_err(|e| format!("cue export did not produce valid JSON: {}", e))?;
+        .map_err(|e| format!("cue export did not produce valid JSON: {e}"))?;
 
     let lawbook: Lawbook = serde_json::from_value(value)
-        .map_err(|e| format!("failed to parse Lawbook from JSON: {}", e))?;
+        .map_err(|e| format!("failed to parse Lawbook from JSON: {e}"))?;
 
     serde_json::to_string_pretty(&lawbook)
-        .map_err(|e| format!("failed to serialize Lawbook JSON: {}", e))
+        .map_err(|e| format!("failed to serialize Lawbook JSON: {e}"))
 }
 
 fn run_cue_export(cue_bin: &str, file: &str) -> Result<String, String> {
     if !Path::new(file).exists() {
-        return Err(format!("CUE file not found: {}", file));
+        return Err(format!("CUE file not found: {file}"));
     }
 
     let output = Command::new(cue_bin)
         .arg("export")
         .arg(file)
         .output()
-        .map_err(|e| format!("failed to invoke '{}': {}", cue_bin, e))?;
+        .map_err(|e| format!("failed to invoke '{cue_bin}': {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cue export failed: {}", stderr.trim()));
+        let stderr = stderr.trim();
+        return Err(format!("cue export failed: {stderr}"));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -117,16 +122,16 @@ fn write_output(json: &str, out: Option<&str>) -> Result<(), String> {
     match out {
         Some(path) => {
             let mut file = File::create(path)
-                .map_err(|e| format!("failed to create output file {}: {}", path, e))?;
+                .map_err(|e| format!("failed to create output file {path}: {e}"))?;
             file.write_all(json.as_bytes())
-                .map_err(|e| format!("failed to write JSON to {}: {}", path, e))?;
+                .map_err(|e| format!("failed to write JSON to {path}: {e}"))?;
             Ok(())
         }
         None => {
             let mut stdout = std::io::stdout();
             stdout
                 .write_all(json.as_bytes())
-                .map_err(|e| format!("failed to write JSON to stdout: {}", e))?;
+                .map_err(|e| format!("failed to write JSON to stdout: {e}"))?;
             Ok(())
         }
     }

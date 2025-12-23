@@ -1,12 +1,14 @@
-use common_models::{WindowRange, Verdict, VerdictType, Severity, VerdictExplain, VerdictRangesUsed, MLScore, TriggerVerdict, SnapshotAction, ProofPack};
-use index_db::{IndexDb, ProofMetadataRow, WindowSummaryRow, AttackGraphEdgeRow};
+use attack_graph::AttackGraphBuilder;
+use common_models::{MLScore, ProofPack, SnapshotAction, TriggerVerdict, Verdict, WindowRange};
+use index_db::{AttackGraphEdgeRow, IndexDb, ProofMetadataRow, WindowSummaryRow};
+use judge_contracts::ContractJudge;
 use ml_runner::SimpleCpuMl;
 use proof_standards::ProofManager;
-use judge_contracts::ContractJudge;
-use window_summarizer::WindowSummarizer;
-use attack_graph::AttackGraphBuilder;
+use security_interfaces::{
+    BarEngine, MlRunner, PipelineOrchestrator, Result as IfResult, SecIfError,
+};
 use snapshotter::Snapshotter;
-use security_interfaces::{PipelineOrchestrator, BarEngine, Result as IfResult, SecIfError, MlRunner};
+use window_summarizer::WindowSummarizer;
 
 pub struct Orchestrator {
     index: IndexDb,
@@ -16,12 +18,20 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     pub fn new(index: IndexDb) -> Self {
-        Self { index, proofs: ProofManager::with_noop_backend(), ml: SimpleCpuMl::new() }
+        Self {
+            index,
+            proofs: ProofManager::with_noop_backend(),
+            ml: SimpleCpuMl::new(),
+        }
     }
 
     fn window_features(&self, namespace_id: &str, window: &WindowRange) -> serde_json::Value {
-        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start).map(|t| t.timestamp()).unwrap_or(0);
-        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end).map(|t| t.timestamp()).unwrap_or(0);
+        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
 
         let events = self
             .index
@@ -50,49 +60,41 @@ impl Orchestrator {
             }),
         }
     }
-
-    fn build_verdict(&self, namespace_id: &str, trigger: &TriggerVerdict, ml: &MLScore) -> Verdict {
-        let vt = trigger.verdict_type.clone();
-        let severity = if ml.final_ml_score >= 0.9 { Severity::Critical }
-            else if ml.final_ml_score >= 0.7 { Severity::High }
-            else if ml.final_ml_score >= 0.5 { Severity::Med }
-            else { Severity::Low };
-
-        Verdict {
-            verdict_id: format!("verdict_{}", uuid::Uuid::new_v4()),
-            namespace_id: namespace_id.to_string(),
-            event_id: format!("evt_window:{}:{}", trigger.window.start, trigger.window.end),
-            verdict_type: vt,
-            severity,
-            confidence: (0.5 + (ml.final_ml_score * 0.4)).min(1.0),
-            reason_codes: vec!["ML_SUSPICION".to_string()],
-            explain: VerdictExplain { summary: Some(ml.explain.clone()), evidence_refs: vec![] },
-            ranges_used: VerdictRangesUsed { json: serde_json::json!({"window": {"start": trigger.window.start, "end": trigger.window.end}}) },
-            contract_hash: None,
-            policy_pack: None,
-        }
-    }
 }
 
 impl BarEngine for Orchestrator {
-    fn handle_decision_event(&self, _ev: &common_models::DecisionEvent) -> IfResult<()> { Ok(()) }
-    fn handle_trace_event(&self, _te: &common_models::TraceEvent) -> IfResult<()> { Ok(()) }
+    fn handle_decision_event(&self, _ev: &common_models::DecisionEvent) -> IfResult<()> {
+        Ok(())
+    }
+    fn handle_trace_event(&self, _te: &common_models::TraceEvent) -> IfResult<()> {
+        Ok(())
+    }
 
-    fn correlate_window(&self, namespace_id: &str, window: &WindowRange) -> IfResult<serde_json::Value> {
+    fn correlate_window(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+    ) -> IfResult<serde_json::Value> {
         let feats = self.window_features(namespace_id, window);
 
         // Fetch events and build attack graph
-        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start).map(|t| t.timestamp()).unwrap_or(0);
-        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end).map(|t| t.timestamp()).unwrap_or(0);
+        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
         let events = self
             .index
             .list_trace_events_range(namespace_id, start_ts, end_ts)
             .map_err(|e| SecIfError::Other(e.to_string()))?;
 
-        let builder = AttackGraphBuilder::new(IndexDb::open(":memory:").map_err(|e| SecIfError::Other(e.to_string()))?);
+        let builder = AttackGraphBuilder::new(
+            IndexDb::open(":memory:").map_err(|e| SecIfError::Other(e.to_string()))?,
+        );
         let (edges, graph_hash) = builder
             .build_graph(namespace_id, window, &events)
-            .map_err(|e| SecIfError::Other(e))?;
+            .map_err(SecIfError::Other)?;
 
         // Persist edges
         let window_id = format!("window:{}:{}", window.start, window.end);
@@ -108,8 +110,12 @@ impl BarEngine for Orchestrator {
         }
 
         // Persist window summary
-        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start).map(|t| t.timestamp()).unwrap_or(0);
-        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end).map(|t| t.timestamp()).unwrap_or(0);
+        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
         let row = WindowSummaryRow {
             window_id: window_id.clone(),
             namespace_id: namespace_id.to_string(),
@@ -123,11 +129,24 @@ impl BarEngine for Orchestrator {
         Ok(feats)
     }
 
-    fn run_ml(&self, namespace_id: &str, window: &WindowRange, window_features: &serde_json::Value) -> IfResult<MLScore> {
-        self.ml.score_window(namespace_id, window, window_features).map_err(|e| SecIfError::Other(e.to_string()))
+    fn run_ml(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+        window_features: &serde_json::Value,
+    ) -> IfResult<MLScore> {
+        self.ml
+            .score_window(namespace_id, window, window_features)
+            .map_err(|e| SecIfError::Other(e.to_string()))
     }
 
-    fn judge(&self, namespace_id: &str, window: &WindowRange, ml: &MLScore, _policy_inputs: &serde_json::Value) -> IfResult<(TriggerVerdict, Verdict)> {
+    fn judge(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+        ml: &MLScore,
+        _policy_inputs: &serde_json::Value,
+    ) -> IfResult<(TriggerVerdict, Verdict)> {
         // Use window features with contract judge
         let features = self.window_features(namespace_id, window);
         let judge = ContractJudge::with_defaults(namespace_id);
@@ -135,7 +154,10 @@ impl BarEngine for Orchestrator {
         Ok((trigger, verdict))
     }
 
-    fn maybe_snapshot(&self, trigger: &TriggerVerdict) -> IfResult<Option<common_models::EvidencePackManifest>> {
+    fn maybe_snapshot(
+        &self,
+        trigger: &TriggerVerdict,
+    ) -> IfResult<Option<common_models::EvidencePackManifest>> {
         if matches!(trigger.next_action, SnapshotAction::SignalOnly) {
             return Ok(None);
         }
@@ -143,7 +165,7 @@ impl BarEngine for Orchestrator {
         match snap.capture_snapshot(trigger, &[]) {
             Ok(m) => Ok(Some(m)),
             Err(e) => {
-                eprintln!("snapshot failed: {}", e);
+                eprintln!("snapshot failed: {e}");
                 Ok(None)
             }
         }
@@ -162,7 +184,9 @@ impl BarEngine for Orchestrator {
     ) -> IfResult<ProofPack> {
         // For MVP, we seal via verdict attestation only; callers should persist proof metadata into IndexDB
         // This method is unused in run_window; kept to satisfy trait.
-        Err(SecIfError::Other("use run_window's internal sealing".into()))
+        Err(SecIfError::Other(
+            "use run_window's internal sealing".into(),
+        ))
     }
 
     fn index_and_signal(
@@ -174,11 +198,19 @@ impl BarEngine for Orchestrator {
         proof: &ProofPack,
     ) -> IfResult<()> {
         // Persist ML
-        self.index.insert_ml_score_from_model(ml).map_err(|e| SecIfError::Other(e.to_string()))?;
+        self.index
+            .insert_ml_score_from_model(ml)
+            .map_err(|e| SecIfError::Other(e.to_string()))?;
         // Persist verdict
-        self.index.insert_verdict_from_model(verdict).map_err(|e| SecIfError::Other(e.to_string()))?;
+        self.index
+            .insert_verdict_from_model(verdict)
+            .map_err(|e| SecIfError::Other(e.to_string()))?;
         // Persist evidence manifest
-        if let Some(ep) = evidence_opt { self.index.insert_evidence_pack(ep).map_err(|e| SecIfError::Other(e.to_string()))?; }
+        if let Some(ep) = evidence_opt {
+            self.index
+                .insert_evidence_pack(ep)
+                .map_err(|e| SecIfError::Other(e.to_string()))?;
+        }
         // Persist proof metadata
         let pm = ProofMetadataRow {
             proof_id: proof.proof_id.clone(),
@@ -188,10 +220,13 @@ impl BarEngine for Orchestrator {
             public_inputs_hash: proof.public_inputs_hash.clone(),
             verification_key_id: proof.verification_key_id.clone(),
             status: "sealed".to_string(),
-            receipt_refs: serde_json::to_value(&proof.receipt_refs).unwrap_or(serde_json::Value::Null),
+            receipt_refs: serde_json::to_value(&proof.receipt_refs)
+                .unwrap_or(serde_json::Value::Null),
             blob_ref: proof.proof_ref.clone(),
         };
-        self.index.insert_proof_metadata(&pm).map_err(|e| SecIfError::Other(e.to_string()))?;
+        self.index
+            .insert_proof_metadata(&pm)
+            .map_err(|e| SecIfError::Other(e.to_string()))?;
         Ok(())
     }
 }
@@ -245,8 +280,13 @@ mod tests {
         let path = tmp.path().join("index_db.sqlite");
         let index = IndexDb::open(path.to_str().unwrap()).expect("open index_db");
         let orchestrator = Orchestrator::new(index);
-        let window = WindowRange { start: "2025-12-18T12:00:00Z".into(), end: "2025-12-18T12:05:00Z".into() };
-        let proof = orchestrator.run_window("ns://test/prod/app/svc", &window).expect("run_window");
+        let window = WindowRange {
+            start: "2025-12-18T12:00:00Z".into(),
+            end: "2025-12-18T12:05:00Z".into(),
+        };
+        let proof = orchestrator
+            .run_window("ns://test/prod/app/svc", &window)
+            .expect("run_window");
         assert_eq!(proof.proof_type, "noop");
     }
 }

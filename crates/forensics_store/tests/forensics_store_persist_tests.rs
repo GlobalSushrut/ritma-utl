@@ -24,7 +24,10 @@ fn persist_dig_to_fs_creates_expected_path_and_content() {
     // Path should live under the configured base dir and tenant directory.
     let rel = p.strip_prefix(dir.path()).expect("path under base dir");
     let components: Vec<_> = rel.components().collect();
-    assert!(components.len() >= 5, "expected at least tenant/YYYY/MM/DD/file");
+    assert!(
+        components.len() >= 5,
+        "expected at least tenant/YYYY/MM/DD/file"
+    );
 
     let filename = components.last().unwrap().as_os_str().to_string_lossy();
     let expected_prefix = format!("root-{}_file-{}", root_id, file_id);

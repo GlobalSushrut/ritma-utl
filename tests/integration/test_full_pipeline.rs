@@ -5,8 +5,8 @@
 
 use common_models::*;
 use index_db::IndexDb;
-use middleware_adapters::{HttpAdapter, HttpAdapterConfig, HttpRequestData, MiddlewareAdapter};
 use intent_power::IntentBaselineManager;
+use middleware_adapters::{HttpAdapter, HttpAdapterConfig, HttpRequestData, MiddlewareAdapter};
 use proof_standards::ProofManager;
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 fn full_pipeline_http_to_proof() {
     // Setup: Create in-memory database (migrate is called in open)
     let db = IndexDb::open(":memory:").expect("open db");
-    
+
     // Step 1: Configure HTTP adapter
     let adapter_config = HttpAdapterConfig {
         namespace_id: "ns://acme/prod/payments/api".to_string(),
@@ -25,7 +25,7 @@ fn full_pipeline_http_to_proof() {
         ..Default::default()
     };
     let adapter = HttpAdapter::new(adapter_config);
-    
+
     // Step 2: Simulate HTTP request
     let http_request = HttpRequestData {
         method: "POST".to_string(),
@@ -43,20 +43,20 @@ fn full_pipeline_http_to_proof() {
         request_id: Some("req_xyz789".to_string()),
         trace_id: Some("trace_abc123".to_string()),
     };
-    
+
     // Step 3: Convert to DecisionEvent
     let input = serde_json::to_vec(&http_request).expect("serialize");
     let event = adapter.adapt(&input).expect("adapt");
-    
+
     // Verify event structure
     assert_eq!(event.namespace_id, "ns://acme/prod/payments/api");
     assert_eq!(event.event_type, "HTTP_POST");
     assert_eq!(event.env_stamp.service, "payments_api");
     assert_eq!(event.context.request_id, Some("req_xyz789".to_string()));
-    
+
     // Step 4: Persist event to IndexDB using helper
     db.insert_event_from_decision(&event).expect("insert event");
-    
+
     // Step 5: Create a verdict manually (MinimalPipeline expects different input)
     let verdict = Verdict {
         verdict_id: format!("verdict_{}", uuid::Uuid::new_v4()),
@@ -76,10 +76,11 @@ fn full_pipeline_http_to_proof() {
         contract_hash: Some("contract_hash_v1".to_string()),
         policy_pack: Some("payments_policy_v1".to_string()),
     };
-    
+
     // Step 6: Persist verdict using helper
-    db.insert_verdict_from_model(&verdict).expect("insert verdict");
-    
+    db.insert_verdict_from_model(&verdict)
+        .expect("insert verdict");
+
     // Step 7: Create receipt
     let receipt = Receipt {
         receipt_id: "receipt_001".to_string(),
@@ -92,53 +93,61 @@ fn full_pipeline_http_to_proof() {
         ts: chrono::Utc::now().to_rfc3339(),
         utl_chain_hash: "".to_string(),
     };
-    
+
     let chain_hash = receipt.compute_chain_hash();
     let mut receipt_with_hash = receipt.clone();
     receipt_with_hash.utl_chain_hash = chain_hash;
-    
+
     // Step 8: Intent baseline and drift detection
     let mut baseline_mgr = IntentBaselineManager::new();
     baseline_mgr.create_baseline(event.namespace_id.clone());
-    
+
     // Update baseline with normal behavior
-    baseline_mgr.update_baseline(&event.namespace_id, &event).expect("update baseline");
-    
+    baseline_mgr
+        .update_baseline(&event.namespace_id, &event)
+        .expect("update baseline");
+
     // Create a suspicious event (different event type, different actor)
     let mut suspicious_event = event.clone();
     suspicious_event.event_id = "evt_suspicious".to_string();
     suspicious_event.event_type = "HTTP_DELETE".to_string();
     suspicious_event.actor.id_hash = "unknown_actor_hash".to_string();
-    
+
     // Detect drift
-    let drift = baseline_mgr.detect_drift(&event.namespace_id, &suspicious_event)
+    let drift = baseline_mgr
+        .detect_drift(&event.namespace_id, &suspicious_event)
         .expect("detect drift");
-    
+
     // Should detect drift (unknown event type + unknown actor = 0.7 > 0.5 threshold)
     assert!(drift.has_drift, "Should detect drift for suspicious event");
-    assert!(drift.drift_score > 0.5, "Drift score should exceed threshold");
-    
+    assert!(
+        drift.drift_score > 0.5,
+        "Drift score should exceed threshold"
+    );
+
     // Step 9: Generate proof for verdict attestation
     let proof_mgr = ProofManager::with_noop_backend();
-    let proof = proof_mgr.prove_verdict_attestation(
-        verdict.clone(),
-        vec![receipt_with_hash.clone()],
-    ).expect("generate proof");
-    
+    let proof = proof_mgr
+        .prove_verdict_attestation(verdict.clone(), vec![receipt_with_hash.clone()])
+        .expect("generate proof");
+
     // Verify proof
     assert_eq!(proof.namespace_id, event.namespace_id);
     assert_eq!(proof.proof_type, "noop");
-    
+
     let is_valid = proof_mgr.verify(&proof).expect("verify proof");
     assert!(is_valid, "Proof should be valid");
-    
+
     // Step 10: Persist proof metadata (requires status parameter)
-    db.insert_proof_from_pack(&proof, "generated").expect("insert proof");
-    
+    db.insert_proof_from_pack(&proof, "generated")
+        .expect("insert proof");
+
     // Step 11: Query events back using events_since
-    let events = db.events_since(&event.namespace_id, 0).expect("query events");
+    let events = db
+        .events_since(&event.namespace_id, 0)
+        .expect("query events");
     assert_eq!(events.len(), 1, "Should have 1 event");
-    
+
     // Verify end-to-end data integrity
     assert_eq!(events[0].event_id, event.event_id);
     assert_eq!(events[0].namespace_id, event.namespace_id);
@@ -148,7 +157,7 @@ fn full_pipeline_http_to_proof() {
 fn multiple_events_baseline_learning() {
     // Setup (migrate is called in open)
     let db = IndexDb::open(":memory:").expect("open db");
-    
+
     let adapter_config = HttpAdapterConfig {
         namespace_id: "ns://acme/prod/api/svc".to_string(),
         service_name: "api_svc".to_string(),
@@ -158,11 +167,11 @@ fn multiple_events_baseline_learning() {
         ..Default::default()
     };
     let adapter = HttpAdapter::new(adapter_config);
-    
+
     // Create baseline manager
     let mut baseline_mgr = IntentBaselineManager::new();
     baseline_mgr.create_baseline("ns://acme/prod/api/svc".to_string());
-    
+
     // Simulate 10 normal GET requests from the same user
     for i in 0..10 {
         let http_request = HttpRequestData {
@@ -180,17 +189,19 @@ fn multiple_events_baseline_learning() {
             request_id: Some(format!("req_{}", i)),
             trace_id: Some(format!("trace_{}", i)),
         };
-        
+
         let input = serde_json::to_vec(&http_request).expect("serialize");
         let event = adapter.adapt(&input).expect("adapt");
-        
+
         // Update baseline
-        baseline_mgr.update_baseline(&event.namespace_id, &event).expect("update baseline");
-        
+        baseline_mgr
+            .update_baseline(&event.namespace_id, &event)
+            .expect("update baseline");
+
         // Persist using helper
         db.insert_event_from_decision(&event).expect("insert event");
     }
-    
+
     // Now simulate an anomalous request (POST from different user)
     let anomalous_request = HttpRequestData {
         method: "POST".to_string(),
@@ -207,19 +218,22 @@ fn multiple_events_baseline_learning() {
         request_id: Some("req_anomaly".to_string()),
         trace_id: Some("trace_anomaly".to_string()),
     };
-    
+
     let input = serde_json::to_vec(&anomalous_request).expect("serialize");
     let anomalous_event = adapter.adapt(&input).expect("adapt");
-    
+
     // Detect drift
-    let drift = baseline_mgr.detect_drift(&anomalous_event.namespace_id, &anomalous_event)
+    let drift = baseline_mgr
+        .detect_drift(&anomalous_event.namespace_id, &anomalous_event)
         .expect("detect drift");
-    
+
     // Should detect drift
     assert!(drift.has_drift, "Should detect anomalous behavior");
     assert!(!drift.drift_reasons.is_empty(), "Should have drift reasons");
-    
+
     // Verify we have 10 normal events in DB
-    let events = db.events_since("ns://acme/prod/api/svc", 0).expect("query events");
+    let events = db
+        .events_since("ns://acme/prod/api/svc", 0)
+        .expect("query events");
     assert_eq!(events.len(), 10, "Should have 10 normal events");
 }

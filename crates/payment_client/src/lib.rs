@@ -44,7 +44,7 @@ impl HttpPaymentProvider {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
-            .map_err(|e| format!("failed to build payment backend http client: {}", e))?;
+            .map_err(|e| format!("failed to build payment backend http client: {e}"))?;
 
         Ok(Self {
             client,
@@ -53,7 +53,10 @@ impl HttpPaymentProvider {
         })
     }
 
-    fn auth_header(&self, req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    fn auth_header(
+        &self,
+        req: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
         if let Some(ref key) = self.api_key {
             req.bearer_auth(key)
         } else {
@@ -67,14 +70,16 @@ impl PaymentProvider for HttpPaymentProvider {
 
     fn ensure_customer(&self, external_customer_id: &str) -> Result<String, Self::Error> {
         let url = format!("{}/customers", self.base_url.trim_end_matches('/'));
-        let body = EnsureCustomerRequest { external_customer_id };
+        let body = EnsureCustomerRequest {
+            external_customer_id,
+        };
 
         let req = self.client.post(&url).json(&body);
         let req = self.auth_header(req);
 
         let resp = req
             .send()
-            .map_err(|e| format!("failed to call payment backend customers endpoint: {}", e))?;
+            .map_err(|e| format!("failed to call payment backend customers endpoint: {e}"))?;
 
         if !resp.status().is_success() {
             return Err(format!(
@@ -85,7 +90,7 @@ impl PaymentProvider for HttpPaymentProvider {
 
         let parsed: EnsureCustomerResponse = resp
             .json()
-            .map_err(|e| format!("failed to parse payment backend customers response: {}", e))?;
+            .map_err(|e| format!("failed to parse payment backend customers response: {e}"))?;
 
         Ok(parsed.id)
     }
@@ -106,7 +111,7 @@ impl PaymentProvider for HttpPaymentProvider {
 
         let resp = req
             .send()
-            .map_err(|e| format!("failed to call payment backend invoices endpoint: {}", e))?;
+            .map_err(|e| format!("failed to call payment backend invoices endpoint: {e}"))?;
 
         if !resp.status().is_success() {
             return Err(format!(
@@ -117,7 +122,7 @@ impl PaymentProvider for HttpPaymentProvider {
 
         let parsed: CreateInvoiceResponse = resp
             .json()
-            .map_err(|e| format!("failed to parse payment backend invoices response: {}", e))?;
+            .map_err(|e| format!("failed to parse payment backend invoices response: {e}"))?;
 
         Ok(parsed.id)
     }

@@ -1,16 +1,16 @@
 // Evidence verification tool for Ritma
 // Verifies hash chain integrity of decision events and compliance records
 
+use security_events::DecisionEvent;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::process;
-use security_events::DecisionEvent;
-use sha2::{Sha256, Digest};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         eprintln!("Usage: ritma-evidence-verify <log_file.jsonl>");
         eprintln!();
@@ -22,14 +22,14 @@ fn main() {
     }
 
     let log_path = &args[1];
-    
-    println!("Verifying evidence log: {}", log_path);
+
+    println!("Verifying evidence log: {log_path}");
     println!();
 
     let file = match File::open(log_path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("❌ Error opening file: {}", e);
+            eprintln!("❌ Error opening file: {e}");
             process::exit(1);
         }
     };
@@ -46,7 +46,7 @@ fn main() {
         let line = match line_result {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("❌ Error reading line {}: {}", line_num, e);
+                eprintln!("❌ Error reading line {line_num}: {e}");
                 errors += 1;
                 continue;
             }
@@ -60,7 +60,7 @@ fn main() {
         let event: DecisionEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("❌ Line {}: Invalid JSON: {}", line_num, e);
+                eprintln!("❌ Line {line_num}: Invalid JSON: {e}");
                 errors += 1;
                 continue;
             }
@@ -70,7 +70,7 @@ fn main() {
 
         // Check 1: Schema version
         if event.schema_version == 0 {
-            eprintln!("⚠️  Line {}: No schema_version (legacy record)", line_num);
+            eprintln!("⚠️  Line {line_num}: No schema_version (legacy record)");
             warnings += 1;
         }
 
@@ -79,18 +79,18 @@ fn main() {
             match (&prev_hash, &event.prev_hash) {
                 (Some(expected), Some(actual)) => {
                     if expected != actual {
-                        eprintln!("❌ Line {}: Hash chain broken!", line_num);
-                        eprintln!("   Expected prev_hash: {}", expected);
-                        eprintln!("   Actual prev_hash:   {}", actual);
+                        eprintln!("❌ Line {line_num}: Hash chain broken!");
+                        eprintln!("   Expected prev_hash: {expected}");
+                        eprintln!("   Actual prev_hash:   {actual}");
                         errors += 1;
                     }
                 }
                 (Some(_), None) => {
-                    eprintln!("⚠️  Line {}: Missing prev_hash (chain break)", line_num);
+                    eprintln!("⚠️  Line {line_num}: Missing prev_hash (chain break)");
                     warnings += 1;
                 }
                 (None, Some(_)) => {
-                    eprintln!("⚠️  Line {}: Has prev_hash but previous record had none", line_num);
+                    eprintln!("⚠️  Line {line_num}: Has prev_hash but previous record had none");
                     warnings += 1;
                 }
                 (None, None) => {
@@ -100,7 +100,7 @@ fn main() {
         } else {
             // First record
             if event.prev_hash.is_some() {
-                eprintln!("⚠️  Line {}: First record has prev_hash (should be None)", line_num);
+                eprintln!("⚠️  Line {line_num}: First record has prev_hash (should be None)");
                 warnings += 1;
             }
         }
@@ -110,22 +110,22 @@ fn main() {
             let computed_hash = match compute_event_hash(&event) {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("❌ Line {}: Error computing hash: {}", line_num, e);
+                    eprintln!("❌ Line {line_num}: Error computing hash: {e}");
                     errors += 1;
                     continue;
                 }
             };
 
             if &computed_hash != stored_hash {
-                eprintln!("❌ Line {}: Record hash mismatch!", line_num);
-                eprintln!("   Stored:   {}", stored_hash);
-                eprintln!("   Computed: {}", computed_hash);
+                eprintln!("❌ Line {line_num}: Record hash mismatch!");
+                eprintln!("   Stored:   {stored_hash}");
+                eprintln!("   Computed: {computed_hash}");
                 errors += 1;
             }
 
             prev_hash = Some(stored_hash.clone());
         } else {
-            eprintln!("⚠️  Line {}: No record_hash (legacy record)", line_num);
+            eprintln!("⚠️  Line {line_num}: No record_hash (legacy record)");
             warnings += 1;
             prev_hash = None;
         }
@@ -133,10 +133,10 @@ fn main() {
 
     println!();
     println!("Verification summary:");
-    println!("  Total records: {}", total_records);
-    println!("  Errors: {}", errors);
-    println!("  Warnings: {}", warnings);
-    
+    println!("  Total records: {total_records}");
+    println!("  Errors: {errors}");
+    println!("  Warnings: {warnings}");
+
     if errors > 0 {
         println!();
         eprintln!("❌ Evidence log has integrity errors!");

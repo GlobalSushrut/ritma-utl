@@ -1,20 +1,20 @@
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use std::io::{Read, Write};
 #[cfg(all(target_os = "linux", feature = "tls"))]
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use std::sync::{Arc, Mutex};
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use std::thread;
 
 #[cfg(all(target_os = "linux", feature = "tls"))]
-use security_os::{MtlsConfig, Did};
-#[cfg(all(target_os = "linux", feature = "tls"))]
-use utld::UtlNode;
+use biz_api::BusinessPlugin;
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use policy_engine::PolicyEngine;
 #[cfg(all(target_os = "linux", feature = "tls"))]
-use biz_api::BusinessPlugin;
+use security_os::{Did, MtlsConfig};
+#[cfg(all(target_os = "linux", feature = "tls"))]
+use utld::UtlNode;
 
 /// Start a TCP+TLS listener for utld on the given address.
 /// Extracts DIDs from client certs and injects into p_container.

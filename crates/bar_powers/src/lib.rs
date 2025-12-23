@@ -144,8 +144,14 @@ pub struct ScopeBoundaryDecision {
 pub trait BoundaryPower {
     fn enforce_data_boundary(&self, event: &serde_json::Value) -> Result<DataBoundaryDecision>;
     fn enforce_action_boundary(&self, event: &serde_json::Value) -> Result<ActionBoundaryDecision>;
-    fn enforce_network_boundary(&self, event: &serde_json::Value) -> Result<NetworkBoundaryDecision>;
-    fn enforce_authority_boundary(&self, actor: &serde_json::Value) -> Result<AuthorityBoundaryDecision>;
+    fn enforce_network_boundary(
+        &self,
+        event: &serde_json::Value,
+    ) -> Result<NetworkBoundaryDecision>;
+    fn enforce_authority_boundary(
+        &self,
+        actor: &serde_json::Value,
+    ) -> Result<AuthorityBoundaryDecision>;
     fn enforce_scope_boundary(&self, event: &serde_json::Value) -> Result<ScopeBoundaryDecision>;
 }
 
@@ -182,14 +188,21 @@ mod tests {
     struct NoopPowers;
 
     impl MiddlewarePower for NoopPowers {
-        fn create_adapter(&self, _kind: AdapterKind, _config: AdapterConfig) -> Result<Box<dyn Adapter>> {
+        fn create_adapter(
+            &self,
+            _kind: AdapterKind,
+            _config: AdapterConfig,
+        ) -> Result<Box<dyn Adapter>> {
             Err(BarPowerError::Other("noop".into()))
         }
     }
 
     impl ConfigPower for NoopPowers {
         fn effective_config(&self) -> Result<EffectiveConfig> {
-            Ok(EffectiveConfig { config_hash: "h".into(), json: serde_json::json!({}) })
+            Ok(EffectiveConfig {
+                config_hash: "h".into(),
+                json: serde_json::json!({}),
+            })
         }
     }
 
@@ -208,37 +221,74 @@ mod tests {
 
     impl PipelinePower for NoopPowers {
         fn process(&self, _input: PipelineInput) -> Result<PipelineOutput> {
-            Ok(PipelineOutput { decision_event: None, verdict: None })
+            Ok(PipelineOutput {
+                decision_event: None,
+                verdict: None,
+            })
         }
     }
 
     impl RoutesPower for NoopPowers {
         fn match_route(&self, _event_type: &str, _namespace_id: &str) -> Result<RouteMatch> {
-            Ok(RouteMatch { packs: vec![], destinations: vec![] })
+            Ok(RouteMatch {
+                packs: vec![],
+                destinations: vec![],
+            })
         }
     }
 
     impl BoundaryPower for NoopPowers {
-        fn enforce_data_boundary(&self, _event: &serde_json::Value) -> Result<DataBoundaryDecision> {
-            Ok(DataBoundaryDecision { redacted_payload: serde_json::json!({}) })
+        fn enforce_data_boundary(
+            &self,
+            _event: &serde_json::Value,
+        ) -> Result<DataBoundaryDecision> {
+            Ok(DataBoundaryDecision {
+                redacted_payload: serde_json::json!({}),
+            })
         }
-        fn enforce_action_boundary(&self, _event: &serde_json::Value) -> Result<ActionBoundaryDecision> {
-            Ok(ActionBoundaryDecision { allowed_actions: vec![] })
+        fn enforce_action_boundary(
+            &self,
+            _event: &serde_json::Value,
+        ) -> Result<ActionBoundaryDecision> {
+            Ok(ActionBoundaryDecision {
+                allowed_actions: vec![],
+            })
         }
-        fn enforce_network_boundary(&self, _event: &serde_json::Value) -> Result<NetworkBoundaryDecision> {
-            Ok(NetworkBoundaryDecision { allowed_destinations: vec![] })
+        fn enforce_network_boundary(
+            &self,
+            _event: &serde_json::Value,
+        ) -> Result<NetworkBoundaryDecision> {
+            Ok(NetworkBoundaryDecision {
+                allowed_destinations: vec![],
+            })
         }
-        fn enforce_authority_boundary(&self, _actor: &serde_json::Value) -> Result<AuthorityBoundaryDecision> {
-            Ok(AuthorityBoundaryDecision { can_modify_config: false, can_modify_contracts: false })
+        fn enforce_authority_boundary(
+            &self,
+            _actor: &serde_json::Value,
+        ) -> Result<AuthorityBoundaryDecision> {
+            Ok(AuthorityBoundaryDecision {
+                can_modify_config: false,
+                can_modify_contracts: false,
+            })
         }
-        fn enforce_scope_boundary(&self, _event: &serde_json::Value) -> Result<ScopeBoundaryDecision> {
+        fn enforce_scope_boundary(
+            &self,
+            _event: &serde_json::Value,
+        ) -> Result<ScopeBoundaryDecision> {
             Ok(ScopeBoundaryDecision { namespaces: vec![] })
         }
     }
 
     impl RangePower for NoopPowers {
-        fn validate_range(&self, _range: &Range, _context: &serde_json::Value) -> Result<RangeValidity> {
-            Ok(RangeValidity { is_valid: true, reason: None })
+        fn validate_range(
+            &self,
+            _range: &Range,
+            _context: &serde_json::Value,
+        ) -> Result<RangeValidity> {
+            Ok(RangeValidity {
+                is_valid: true,
+                reason: None,
+            })
         }
     }
 

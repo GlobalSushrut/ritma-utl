@@ -1,7 +1,7 @@
-pub mod init;
+pub mod config;
 pub mod events;
-pub mod verdicts;
+pub mod init;
 pub mod intent;
 pub mod proof;
-pub mod config;
 pub mod status;
+pub mod verdicts;

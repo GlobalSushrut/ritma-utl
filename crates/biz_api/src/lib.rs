@@ -55,18 +55,20 @@ pub enum PlanTier {
     Enterprise,
     Sovereign,
     /// Custom-named tier (e.g. "internal", "beta", or bespoke contracts).
-    Custom { label: String },
+    Custom {
+        label: String,
+    },
 }
 
 /// Which metric is being limited or metered.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricKind {
-    Decisions,      // count of DecisionEvents
-    DigFiles,       // count of DigFiles sealed
-    StorageBytes,   // logical bytes stored in managed vaults
-    SnapshotExports,// count of truth snapshot exports
-    ApiCalls,       // external API calls into Ritma Cloud
+    Decisions,       // count of DecisionEvents
+    DigFiles,        // count of DigFiles sealed
+    StorageBytes,    // logical bytes stored in managed vaults
+    SnapshotExports, // count of truth snapshot exports
+    ApiCalls,        // external API calls into Ritma Cloud
 }
 
 /// A quota or soft limit for a given metric.
@@ -148,9 +150,8 @@ pub trait BusinessPlugin: Send + Sync {
 /// The expected format is a JSON array of objects matching PlanConfig.
 pub fn load_plans_from_file(path: &str) -> Result<Vec<PlanConfig>, String> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read plans file {}: {}", path, e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("failed to parse plans file {}: {}", path, e))
+        .map_err(|e| format!("failed to read plans file {path}: {e}"))?;
+    serde_json::from_str(&content).map_err(|e| format!("failed to parse plans file {path}: {e}"))
 }
 
 /// Load a list of TenantConfig records from a JSON file.
@@ -158,9 +159,8 @@ pub fn load_plans_from_file(path: &str) -> Result<Vec<PlanConfig>, String> {
 /// The expected format is a JSON array of objects matching TenantConfig.
 pub fn load_tenants_from_file(path: &str) -> Result<Vec<TenantConfig>, String> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read tenants file {}: {}", path, e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("failed to parse tenants file {}: {}", path, e))
+        .map_err(|e| format!("failed to read tenants file {path}: {e}"))?;
+    serde_json::from_str(&content).map_err(|e| format!("failed to parse tenants file {path}: {e}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -194,6 +194,7 @@ pub struct InvoiceDraft {
     pub subtotal_cents: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn compute_invoice_draft_for_month(
     tenant_id: &str,
     plan_id: &str,
@@ -241,7 +242,7 @@ pub fn compute_invoice_draft_for_month(
             let units = if rule.unit_quantity == 0 {
                 0
             } else {
-                (over_raw + rule.unit_quantity - 1) / rule.unit_quantity
+                over_raw.div_ceil(rule.unit_quantity)
             };
 
             if units == 0 {
@@ -388,14 +389,7 @@ mod tests {
         )];
 
         let draft = compute_invoice_draft_for_month(
-            "tenant1",
-            "standard",
-            1,
-            31,
-            "usd",
-            1_000,
-            &usage,
-            &pricing,
+            "tenant1", "standard", 1, 31, "usd", 1_000, &usage, &pricing,
         );
 
         assert_eq!(draft.tenant_id, "tenant1");

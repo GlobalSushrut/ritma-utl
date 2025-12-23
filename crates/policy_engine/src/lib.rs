@@ -1,18 +1,23 @@
 use std::collections::BTreeMap;
 
-pub mod consensus;
-pub mod proof_validator;
-pub mod cue_integration;
 pub mod compliance_pipeline;
+pub mod consensus;
+pub mod cue_integration;
+pub mod proof_validator;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use truthscript::{Action, Condition, Policy, Rule};
-pub use consensus::{ConsensusEngine, ConsensusVote, ConsensusResult, SignatureVerifier, NoOpVerifier, ConsensusDecision};
-pub use proof_validator::{ProofValidator, PolicyProof, ProofType};
-pub use cue_integration::{CueConfigLoader, CueConsensusConfig, CueComplianceConfig, ComplianceStage};
 pub use compliance_pipeline::{CompliancePipeline, PipelineResult, StageResult};
+pub use consensus::{
+    ConsensusDecision, ConsensusEngine, ConsensusResult, ConsensusVote, NoOpVerifier,
+    SignatureVerifier,
+};
+pub use cue_integration::{
+    ComplianceStage, CueComplianceConfig, CueConfigLoader, CueConsensusConfig,
+};
+pub use proof_validator::{PolicyProof, ProofType, ProofValidator};
+use truthscript::{Action, Condition, Policy, Rule};
 
 /// Event flowing into the policy engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,7 +95,11 @@ fn rule_matches(rule: &Rule, event: &EngineEvent, counters: &mut BTreeMap<String
     true
 }
 
-fn condition_matches(cond: &Condition, event: &EngineEvent, counters: &mut BTreeMap<String, u64>) -> bool {
+fn condition_matches(
+    cond: &Condition,
+    event: &EngineEvent,
+    counters: &mut BTreeMap<String, u64>,
+) -> bool {
     match cond {
         Condition::EventEquals { value } => &event.kind == value,
         Condition::FieldEquals { field, value } => match event.fields.get(field) {
@@ -116,7 +125,7 @@ fn condition_matches(cond: &Condition, event: &EngineEvent, counters: &mut BTree
 #[cfg(test)]
 mod tests {
     use super::*;
-    use truthscript::{Action, Policy, Rule, When, Condition};
+    use truthscript::{Action, Condition, Policy, Rule, When};
 
     #[test]
     fn fires_rule_on_matching_event_and_field() {

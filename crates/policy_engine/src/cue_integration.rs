@@ -46,24 +46,16 @@ pub enum ComplianceStage {
         policy_version: String,
     },
     /// Consensus among validators
-    Consensus {
-        min_validators: u32,
-        threshold: u32,
-    },
+    Consensus { min_validators: u32, threshold: u32 },
     /// Proof generation/verification
-    ProofValidation {
-        proof_type: String,
-        required: bool,
-    },
+    ProofValidation { proof_type: String, required: bool },
     /// Compliance control evaluation
     ControlEvaluation {
         framework: String,
         controls: Vec<String>,
     },
     /// Evidence emission
-    EvidenceEmission {
-        index: String,
-    },
+    EvidenceEmission { index: String },
 }
 
 /// Proof requirements for compliance
@@ -82,13 +74,13 @@ pub struct ProofRequirements {
 /// CUE configuration loader (stub for now, will integrate with utl_cue)
 pub struct CueConfigLoader {
     // In production, this would hold CUE runtime state
-    config_cache: HashMap<String, CueComplianceConfig>,
+    _config_cache: HashMap<String, CueComplianceConfig>,
 }
 
 impl CueConfigLoader {
     pub fn new() -> Self {
         Self {
-            config_cache: HashMap::new(),
+            _config_cache: HashMap::new(),
         }
     }
 
@@ -107,9 +99,9 @@ impl CueConfigLoader {
     ) -> Result<CueConsensusConfig, String> {
         // Stub: return default config
         // TODO: Integrate with utl_cue to load actual CUE files
-        
-        let _key = format!("{}:{}", tenant, policy_name);
-        
+
+        let _key = format!("{tenant}:{policy_name}");
+
         Ok(CueConsensusConfig {
             validators: vec![
                 "did:ritma:validator:node1".to_string(),
@@ -139,9 +131,9 @@ impl CueConfigLoader {
     ) -> Result<CueComplianceConfig, String> {
         // Stub: return default pipeline
         // TODO: Integrate with utl_cue
-        
+
         let consensus_config = self.load_consensus_config(tenant, policy_name)?;
-        
+
         Ok(CueComplianceConfig {
             stages: vec![
                 ComplianceStage::PolicyEvaluation {
@@ -176,13 +168,10 @@ impl CueConfigLoader {
     }
 
     /// Validate a policy header against CUE schema
-    pub fn validate_policy_header(
-        &self,
-        header: &truthscript::PolicyHeader,
-    ) -> Result<(), String> {
+    pub fn validate_policy_header(&self, header: &truthscript::PolicyHeader) -> Result<(), String> {
         // Stub: basic validation
         // TODO: Use CUE to validate against schema
-        
+
         if header.encoding != "UTF-8" {
             return Err(format!("Invalid encoding: {}", header.encoding));
         }
@@ -216,7 +205,7 @@ mod tests {
     fn load_consensus_config_returns_valid_config() {
         let loader = CueConfigLoader::new();
         let config = loader.load_consensus_config("tenant_a", "policy1").unwrap();
-        
+
         assert_eq!(config.validators.len(), 3);
         assert_eq!(config.threshold, 2);
         assert_eq!(config.min_validators, 2);
@@ -225,8 +214,10 @@ mod tests {
     #[test]
     fn load_compliance_config_has_stages() {
         let loader = CueConfigLoader::new();
-        let config = loader.load_compliance_config("tenant_a", "policy1").unwrap();
-        
+        let config = loader
+            .load_compliance_config("tenant_a", "policy1")
+            .unwrap();
+
         assert!(!config.stages.is_empty());
         assert!(config.consensus_requirements.is_some());
     }
@@ -234,7 +225,7 @@ mod tests {
     #[test]
     fn validate_policy_header_checks_encoding() {
         let loader = CueConfigLoader::new();
-        
+
         let mut header = truthscript::PolicyHeader {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
@@ -249,9 +240,9 @@ mod tests {
             created_at: None,
             signature: None,
         };
-        
+
         assert!(loader.validate_policy_header(&header).is_err());
-        
+
         header.encoding = "UTF-8".to_string();
         assert!(loader.validate_policy_header(&header).is_ok());
     }

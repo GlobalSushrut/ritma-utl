@@ -1,17 +1,12 @@
 use ark_bn254::Bn254;
+use ark_crypto_primitives::snark::SNARK;
 use ark_ec::pairing::Pairing;
 use ark_ff::{BigInteger, PrimeField};
-use ark_groth16::{Groth16, PreparedVerifyingKey, ProvingKey, Proof};
+use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, ProvingKey};
 use ark_relations::{
     lc,
-    r1cs::{
-        ConstraintSynthesizer,
-        ConstraintSystemRef,
-        SynthesisError,
-        Variable,
-    },
+    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable},
 };
-use ark_crypto_primitives::snark::SNARK;
 use core_types::{Hash, UID};
 use rand::thread_rng;
 
@@ -41,7 +36,7 @@ pub fn compute_snark_merkle_root_from_hashes(hashes: &[Hash]) -> Fr {
 
     let mut level: Vec<Fr> = hashes.iter().map(hash_to_fr).collect();
     while level.len() > 1 {
-        let mut next = Vec::with_capacity((level.len() + 1) / 2);
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
         for pair in level.chunks(2) {
             let h = if pair.len() == 2 {
                 merkle_hash2(&pair[0], &pair[1])
@@ -99,7 +94,7 @@ pub fn build_snark_merkle_path_from_hashes(
         dirs.push(is_left_flag);
 
         // Build next level as in compute_snark_merkle_root_from_hashes.
-        let mut next = Vec::with_capacity((len + 1) / 2);
+        let mut next = Vec::with_capacity(len.div_ceil(2));
         for pair in level.chunks(2) {
             let h = if pair.len() == 2 {
                 merkle_hash2(&pair[0], &pair[1])
@@ -190,7 +185,11 @@ pub fn prove_equality(keys: &SnarkKeys, x: Fr) -> Result<SnarkProof, SynthesisEr
     })
 }
 
-pub fn verify_equality(keys: &SnarkKeys, snark: &SnarkProof, x: Fr) -> Result<bool, SynthesisError> {
+pub fn verify_equality(
+    keys: &SnarkKeys,
+    snark: &SnarkProof,
+    x: Fr,
+) -> Result<bool, SynthesisError> {
     if snark.circuit_id != keys.circuit_id {
         return Ok(false);
     }
@@ -202,11 +201,7 @@ pub fn verify_equality(keys: &SnarkKeys, snark: &SnarkProof, x: Fr) -> Result<bo
 
 /// Compute a Merkle root from a leaf and a path described by sibling nodes
 /// and boolean flags indicating whether the current node is on the left.
-fn compute_merkle_root_from_leaf_and_path(
-    leaf: Fr,
-    siblings: &[Fr],
-    is_left: &[bool],
-) -> Fr {
+fn compute_merkle_root_from_leaf_and_path(leaf: Fr, siblings: &[Fr], is_left: &[bool]) -> Fr {
     assert_eq!(siblings.len(), is_left.len());
     let mut cur = leaf;
     for (sib, &left) in siblings.iter().zip(is_left.iter()) {
@@ -241,17 +236,17 @@ impl ConstraintSynthesizer<Fr> for MerkleInclusionCircuit {
         for (sib_opt, dir_opt) in self.siblings.into_iter().zip(self.is_left.into_iter()) {
             let sib_val = sib_opt.ok_or(SynthesisError::AssignmentMissing)?;
             let dir_bool = dir_opt.ok_or(SynthesisError::AssignmentMissing)?;
-            let dir_val = if dir_bool { Fr::from(1u64) } else { Fr::from(0u64) };
+            let dir_val = if dir_bool {
+                Fr::from(1u64)
+            } else {
+                Fr::from(0u64)
+            };
 
             let sib_var = cs.new_witness_variable(|| Ok(sib_val))?;
             let dir_var = cs.new_witness_variable(|| Ok(dir_val))?;
 
             // Enforce dir is boolean: dir * (1 - dir) = 0
-            cs.enforce_constraint(
-                lc!() + dir_var,
-                lc!() + Variable::One - dir_var,
-                lc!(),
-            )?;
+            cs.enforce_constraint(lc!() + dir_var, lc!() + Variable::One - dir_var, lc!())?;
 
             // Compute left/right values off-circuit for witness assignment.
             let (left_val, right_val) = if dir_bool {
@@ -285,7 +280,10 @@ impl ConstraintSynthesizer<Fr> for MerkleInclusionCircuit {
 
             // Enforce parent_var - left - 2*right - 1 = 0
             cs.enforce_constraint(
-                lc!() + parent_var - left_var - (Fr::from(2u64), right_var) - (Fr::from(1u64), Variable::One),
+                lc!() + parent_var
+                    - left_var
+                    - (Fr::from(2u64), right_var)
+                    - (Fr::from(1u64), Variable::One),
                 lc!() + Variable::One,
                 lc!(),
             )?;
@@ -295,11 +293,7 @@ impl ConstraintSynthesizer<Fr> for MerkleInclusionCircuit {
         }
 
         // Enforce final computed root equals the public root input.
-        cs.enforce_constraint(
-            lc!() + root_var - cur_var,
-            lc!() + Variable::One,
-            lc!(),
-        )?;
+        cs.enforce_constraint(lc!() + root_var - cur_var, lc!() + Variable::One, lc!())?;
 
         Ok(())
     }
@@ -320,10 +314,7 @@ fn build_merkle_inclusion_circuit(
     }
 }
 
-pub fn setup_merkle_inclusion(
-    circuit_id: UID,
-    depth: usize,
-) -> Result<SnarkKeys, SynthesisError> {
+pub fn setup_merkle_inclusion(circuit_id: UID, depth: usize) -> Result<SnarkKeys, SynthesisError> {
     let mut rng = thread_rng();
 
     // Sample witness: arbitrary but consistent for the given depth.
@@ -358,10 +349,13 @@ pub fn prove_merkle_inclusion(
     let circuit = build_merkle_inclusion_circuit(root, leaf, siblings, is_left);
     let proof = Groth16::<Engine>::prove(&keys.proving_key, circuit, &mut rng)?;
 
-    Ok((SnarkProof {
-        circuit_id: keys.circuit_id,
-        proof,
-    }, root))
+    Ok((
+        SnarkProof {
+            circuit_id: keys.circuit_id,
+            proof,
+        },
+        root,
+    ))
 }
 
 pub fn verify_merkle_inclusion(
@@ -426,15 +420,15 @@ impl ConstraintSynthesizer<Fr> for HighThreatMerkleCircuit {
         let mut bits = Vec::with_capacity(16);
         for i in 0..16 {
             let bit_raw = (diff_u16 >> i) & 1;
-            let bit_val = if bit_raw == 1 { Fr::from(1u64) } else { Fr::from(0u64) };
+            let bit_val = if bit_raw == 1 {
+                Fr::from(1u64)
+            } else {
+                Fr::from(0u64)
+            };
             let bit = cs.new_witness_variable(|| Ok(bit_val))?;
 
             // Enforce bit is boolean: bit * (1 - bit) = 0
-            cs.enforce_constraint(
-                lc!() + bit,
-                lc!() + Variable::One - bit,
-                lc!(),
-            )?;
+            cs.enforce_constraint(lc!() + bit, lc!() + Variable::One - bit, lc!())?;
 
             bits.push(bit);
         }
@@ -443,32 +437,28 @@ impl ConstraintSynthesizer<Fr> for HighThreatMerkleCircuit {
         let mut lc_bits = lc!();
         let mut coeff = Fr::from(1u64);
         for bit in bits {
-            lc_bits = lc_bits + (coeff, bit);
+            lc_bits += (coeff, bit);
             coeff = coeff + coeff; // multiply by 2 each step
         }
 
-        cs.enforce_constraint(
-            lc_bits,
-            lc!() + Variable::One,
-            lc!() + w,
-        )?;
+        cs.enforce_constraint(lc_bits, lc!() + Variable::One, lc!() + w)?;
 
         // --- Merkle inclusion constraints (same semantics as MerkleInclusionCircuit) ---
 
         for (sib_opt, dir_opt) in self.siblings.into_iter().zip(self.is_left.into_iter()) {
             let sib_val = sib_opt.ok_or(SynthesisError::AssignmentMissing)?;
             let dir_bool = dir_opt.ok_or(SynthesisError::AssignmentMissing)?;
-            let dir_val = if dir_bool { Fr::from(1u64) } else { Fr::from(0u64) };
+            let dir_val = if dir_bool {
+                Fr::from(1u64)
+            } else {
+                Fr::from(0u64)
+            };
 
             let sib_var = cs.new_witness_variable(|| Ok(sib_val))?;
             let dir_var = cs.new_witness_variable(|| Ok(dir_val))?;
 
             // Enforce dir is boolean: dir * (1 - dir) = 0
-            cs.enforce_constraint(
-                lc!() + dir_var,
-                lc!() + Variable::One - dir_var,
-                lc!(),
-            )?;
+            cs.enforce_constraint(lc!() + dir_var, lc!() + Variable::One - dir_var, lc!())?;
 
             // Compute left/right values off-circuit for witness assignment.
             let (left_val, right_val) = if dir_bool {
@@ -502,7 +492,10 @@ impl ConstraintSynthesizer<Fr> for HighThreatMerkleCircuit {
 
             // Enforce parent_var - left - 2*right - 1 = 0
             cs.enforce_constraint(
-                lc!() + parent_var - left_var - (Fr::from(2u64), right_var) - (Fr::from(1u64), Variable::One),
+                lc!() + parent_var
+                    - left_var
+                    - (Fr::from(2u64), right_var)
+                    - (Fr::from(1u64), Variable::One),
                 lc!() + Variable::One,
                 lc!(),
             )?;
@@ -512,11 +505,7 @@ impl ConstraintSynthesizer<Fr> for HighThreatMerkleCircuit {
         }
 
         // Enforce final computed root equals the public root input.
-        cs.enforce_constraint(
-            lc!() + root_var - cur_var,
-            lc!() + Variable::One,
-            lc!(),
-        )?;
+        cs.enforce_constraint(lc!() + root_var - cur_var, lc!() + Variable::One, lc!())?;
 
         Ok(())
     }
@@ -582,10 +571,13 @@ pub fn prove_high_threat_merkle(
     let circuit = build_high_threat_merkle_circuit(threat_score, root, leaf, siblings, is_left);
     let proof = Groth16::<Engine>::prove(&keys.proving_key, circuit, &mut rng)?;
 
-    Ok((SnarkProof {
-        circuit_id: keys.circuit_id,
-        proof,
-    }, root))
+    Ok((
+        SnarkProof {
+            circuit_id: keys.circuit_id,
+            proof,
+        },
+        root,
+    ))
 }
 
 pub fn verify_high_threat_merkle(
@@ -640,15 +632,15 @@ impl ConstraintSynthesizer<Fr> for HighThreatCircuit {
         let mut bits = Vec::with_capacity(16);
         for i in 0..16 {
             let bit_raw = (diff_u16 >> i) & 1;
-            let bit_val = if bit_raw == 1 { Fr::from(1u64) } else { Fr::from(0u64) };
+            let bit_val = if bit_raw == 1 {
+                Fr::from(1u64)
+            } else {
+                Fr::from(0u64)
+            };
             let bit = cs.new_witness_variable(|| Ok(bit_val))?;
 
             // Enforce bit is boolean: bit * (1 - bit) = 0
-            cs.enforce_constraint(
-                lc!() + bit,
-                lc!() + Variable::One - bit,
-                lc!(),
-            )?;
+            cs.enforce_constraint(lc!() + bit, lc!() + Variable::One - bit, lc!())?;
 
             bits.push(bit);
         }
@@ -657,15 +649,11 @@ impl ConstraintSynthesizer<Fr> for HighThreatCircuit {
         let mut lc_bits = lc!();
         let mut coeff = Fr::from(1u64);
         for bit in bits {
-            lc_bits = lc_bits + (coeff, bit);
+            lc_bits += (coeff, bit);
             coeff = coeff + coeff; // multiply by 2 each step
         }
 
-        cs.enforce_constraint(
-            lc_bits,
-            lc!() + Variable::One,
-            lc!() + w,
-        )?;
+        cs.enforce_constraint(lc_bits, lc!() + Variable::One, lc!() + w)?;
 
         Ok(())
     }
@@ -736,10 +724,7 @@ mod tests {
         let ok = verify_equality(&keys, &proof, x).expect("verify failed");
         println!(
             "equality_snark_roundtrip: circuit_id={} a={:?} b={:?} verify_ok={}",
-            circuit_id.0,
-            x,
-            x,
-            ok
+            circuit_id.0, x, x, ok
         );
         assert!(ok);
     }
@@ -765,8 +750,8 @@ mod tests {
         let siblings = vec![Fr::from(20u64), Fr::from(30u64)];
         let is_left = vec![true, false];
 
-        let (proof, root) = prove_merkle_inclusion(&keys, leaf, &siblings, &is_left)
-            .expect("prove failed");
+        let (proof, root) =
+            prove_merkle_inclusion(&keys, leaf, &siblings, &is_left).expect("prove failed");
         let ok = verify_merkle_inclusion(&keys, &proof, root, leaf).expect("verify failed");
         assert!(ok);
     }
@@ -803,8 +788,9 @@ mod tests {
         let siblings = vec![Fr::from(20u64), Fr::from(30u64)];
         let is_left = vec![true, false];
 
-        let (proof, root) = prove_high_threat_merkle(&keys, threat_score, leaf, &siblings, &is_left)
-            .expect("prove failed");
+        let (proof, root) =
+            prove_high_threat_merkle(&keys, threat_score, leaf, &siblings, &is_left)
+                .expect("prove failed");
         let ok = verify_high_threat_merkle(&keys, &proof, threat_score, root, leaf)
             .expect("verify failed");
         assert!(ok);

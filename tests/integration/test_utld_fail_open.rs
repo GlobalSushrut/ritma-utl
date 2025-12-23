@@ -73,13 +73,19 @@ fn utld_fail_open_when_bar_unavailable() -> Result<()> {
         .stderr(Stdio::null())
         .spawn()?;
 
-    assert!(wait_for_socket(&utld_sock, 5)?, "utld socket did not appear");
+    assert!(
+        wait_for_socket(&utld_sock, 5)?,
+        "utld socket did not appear"
+    );
 
     let resp = send_utld_request(&utld_sock)?;
 
     // We expect a valid NodeResponse::Roots or NodeResponse::Error but not a
     // crash. BAR failures must not prevent utld from answering.
-    assert!(resp.get("status").is_some(), "response must contain status field");
+    assert!(
+        resp.get("status").is_some(),
+        "response must contain status field"
+    );
 
     let _ = utld_child.kill();
     let _ = std::fs::remove_file(&utld_sock);

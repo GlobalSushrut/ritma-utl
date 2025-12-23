@@ -26,13 +26,14 @@ mod tests {
         let globex_path = format!("{}/tenants/did_ritma_tenant_globex", cgroup_root);
 
         assert!(Path::new(&acme_path).exists(), "acme cgroup not created");
-        assert!(Path::new(&globex_path).exists(), "globex cgroup not created");
+        assert!(
+            Path::new(&globex_path).exists(),
+            "globex cgroup not created"
+        );
 
         // Verify different limits
-        let acme_cpu = fs::read_to_string(format!("{}/cpu.max", acme_path))
-            .unwrap_or_default();
-        let globex_cpu = fs::read_to_string(format!("{}/cpu.max", globex_path))
-            .unwrap_or_default();
+        let acme_cpu = fs::read_to_string(format!("{}/cpu.max", acme_path)).unwrap_or_default();
+        let globex_cpu = fs::read_to_string(format!("{}/cpu.max", globex_path)).unwrap_or_default();
 
         assert!(acme_cpu.contains("50000"), "acme cpu limit incorrect");
         assert!(globex_cpu.contains("75000"), "globex cpu limit incorrect");
@@ -49,11 +50,7 @@ mod tests {
         fs::create_dir_all(test_dir).expect("failed to create test dir");
 
         // Test that firewall helper can handle different tenant DIDs
-        apply_firewall_rule(
-            "did:ritma:tenant:acme",
-            "did:ritma:svc:service_x",
-            "deny",
-        );
+        apply_firewall_rule("did:ritma:tenant:acme", "did:ritma:svc:service_x", "deny");
 
         apply_firewall_rule(
             "did:ritma:tenant:globex",
@@ -86,10 +83,12 @@ mod tests {
         let events = read_all_decision_events(&events_path);
         assert_eq!(events.len(), 2, "expected 2 events");
 
-        let acme_events: Vec<_> = events.iter()
+        let acme_events: Vec<_> = events
+            .iter()
             .filter(|e| e.get("tenant_id").and_then(|v| v.as_str()) == Some("acme"))
             .collect();
-        let globex_events: Vec<_> = events.iter()
+        let globex_events: Vec<_> = events
+            .iter()
             .filter(|e| e.get("tenant_id").and_then(|v| v.as_str()) == Some("globex"))
             .collect();
 
@@ -132,8 +131,11 @@ mod tests {
         // Write cpu.max
         let period_us = 100_000u64;
         let quota = (period_us * cpu_pct as u64) / 100;
-        fs::write(format!("{}/cpu.max", path), format!("{} {}", quota, period_us))
-            .expect("failed to write cpu.max");
+        fs::write(
+            format!("{}/cpu.max", path),
+            format!("{} {}", quota, period_us),
+        )
+        .expect("failed to write cpu.max");
 
         // Write memory.max
         let bytes = memory_mb * 1024 * 1024;

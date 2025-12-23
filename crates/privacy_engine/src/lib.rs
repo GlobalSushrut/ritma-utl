@@ -1,6 +1,6 @@
 use regex::Regex;
-use sha2::{Sha256, Digest};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedactionRule {
@@ -24,7 +24,10 @@ impl PrivacyEngine {
 
         // Common secret patterns
         let secret_patterns = vec![
-            Regex::new(r"(?i)(password|passwd|pwd|secret|token|api[_-]?key|bearer)\s*[:=]\s*[^\s]+").unwrap(),
+            Regex::new(
+                r"(?i)(password|passwd|pwd|secret|token|api[_-]?key|bearer)\s*(?:[:=]|is)\s*[^\s]+",
+            )
+            .unwrap(),
             Regex::new(r"(?i)authorization:\s*bearer\s+[a-zA-Z0-9\-._~+/]+=*").unwrap(),
             Regex::new(r"[a-zA-Z0-9]{32,}").unwrap(), // high-entropy strings
             Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap(), // emails
@@ -59,7 +62,7 @@ impl PrivacyEngine {
     pub fn redact_secrets(&self, text: &str) -> (String, Vec<RedactionRule>) {
         let mut redacted = text.to_string();
         let mut rules = Vec::new();
-        
+
         for secret in self.detect_secrets(text) {
             let hash = self.hash_with_salt(&secret);
             let replacement = format!("[REDACTED:{}]", &hash[..16]);
@@ -69,7 +72,7 @@ impl PrivacyEngine {
                 replacement: replacement.clone(),
             });
         }
-        
+
         (redacted, rules)
     }
 

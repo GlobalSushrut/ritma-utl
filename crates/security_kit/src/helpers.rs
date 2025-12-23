@@ -1,12 +1,10 @@
 /// Developer-facing helper functions for common SecurityKit workflows.
-
 use crate::{
-    SecurityKit,
-    containers::{ParamBundle, GeneralParams, SecretParams, SnapshotParams},
+    containers::{GeneralParams, ParamBundle, SecretParams, SnapshotParams},
     env::EnvManager,
     rbac::RbacManager,
     reporting::SecurityReport,
-    Result,
+    Result, SecurityKit,
 };
 use std::collections::BTreeMap;
 
@@ -47,10 +45,7 @@ impl QuickStart {
 
         let rbac = RbacManager::new();
 
-        SecurityKit::builder()
-            .with_env(env)
-            .with_rbac(rbac)
-            .build()
+        SecurityKit::builder().with_env(env).with_rbac(rbac).build()
     }
 }
 
@@ -69,12 +64,14 @@ pub fn deployment_bundle(
     general.insert("deployment_type".to_string(), "automated".to_string());
 
     let snapshot = SnapshotParams {
-        label: format!("deploy-{}", git_sha),
+        label: format!("deploy-{git_sha}"),
         ts: clock::TimeTick::now().raw_time,
         fields: vec![
             ("git_sha".to_string(), git_sha),
             ("deployer".to_string(), deployer),
-        ].into_iter().collect(),
+        ]
+        .into_iter()
+        .collect(),
     };
 
     ParamBundle {

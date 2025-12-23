@@ -1,8 +1,8 @@
 // Simple metrics for utl_http in Prometheus text format
 // Using atomic counters to avoid heavyweight prometheus dependency
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 // Simple global metrics using atomics
@@ -56,68 +56,98 @@ fn metrics() -> &'static SimpleMetrics {
 /// Encode all metrics in Prometheus text format
 pub fn encode_metrics() -> Result<String, Box<dyn std::error::Error>> {
     let mut output = String::new();
-    
+
     // HTTP metrics
     output.push_str("# HELP ritma_http_requests_total Total number of HTTP requests\n");
     output.push_str("# TYPE ritma_http_requests_total counter\n");
-    output.push_str(&format!("ritma_http_requests_total {}\n", 
-        metrics().http_requests_total.load(Ordering::Relaxed)));
-    
+    output.push_str(&format!(
+        "ritma_http_requests_total {}\n",
+        metrics().http_requests_total.load(Ordering::Relaxed)
+    ));
+
     // mTLS metrics
     output.push_str("# HELP ritma_mtls_connections_total Total mTLS connections\n");
     output.push_str("# TYPE ritma_mtls_connections_total counter\n");
-    output.push_str(&format!("ritma_mtls_connections_total{{result=\"success\"}} {}\n",
-        metrics().mtls_connections_success.load(Ordering::Relaxed)));
-    output.push_str(&format!("ritma_mtls_connections_total{{result=\"failure\"}} {}\n",
-        metrics().mtls_connections_failure.load(Ordering::Relaxed)));
-    
+    output.push_str(&format!(
+        "ritma_mtls_connections_total{{result=\"success\"}} {}\n",
+        metrics().mtls_connections_success.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "ritma_mtls_connections_total{{result=\"failure\"}} {}\n",
+        metrics().mtls_connections_failure.load(Ordering::Relaxed)
+    ));
+
     output.push_str("# HELP ritma_mtls_did_extractions_total DID extractions from client certs\n");
     output.push_str("# TYPE ritma_mtls_did_extractions_total counter\n");
-    output.push_str(&format!("ritma_mtls_did_extractions_total{{result=\"success\"}} {}\n",
-        metrics().mtls_did_extractions_success.load(Ordering::Relaxed)));
-    output.push_str(&format!("ritma_mtls_did_extractions_total{{result=\"failure\"}} {}\n",
-        metrics().mtls_did_extractions_failure.load(Ordering::Relaxed)));
-    
+    output.push_str(&format!(
+        "ritma_mtls_did_extractions_total{{result=\"success\"}} {}\n",
+        metrics()
+            .mtls_did_extractions_success
+            .load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "ritma_mtls_did_extractions_total{{result=\"failure\"}} {}\n",
+        metrics()
+            .mtls_did_extractions_failure
+            .load(Ordering::Relaxed)
+    ));
+
     // UTLD metrics
     output.push_str("# HELP ritma_utld_requests_total Requests to utld\n");
     output.push_str("# TYPE ritma_utld_requests_total counter\n");
-    output.push_str(&format!("ritma_utld_requests_total{{result=\"success\"}} {}\n",
-        metrics().utld_requests_success.load(Ordering::Relaxed)));
-    output.push_str(&format!("ritma_utld_requests_total{{result=\"failure\"}} {}\n",
-        metrics().utld_requests_failure.load(Ordering::Relaxed)));
-    
+    output.push_str(&format!(
+        "ritma_utld_requests_total{{result=\"success\"}} {}\n",
+        metrics().utld_requests_success.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "ritma_utld_requests_total{{result=\"failure\"}} {}\n",
+        metrics().utld_requests_failure.load(Ordering::Relaxed)
+    ));
+
     // Decision metrics
     output.push_str("# HELP ritma_decisions_total Policy decisions\n");
     output.push_str("# TYPE ritma_decisions_total counter\n");
-    output.push_str(&format!("ritma_decisions_total{{decision=\"allow\"}} {}\n",
-        metrics().decisions_allow.load(Ordering::Relaxed)));
-    output.push_str(&format!("ritma_decisions_total{{decision=\"deny\"}} {}\n",
-        metrics().decisions_deny.load(Ordering::Relaxed)));
-    output.push_str(&format!("ritma_decisions_total{{decision=\"other\"}} {}\n",
-        metrics().decisions_other.load(Ordering::Relaxed)));
-    
+    output.push_str(&format!(
+        "ritma_decisions_total{{decision=\"allow\"}} {}\n",
+        metrics().decisions_allow.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "ritma_decisions_total{{decision=\"deny\"}} {}\n",
+        metrics().decisions_deny.load(Ordering::Relaxed)
+    ));
+    output.push_str(&format!(
+        "ritma_decisions_total{{decision=\"other\"}} {}\n",
+        metrics().decisions_other.load(Ordering::Relaxed)
+    ));
+
     // Search metrics
     output.push_str("# HELP ritma_search_queries_total Search queries\n");
     output.push_str("# TYPE ritma_search_queries_total counter\n");
-    output.push_str(&format!("ritma_search_queries_total {}\n",
-        metrics().search_queries_total.load(Ordering::Relaxed)));
-    
+    output.push_str(&format!(
+        "ritma_search_queries_total {}\n",
+        metrics().search_queries_total.load(Ordering::Relaxed)
+    ));
+
     // Labeled counters
     if let Ok(map) = metrics().labeled_counters.lock() {
         for (key, value) in map.iter() {
-            output.push_str(&format!("{} {}\n", key, value));
+            output.push_str(&format!("{key} {value}\n"));
         }
     }
-    
+
     Ok(output)
 }
 
 /// Record an HTTP request
+#[allow(dead_code)]
 pub fn record_http_request(_method: &str, _path: &str, _status: u16, _duration_secs: f64) {
-    metrics().http_requests_total.fetch_add(1, Ordering::Relaxed);
+    metrics()
+        .http_requests_total
+        .fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a policy decision
+#[allow(dead_code)]
 pub fn record_decision(decision: &str, _tenant: &str, _policy: &str) {
     match decision {
         "allow" => metrics().decisions_allow.fetch_add(1, Ordering::Relaxed),
@@ -127,40 +157,59 @@ pub fn record_decision(decision: &str, _tenant: &str, _policy: &str) {
 }
 
 /// Record an mTLS connection
+#[allow(dead_code)]
 pub fn record_mtls_connection(_did: Option<&str>, success: bool) {
     if success {
-        metrics().mtls_connections_success.fetch_add(1, Ordering::Relaxed);
+        metrics()
+            .mtls_connections_success
+            .fetch_add(1, Ordering::Relaxed);
     } else {
-        metrics().mtls_connections_failure.fetch_add(1, Ordering::Relaxed);
+        metrics()
+            .mtls_connections_failure
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
 /// Record DID extraction from client cert
+#[allow(dead_code)]
 pub fn record_did_extraction(success: bool) {
     if success {
-        metrics().mtls_did_extractions_success.fetch_add(1, Ordering::Relaxed);
+        metrics()
+            .mtls_did_extractions_success
+            .fetch_add(1, Ordering::Relaxed);
     } else {
-        metrics().mtls_did_extractions_failure.fetch_add(1, Ordering::Relaxed);
+        metrics()
+            .mtls_did_extractions_failure
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
 /// Record a request to utld
+#[allow(dead_code)]
 pub fn record_utld_request(_request_type: &str, success: bool, _duration_secs: f64) {
     if success {
-        metrics().utld_requests_success.fetch_add(1, Ordering::Relaxed);
+        metrics()
+            .utld_requests_success
+            .fetch_add(1, Ordering::Relaxed);
     } else {
-        metrics().utld_requests_failure.fetch_add(1, Ordering::Relaxed);
+        metrics()
+            .utld_requests_failure
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
 /// Record a search query
+#[allow(dead_code)]
 pub fn record_search_query(_index: &str, _tenant: &str, _result_count: usize) {
-    metrics().search_queries_total.fetch_add(1, Ordering::Relaxed);
+    metrics()
+        .search_queries_total
+        .fetch_add(1, Ordering::Relaxed);
 }
 
 /// Update active connection count (stored as labeled counter)
+#[allow(dead_code)]
 pub fn set_active_connections(protocol: &str, count: i64) {
-    let key = format!("ritma_active_connections{{protocol=\"{}\"}} ", protocol);
+    let key = format!("ritma_active_connections{{protocol=\"{protocol}\"}} ");
     if let Ok(mut map) = metrics().labeled_counters.lock() {
         map.insert(key, count as u64);
     }

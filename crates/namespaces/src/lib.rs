@@ -42,7 +42,7 @@ impl NamespaceRegistry {
     pub fn register(&mut self, config: NamespaceConfig) -> Result<()> {
         let ns_id = NamespaceId::parse(&config.namespace_id)
             .map_err(|e| NamespaceError::Invalid(e.to_string()))?;
-        
+
         self.namespaces.insert(ns_id.as_str().to_string(), config);
         Ok(())
     }
@@ -89,7 +89,7 @@ mod tests {
         };
 
         registry.register(config.clone()).expect("register");
-        
+
         let retrieved = registry.get("ns://acme/prod/payments/api").expect("get");
         assert_eq!(retrieved.org, "acme");
         assert_eq!(retrieved.env, "prod");
@@ -97,7 +97,9 @@ mod tests {
         let list = registry.list();
         assert_eq!(list.len(), 1);
 
-        registry.remove("ns://acme/prod/payments/api").expect("remove");
+        registry
+            .remove("ns://acme/prod/payments/api")
+            .expect("remove");
         assert!(registry.get("ns://acme/prod/payments/api").is_err());
     }
 

@@ -1,9 +1,9 @@
 // Cryptographic signing for evidence packages
 
-use crate::{PackageError, PackageResult};
 use crate::manifest::{EvidencePackageManifest, PackageSignature, SignatureType};
-use sha2::Sha256;
+use crate::{PackageError, PackageResult};
 use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -20,15 +20,15 @@ impl SigningKey {
         match key_type.to_lowercase().as_str() {
             "hmac_sha256" | "hmac" => {
                 let bytes = hex::decode(hex)
-                    .map_err(|e| PackageError::InvalidSigningKey(format!("invalid hex: {}", e)))?;
+                    .map_err(|e| PackageError::InvalidSigningKey(format!("invalid hex: {e}")))?;
                 Ok(Self::HmacSha256(bytes))
             }
             "ed25519" => {
                 let bytes = hex::decode(hex)
-                    .map_err(|e| PackageError::InvalidSigningKey(format!("invalid hex: {}", e)))?;
+                    .map_err(|e| PackageError::InvalidSigningKey(format!("invalid hex: {e}")))?;
                 if bytes.len() != 32 {
                     return Err(PackageError::InvalidSigningKey(
-                        "ed25519 key must be 32 bytes".to_string()
+                        "ed25519 key must be 32 bytes".to_string(),
                     ));
                 }
                 let mut key_bytes = [0u8; 32];
@@ -37,21 +37,20 @@ impl SigningKey {
                 Ok(Self::Ed25519(signing_key))
             }
             _ => Err(PackageError::InvalidSigningKey(format!(
-                "unsupported key type: {}",
-                key_type
+                "unsupported key type: {key_type}"
             ))),
         }
     }
-    
+
     /// Generate a new ed25519 key
     pub fn generate_ed25519() -> Self {
-        use rand::rngs::OsRng;
         use ed25519_dalek::SigningKey;
+        use rand::rngs::OsRng;
         let mut csprng = OsRng;
         let signing_key = SigningKey::from_bytes(&rand::Rng::gen(&mut csprng));
         Self::Ed25519(signing_key)
     }
-    
+
     /// Get signature type
     pub fn signature_type(&self) -> SignatureType {
         match self {
@@ -72,36 +71,36 @@ impl PackageSigner {
     pub fn new(key: SigningKey, signer_id: String) -> Self {
         Self { key, signer_id }
     }
-    
+
     /// Load from environment variable
     pub fn from_env(env_var: &str, signer_id: String) -> PackageResult<Self> {
-        let key_spec = std::env::var(env_var)
-            .map_err(|_| PackageError::MissingSigningKey)?;
-        
+        let key_spec = std::env::var(env_var).map_err(|_| PackageError::MissingSigningKey)?;
+
         // Format: "type:hex_key" e.g., "hmac:abcd1234" or "ed25519:..."
         let parts: Vec<&str> = key_spec.splitn(2, ':').collect();
         if parts.len() != 2 {
             return Err(PackageError::InvalidSigningKey(
-                "expected format: type:hex_key".to_string()
+                "expected format: type:hex_key".to_string(),
             ));
         }
-        
+
         let key = SigningKey::from_hex(parts[0], parts[1])?;
         Ok(Self::new(key, signer_id))
     }
-    
+
     /// Sign a manifest
     pub fn sign(&self, manifest: &mut EvidencePackageManifest) -> PackageResult<()> {
         // Compute package hash
-        let package_hash = manifest.compute_hash()
-            .map_err(|e| PackageError::SerializationError(e))?;
+        let package_hash = manifest
+            .compute_hash()
+            .map_err(PackageError::SerializationError)?;
         manifest.security.package_hash = package_hash.clone();
-        
+
         // Sign the hash
         let signature_hex = match &self.key {
             SigningKey::HmacSha256(key_bytes) => {
                 let mut mac = HmacSha256::new_from_slice(key_bytes)
-                    .map_err(|e| PackageError::InvalidSigningKey(format!("HMAC error: {}", e)))?;
+                    .map_err(|e| PackageError::InvalidSigningKey(format!("HMAC error: {e}")))?;
                 mac.update(package_hash.as_bytes());
                 let result = mac.finalize();
                 hex::encode(result.into_bytes())
@@ -117,12 +116,12 @@ impl PackageSigner {
                 return Ok(());
             }
         };
-        
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let public_key_hex = match &self.key {
             SigningKey::Ed25519(signing_key) => {
                 let verifying_key = signing_key.verifying_key();
@@ -130,7 +129,7 @@ impl PackageSigner {
             }
             _ => None,
         };
-        
+
         manifest.security.signature = Some(PackageSignature {
             signature_type: self.key.signature_type(),
             signature_hex,
@@ -138,7 +137,7 @@ impl PackageSigner {
             signed_at: now,
             public_key_hex,
         });
-        
+
         Ok(())
     }
 }
@@ -181,13 +180,13 @@ mod tests {
     fn sign_with_hmac() {
         let key = SigningKey::HmacSha256(vec![0x42; 32]);
         let signer = PackageSigner::new(key, "test_signer".to_string());
-        
+
         let mut manifest = make_test_manifest();
         signer.sign(&mut manifest).expect("sign");
-        
+
         assert!(!manifest.security.package_hash.is_empty());
         assert!(manifest.security.signature.is_some());
-        
+
         let sig = manifest.security.signature.unwrap();
         assert_eq!(sig.signer_id, "test_signer");
         assert!(!sig.signature_hex.is_empty());
@@ -197,10 +196,10 @@ mod tests {
     fn sign_with_ed25519() {
         let key = SigningKey::generate_ed25519();
         let signer = PackageSigner::new(key, "ed_signer".to_string());
-        
+
         let mut manifest = make_test_manifest();
         signer.sign(&mut manifest).expect("sign");
-        
+
         let sig = manifest.security.signature.unwrap();
         assert!(matches!(sig.signature_type, SignatureType::Ed25519));
         assert!(sig.public_key_hex.is_some());

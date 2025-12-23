@@ -1,9 +1,9 @@
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 
-use chrono::{Datelike, DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 
 /// Persist a DigFile JSON blob to a local filesystem "forensics" tree
 /// using an S3-style layout:
@@ -31,9 +31,9 @@ pub fn persist_dig_to_fs(
 
     let mut path = PathBuf::from(base);
     path.push(tenant);
-    path.push(format!("{:04}", year));
-    path.push(format!("{:02}", month));
-    path.push(format!("{:02}", day));
+    path.push(format!("{year:04}"));
+    path.push(format!("{month:02}"));
+    path.push(format!("{day:02}"));
     fs::create_dir_all(&path)?;
 
     if let Ok(meta) = fs::metadata(&path) {
@@ -42,10 +42,7 @@ pub fn persist_dig_to_fs(
         let _ = fs::set_permissions(&path, perms);
     }
 
-    let filename = format!(
-        "root-{}_file-{}_{}.dig.json",
-        root_id, file_id, ts
-    );
+    let filename = format!("root-{root_id}_file-{file_id}_{ts}.dig.json");
     path.push(&filename);
 
     let mut file = File::create(&path)?;
@@ -56,9 +53,9 @@ pub fn persist_dig_to_fs(
         if !cold_base.trim().is_empty() {
             let mut cold_path = PathBuf::from(cold_base);
             cold_path.push(tenant);
-            cold_path.push(format!("{:04}", year));
-            cold_path.push(format!("{:02}", month));
-            cold_path.push(format!("{:02}", day));
+            cold_path.push(format!("{year:04}"));
+            cold_path.push(format!("{month:02}"));
+            cold_path.push(format!("{day:02}"));
             if fs::create_dir_all(&cold_path).is_ok() {
                 if let Ok(meta) = fs::metadata(&cold_path) {
                     let mut perms = meta.permissions();

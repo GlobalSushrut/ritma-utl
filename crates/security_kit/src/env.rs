@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use serde::{Serialize, Deserialize};
 
 /// Declarative description of environment variables for a tenant/app.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -16,7 +16,9 @@ pub struct EnvManager {
 }
 
 impl EnvManager {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn with_tenant(mut self, tenant: impl Into<String>) -> Self {
         self.spec.tenant_id = Some(tenant.into());
@@ -35,10 +37,10 @@ impl EnvManager {
     pub fn to_env_lines(&self) -> Vec<String> {
         let mut out = Vec::new();
         for (k, v) in &self.spec.general {
-            out.push(format!("{}={}", k, v));
+            out.push(format!("{k}={v}"));
         }
         for (k, v) in &self.spec.secrets {
-            out.push(format!("{}={}", k, v));
+            out.push(format!("{k}={v}"));
         }
         out
     }

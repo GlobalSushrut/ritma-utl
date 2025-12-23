@@ -22,7 +22,12 @@ pub struct EvidenceWindow {
 }
 
 impl EvidenceWindow {
-    pub fn new(not_before: String, not_after: String) -> Self { Self { not_before, not_after } }
+    pub fn new(not_before: String, not_after: String) -> Self {
+        Self {
+            not_before,
+            not_after,
+        }
+    }
     pub fn contains(&self, ts: &str) -> bool {
         if let (Ok(nb), Ok(na), Ok(t)) = (
             DateTime::parse_from_rfc3339(&self.not_before),
@@ -98,13 +103,10 @@ mod tests {
         r2.prev_hash = r1.utl_chain_hash.clone();
         r2.utl_chain_hash = r2.compute_chain_hash();
 
-        let window = EvidenceWindow::new(
-            "2025-12-18T11:00:00Z".into(),
-            "2025-12-18T13:00:00Z".into(),
-        );
+        let window =
+            EvidenceWindow::new("2025-12-18T11:00:00Z".into(), "2025-12-18T13:00:00Z".into());
         let mgr = ProofManager::with_noop_backend();
-        let proof = generate_soc2_control_proof(&mgr, ns, &window, vec![r1, r2])
-            .expect("proof");
+        let proof = generate_soc2_control_proof(&mgr, ns, &window, vec![r1, r2]).expect("proof");
         assert_eq!(proof.namespace_id, ns);
         assert_eq!(proof.proof_type, "noop");
     }

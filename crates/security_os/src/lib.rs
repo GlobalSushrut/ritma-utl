@@ -55,15 +55,15 @@ pub enum DidKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IsolationScope {
-    Service,  // did:ritma:svc:...
-    Zone,     // did:ritma:zone:...
-    Tenant,   // did:ritma:tenant:...
+    Service, // did:ritma:svc:...
+    Zone,    // did:ritma:zone:...
+    Tenant,  // did:ritma:tenant:...
 }
 
 /// Simple isolation profile that a controller can apply.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IsolationProfile {
-    pub cpu_limit_pct: Option<u8>,   // 0-100
+    pub cpu_limit_pct: Option<u8>, // 0-100
     pub memory_limit_mb: Option<u64>,
     pub network_egress: Option<bool>,
     pub network_ingress: Option<bool>,
@@ -81,14 +81,17 @@ pub enum FlowDecision {
 
 /// Abstract controller that can apply cgroup-style isolation.
 pub trait CgroupController {
-    fn apply_profile(&self, scope: IsolationScope, did: &Did, profile: IsolationProfile)
-        -> Result<(), String>;
+    fn apply_profile(
+        &self,
+        scope: IsolationScope,
+        did: &Did,
+        profile: IsolationProfile,
+    ) -> Result<(), String>;
 }
 
 /// Abstract controller that can enforce firewall-style decisions between DIDs.
 pub trait FirewallController {
-    fn enforce_flow(&self, src: &Did, dst: &Did, decision: FlowDecision)
-        -> Result<(), String>;
+    fn enforce_flow(&self, src: &Did, dst: &Did, decision: FlowDecision) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,23 +117,26 @@ pub fn build_rustls_server_config_from_mtls(
     use std::fs::File;
     use std::io::BufReader;
 
-    use rustls::{Certificate, PrivateKey, ServerConfig, RootCertStore};
     use rustls::server::AllowAnyAuthenticatedClient;
+    use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
 
     fn load_certs(path: &str) -> Result<Vec<Certificate>, String> {
-        let f = File::open(path).map_err(|e| format!("failed to open cert {}: {}", path, e))?;
+        let f = File::open(path).map_err(|e| format!("failed to open cert {path}: {e}"))?;
         let mut reader = BufReader::new(f);
         let certs = rustls_pemfile::certs(&mut reader)
-            .map_err(|e| format!("failed to read certs from {}: {}", path, e))?;
+            .map_err(|e| format!("failed to read certs from {path}: {e}"))?;
         Ok(certs.into_iter().map(Certificate).collect())
     }
 
     fn load_private_key(path: &str) -> Result<PrivateKey, String> {
-        let f = File::open(path).map_err(|e| format!("failed to open key {}: {}", path, e))?;
+        let f = File::open(path).map_err(|e| format!("failed to open key {path}: {e}"))?;
         let mut reader = BufReader::new(f);
         let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
-            .map_err(|e| format!("failed to read private key from {}: {}", path, e))?;
-        let key = keys.into_iter().next().ok_or_else(|| format!("no private keys in {}", path))?;
+            .map_err(|e| format!("failed to read private key from {path}: {e}"))?;
+        let key = keys
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("no private keys in {path}"))?;
         Ok(PrivateKey(key))
     }
 
@@ -142,8 +148,9 @@ pub fn build_rustls_server_config_from_mtls(
         let ca_certs = load_certs(&cfg.ca_bundle_path)?;
         let mut root_store = RootCertStore::empty();
         for cert in ca_certs {
-            root_store.add(&cert)
-                .map_err(|e| format!("failed to add CA cert: {}", e))?;
+            root_store
+                .add(&cert)
+                .map_err(|e| format!("failed to add CA cert: {e}"))?;
         }
         let client_verifier = AllowAnyAuthenticatedClient::new(root_store);
 
@@ -151,14 +158,14 @@ pub fn build_rustls_server_config_from_mtls(
             .with_safe_defaults()
             .with_client_cert_verifier(std::sync::Arc::new(client_verifier))
             .with_single_cert(certs, key)
-            .map_err(|e| format!("failed to build ServerConfig with client auth: {}", e))?
+            .map_err(|e| format!("failed to build ServerConfig with client auth: {e}"))?
     } else {
         // Server TLS only, no client auth.
         ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
             .with_single_cert(certs, key)
-            .map_err(|e| format!("failed to build ServerConfig: {}", e))?
+            .map_err(|e| format!("failed to build ServerConfig: {e}"))?
     };
 
     Ok(std::sync::Arc::new(server_config))
@@ -166,8 +173,8 @@ pub fn build_rustls_server_config_from_mtls(
 
 /// Extract an MtlsIdentity from a chain of rustls Certificates, if present.
 pub fn mtls_identity_from_rustls_certs(certs: &[rustls::Certificate]) -> Option<MtlsIdentity> {
-    use x509_parser::prelude::*;
     use x509_parser::extensions::GeneralName;
+    use x509_parser::prelude::*;
 
     let first = certs.first()?;
     let der = &first.0;
@@ -244,7 +251,9 @@ pub mod linux {
 
     impl LoggingLinuxCgroupController {
         pub fn new(root: impl Into<String>) -> Self {
-            Self { cgroup_root: root.into() }
+            Self {
+                cgroup_root: root.into(),
+            }
         }
     }
 
@@ -275,7 +284,9 @@ pub mod linux {
 
     impl CgroupV2Controller {
         pub fn new(root: impl Into<PathBuf>) -> Self {
-            Self { cgroup_root: root.into() }
+            Self {
+                cgroup_root: root.into(),
+            }
         }
 
         fn group_path(&self, scope: IsolationScope, did: &Did) -> PathBuf {
@@ -296,31 +307,39 @@ pub mod linux {
             let quota = (period_us * pct as u64) / 100;
             let mut file = OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .open(dir.join("cpu.max"))?;
-            writeln!(file, "{} {}", quota, period_us)
+            writeln!(file, "{quota} {period_us}")
         }
 
         fn write_memory_max(&self, dir: &Path, mb: u64) -> std::io::Result<()> {
             let mut file = OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .open(dir.join("memory.max"))?;
             let bytes = mb * 1024 * 1024;
-            writeln!(file, "{}", bytes)
+            writeln!(file, "{bytes}")
         }
 
         /// Attach a PID to the cgroup associated with the given scope + DID by
         /// writing it into `cgroup.procs`. This expects that a cgroup v2
         /// hierarchy is mounted at `cgroup_root`.
-        pub fn attach_pid(&self, scope: IsolationScope, did: &Did, pid: i32) -> std::io::Result<()> {
+        pub fn attach_pid(
+            &self,
+            scope: IsolationScope,
+            did: &Did,
+            pid: i32,
+        ) -> std::io::Result<()> {
             let dir = self.group_path(scope, did);
             fs::create_dir_all(&dir)?;
             let mut file = OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .open(dir.join("cgroup.procs"))?;
-            writeln!(file, "{}", pid)
+            writeln!(file, "{pid}")
         }
     }
 
@@ -333,17 +352,17 @@ pub mod linux {
         ) -> Result<(), String> {
             let dir = self.group_path(scope, did);
             if let Err(e) = fs::create_dir_all(&dir) {
-                return Err(format!("failed to create cgroup dir {:?}: {}", dir, e));
+                return Err(format!("failed to create cgroup dir {dir:?}: {e}"));
             }
 
             if let Some(pct) = profile.cpu_limit_pct {
                 if let Err(e) = self.write_cpu_max(&dir, pct) {
-                    eprintln!("failed to write cpu.max in {:?}: {}", dir, e);
+                    eprintln!("failed to write cpu.max in {dir:?}: {e}");
                 }
             }
             if let Some(mb) = profile.memory_limit_mb {
                 if let Err(e) = self.write_memory_max(&dir, mb) {
-                    eprintln!("failed to write memory.max in {:?}: {}", dir, e);
+                    eprintln!("failed to write memory.max in {dir:?}: {e}");
                 }
             }
 
@@ -372,4 +391,3 @@ pub mod linux {
         }
     }
 }
-

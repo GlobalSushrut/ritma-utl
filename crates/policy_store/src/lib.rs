@@ -48,7 +48,7 @@ pub fn read_commits() -> Result<Vec<PolicyCommit>, String> {
             if e.kind() == std::io::ErrorKind::NotFound {
                 return Ok(Vec::new());
             }
-            return Err(format!("failed to open policy commits {}: {}", path, e));
+            return Err(format!("failed to open policy commits {path}: {e}"));
         }
     };
 
@@ -58,7 +58,7 @@ pub fn read_commits() -> Result<Vec<PolicyCommit>, String> {
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("failed to read policy commit line: {}", e);
+                eprintln!("failed to read policy commit line: {e}");
                 continue;
             }
         };
@@ -67,7 +67,7 @@ pub fn read_commits() -> Result<Vec<PolicyCommit>, String> {
         }
         match serde_json::from_str::<PolicyCommit>(&line) {
             Ok(c) => commits.push(c),
-            Err(e) => eprintln!("failed to parse policy commit JSON: {}", e),
+            Err(e) => eprintln!("failed to parse policy commit JSON: {e}"),
         }
     }
 
@@ -82,7 +82,7 @@ pub fn read_tags() -> Result<Vec<PolicyTag>, String> {
             if e.kind() == std::io::ErrorKind::NotFound {
                 return Ok(Vec::new());
             }
-            return Err(format!("failed to open policy tags {}: {}", path, e));
+            return Err(format!("failed to open policy tags {path}: {e}"));
         }
     };
 
@@ -92,7 +92,7 @@ pub fn read_tags() -> Result<Vec<PolicyTag>, String> {
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("failed to read policy tag line: {}", e);
+                eprintln!("failed to read policy tag line: {e}");
                 continue;
             }
         };
@@ -101,7 +101,7 @@ pub fn read_tags() -> Result<Vec<PolicyTag>, String> {
         }
         match serde_json::from_str::<PolicyTag>(&line) {
             Ok(t) => tags.push(t),
-            Err(e) => eprintln!("failed to parse policy tag JSON: {}", e),
+            Err(e) => eprintln!("failed to parse policy tag JSON: {e}"),
         }
     }
 
@@ -114,15 +114,15 @@ pub fn append_commit(commit: &PolicyCommit) -> Result<(), String> {
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| format!("failed to open policy commits {}: {}", path, e))?;
+        .map_err(|e| format!("failed to open policy commits {path}: {e}"))?;
 
     let line = serde_json::to_string(commit)
-        .map_err(|e| format!("failed to serialize policy commit: {}", e))?;
+        .map_err(|e| format!("failed to serialize policy commit: {e}"))?;
     file.write_all(line.as_bytes())
         .and_then(|_| file.write_all(b"\n"))
-        .map_err(|e| format!("failed to write policy commit: {}", e))?;
+        .map_err(|e| format!("failed to write policy commit: {e}"))?;
     file.flush()
-        .map_err(|e| format!("failed to flush policy commits {}: {}", path, e))?;
+        .map_err(|e| format!("failed to flush policy commits {path}: {e}"))?;
     Ok(())
 }
 
@@ -132,15 +132,15 @@ pub fn append_tag(tag: &PolicyTag) -> Result<(), String> {
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| format!("failed to open policy tags {}: {}", path, e))?;
+        .map_err(|e| format!("failed to open policy tags {path}: {e}"))?;
 
-    let line = serde_json::to_string(tag)
-        .map_err(|e| format!("failed to serialize policy tag: {}", e))?;
+    let line =
+        serde_json::to_string(tag).map_err(|e| format!("failed to serialize policy tag: {e}"))?;
     file.write_all(line.as_bytes())
         .and_then(|_| file.write_all(b"\n"))
-        .map_err(|e| format!("failed to write policy tag: {}", e))?;
+        .map_err(|e| format!("failed to write policy tag: {e}"))?;
     file.flush()
-        .map_err(|e| format!("failed to flush policy tags {}: {}", path, e))?;
+        .map_err(|e| format!("failed to flush policy tags {path}: {e}"))?;
     Ok(())
 }
 
@@ -148,12 +148,18 @@ pub fn compute_policy_tree_hash(policy_bytes: &[u8]) -> String {
     let h = hash_bytes(policy_bytes);
     let mut s = String::with_capacity(64);
     for b in &h.0 {
-        s.push_str(&format!("{:02x}", b));
+        s.push_str(&format!("{b:02x}"));
     }
     s
 }
 
-pub fn compute_commit_id(parent: Option<&str>, author: &str, message: &str, policy_tree_hash: &str, timestamp: u64) -> String {
+pub fn compute_commit_id(
+    parent: Option<&str>,
+    author: &str,
+    message: &str,
+    policy_tree_hash: &str,
+    timestamp: u64,
+) -> String {
     let mut data = Vec::new();
     if let Some(p) = parent {
         data.extend_from_slice(p.as_bytes());
@@ -166,7 +172,7 @@ pub fn compute_commit_id(parent: Option<&str>, author: &str, message: &str, poli
     let h = hash_bytes(&data);
     let mut s = String::with_capacity(64);
     for b in &h.0 {
-        s.push_str(&format!("{:02x}", b));
+        s.push_str(&format!("{b:02x}"));
     }
     s
 }

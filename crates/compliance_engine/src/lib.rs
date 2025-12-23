@@ -68,12 +68,10 @@ where
     let mut out = Vec::new();
     for c in controls {
         let passed = validator(c, event);
-        
+
         // Compute rule hash if not provided
-        let computed_rule_hash = rule_hash.clone().or_else(|| {
-            compute_control_hash(c).ok()
-        });
-        
+        let computed_rule_hash = rule_hash.clone().or_else(|| compute_control_hash(c).ok());
+
         out.push(ControlEvaluation {
             control_id: c.control_id.clone(),
             framework: c.framework.clone(),
@@ -95,8 +93,8 @@ where
 
 /// Compute SHA256 hash of a control for deterministic identification
 fn compute_control_hash(control: &Control) -> Result<String, Box<dyn std::error::Error>> {
-    use sha2::{Sha256, Digest};
-    
+    use sha2::{Digest, Sha256};
+
     let json = serde_json::to_string(control)?;
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());

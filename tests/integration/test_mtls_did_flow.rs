@@ -3,9 +3,9 @@
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
     use std::fs;
     use std::path::Path;
+    use std::process::Command;
 
     #[test]
     #[ignore] // Run with: cargo test --test test_mtls_did_flow -- --ignored
@@ -24,7 +24,7 @@ mod tests {
         println!("Test infrastructure validated");
         println!("TODO: Generate test certificates");
         println!("TODO: Start services and verify mTLS flow");
-        
+
         // Cleanup
         let _ = fs::remove_dir_all(test_dir);
     }
@@ -53,10 +53,12 @@ mod tests {
             .expect("failed to run firewall helper");
 
         assert!(output.status.success(), "firewall helper failed");
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("deny") || stdout.contains("did"), 
-                "firewall helper output unexpected");
+        assert!(
+            stdout.contains("deny") || stdout.contains("did"),
+            "firewall helper output unexpected"
+        );
 
         let _ = fs::remove_dir_all(test_dir);
     }
@@ -82,8 +84,8 @@ mod tests {
             .expect("failed to write memory.max");
 
         // Verify
-        let cpu_max = fs::read_to_string(format!("{}/cpu.max", tenant_path))
-            .expect("failed to read cpu.max");
+        let cpu_max =
+            fs::read_to_string(format!("{}/cpu.max", tenant_path)).expect("failed to read cpu.max");
         assert!(cpu_max.contains("50000"), "cpu limit not set correctly");
 
         let _ = fs::remove_dir_all(test_dir);
@@ -101,7 +103,10 @@ mod tests {
     fn start_utld_test_instance(test_dir: &str) -> std::process::Child {
         let bin_path = "target/release/utld";
         if !Path::new(bin_path).exists() {
-            panic!("utld binary not found at {}. Run: cargo build --release -p utld", bin_path);
+            panic!(
+                "utld binary not found at {}. Run: cargo build --release -p utld",
+                bin_path
+            );
         }
         Command::new(bin_path)
             .env("UTLD_SOCKET", format!("{}/utld.sock", test_dir))
@@ -113,7 +118,10 @@ mod tests {
     fn start_utl_http_with_mtls(test_dir: &str) -> std::process::Child {
         let bin_path = "target/release/utl_http";
         if !Path::new(bin_path).exists() {
-            panic!("utl_http binary not found at {}. Run: cargo build --release -p utl_http", bin_path);
+            panic!(
+                "utl_http binary not found at {}. Run: cargo build --release -p utl_http",
+                bin_path
+            );
         }
         Command::new(bin_path)
             .env("UTL_HTTP_TLS_ADDR", "127.0.0.1:18443")
@@ -147,11 +155,17 @@ mod tests {
     fn start_security_host_test(_test_dir: &str) -> std::process::Child {
         let bin_path = "target/release/security_host";
         if !Path::new(bin_path).exists() {
-            panic!("security_host binary not found at {}. Run: cargo build --release -p security_host", bin_path);
+            panic!(
+                "security_host binary not found at {}. Run: cargo build --release -p security_host",
+                bin_path
+            );
         }
         Command::new(bin_path)
-            .env("SECURITY_HOST_FIREWALL_HELPER", "target/release/ritma_firewall_helper")
-            .env("RITMA_FW_BACKEND", "log")  // Use log mode for testing
+            .env(
+                "SECURITY_HOST_FIREWALL_HELPER",
+                "target/release/ritma_firewall_helper",
+            )
+            .env("RITMA_FW_BACKEND", "log") // Use log mode for testing
             .stdin(std::process::Stdio::piped())
             .spawn()
             .expect("failed to start security_host")

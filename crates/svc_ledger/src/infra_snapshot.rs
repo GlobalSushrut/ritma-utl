@@ -2,7 +2,7 @@
 // Captures complete state of security infra at a point in time
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// Infrastructure snapshot capturing full security state
@@ -10,22 +10,22 @@ use std::collections::HashMap;
 pub struct InfraSnapshot {
     /// Unique snapshot ID
     pub snapshot_id: String,
-    
+
     /// Timestamp
     pub timestamp: u64,
-    
+
     /// Tenant ID
     pub tenant_id: Option<String>,
-    
+
     /// Parent snapshot ID (for versioning)
     pub parent_id: Option<String>,
-    
+
     /// Infrastructure layers
     pub layers: HashMap<String, InfraLayer>,
-    
+
     /// Merkle root over all layer hashes
     pub merkle_root: String,
-    
+
     /// Hash of this snapshot
     pub snapshot_hash: String,
 }
@@ -35,13 +35,13 @@ pub struct InfraSnapshot {
 pub struct InfraLayer {
     /// Layer name (kernel, ebpf, network, cgroup, service, policy, consensus)
     pub name: String,
-    
+
     /// Layer hash
     pub hash: String,
-    
+
     /// Layer metadata
     pub metadata: HashMap<String, String>,
-    
+
     /// Components in this layer
     pub components: Vec<InfraComponent>,
 }
@@ -51,16 +51,16 @@ pub struct InfraLayer {
 pub struct InfraComponent {
     /// Component name
     pub name: String,
-    
+
     /// Component type
     pub component_type: String,
-    
+
     /// Version/hash
     pub version: String,
-    
+
     /// Configuration hash
     pub config_hash: Option<String>,
-    
+
     /// Status
     pub status: String,
 }
@@ -121,13 +121,12 @@ impl InfraSnapshotBuilder {
             .as_secs();
 
         // Compute Merkle root over layer hashes
-        let layer_hashes: Vec<String> = self.layers.values()
-            .map(|l| l.hash.clone())
-            .collect();
+        let layer_hashes: Vec<String> = self.layers.values().map(|l| l.hash.clone()).collect();
         let merkle_root = compute_merkle_root(&layer_hashes)?;
 
         // Generate snapshot ID
-        let snapshot_id = format!("infra_{}_{}", 
+        let snapshot_id = format!(
+            "infra_{}_{}",
             self.tenant_id.as_deref().unwrap_or("global"),
             timestamp
         );
@@ -186,8 +185,7 @@ fn compute_snapshot_hash(snapshot: &InfraSnapshot) -> Result<String, String> {
     let mut hashable = snapshot.clone();
     hashable.snapshot_hash = String::new();
 
-    let json = serde_json::to_string(&hashable)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let json = serde_json::to_string(&hashable).map_err(|e| format!("Failed to serialize: {e}"))?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
@@ -201,7 +199,7 @@ pub mod layers {
     pub fn kernel_layer(version: &str, sysctls: Vec<(&str, &str)>) -> InfraLayer {
         let mut metadata = HashMap::new();
         metadata.insert("kernel_version".to_string(), version.to_string());
-        
+
         for (key, val) in sysctls {
             metadata.insert(key.to_string(), val.to_string());
         }
@@ -247,7 +245,7 @@ pub mod layers {
             .map(|(name, cpu, mem)| InfraComponent {
                 name: name.to_string(),
                 component_type: "cgroup_profile".to_string(),
-                version: format!("cpu:{}_mem:{}", cpu, mem),
+                version: format!("cpu:{cpu}_mem:{mem}"),
                 config_hash: None,
                 status: "active".to_string(),
             })
@@ -305,13 +303,9 @@ mod tests {
 
     #[test]
     fn infra_snapshot_builds() {
-        let kernel = layers::kernel_layer("5.15.0", vec![
-            ("net.ipv4.ip_forward", "1"),
-        ]);
+        let kernel = layers::kernel_layer("5.15.0", vec![("net.ipv4.ip_forward", "1")]);
 
-        let ebpf = layers::ebpf_layer(vec![
-            ("ritma_xdp", "abc123"),
-        ]);
+        let ebpf = layers::ebpf_layer(vec![("ritma_xdp", "abc123")]);
 
         let snapshot = InfraSnapshotBuilder::new(Some("tenant_a".to_string()))
             .add_layer(kernel)

@@ -1,6 +1,6 @@
+use clock::TimeTick;
 use core_types::{Sig, UID};
 use sot_root::StateOfTruthRoot;
-use clock::TimeTick;
 
 #[derive(Clone, Debug)]
 pub struct TransitionHandshake {

@@ -45,4 +45,3 @@ impl Default for ToolVerdict {
 pub trait SecurityTool {
     fn on_event(&self, event: &SecurityEvent) -> ToolVerdict;
 }
-

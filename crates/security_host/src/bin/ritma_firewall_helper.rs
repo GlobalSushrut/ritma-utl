@@ -9,17 +9,19 @@ use std::process::Command;
 
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::env;
     use security_os::Did;
+    use std::env;
 
     let mut args = env::args().skip(1);
     let src_did = args.next().ok_or("missing src_did")?;
     let dst_did = args.next().ok_or("missing dst_did")?;
-    let decision = args.next().ok_or("missing decision (allow|deny|throttle|isolate)")?;
+    let decision = args
+        .next()
+        .ok_or("missing decision (allow|deny|throttle|isolate)")?;
 
     // Basic validation of DIDs; errors here mean upstream misconfiguration.
-    let _ = Did::parse(&src_did).map_err(|e| format!("invalid src_did {}: {}", src_did, e))?;
-    let _ = Did::parse(&dst_did).map_err(|e| format!("invalid dst_did {}: {}", dst_did, e))?;
+    let _ = Did::parse(&src_did).map_err(|e| format!("invalid src_did {src_did}: {e}"))?;
+    let _ = Did::parse(&dst_did).map_err(|e| format!("invalid dst_did {dst_did}: {e}"))?;
 
     let backend = env::var("RITMA_FW_BACKEND").unwrap_or_else(|_| "log".to_string());
 
@@ -28,45 +30,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "nft" => backend_nft(&src_did, &dst_did, &decision),
         "ebpf" => backend_ebpf(&src_did, &dst_did, &decision),
         other => {
-            eprintln!("unknown RITMA_FW_BACKEND={}, falling back to log", other);
+            eprintln!("unknown RITMA_FW_BACKEND={other}, falling back to log");
             backend_log(&src_did, &dst_did, &decision)
         }
     }
 }
 
 #[cfg(target_os = "linux")]
-fn backend_log(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "[fw-helper] backend=log src_did={} dst_did={} decision={}",
-        src_did, dst_did, decision
-    );
+fn backend_log(
+    src_did: &str,
+    dst_did: &str,
+    decision: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[fw-helper] backend=log src_did={src_did} dst_did={dst_did} decision={decision}");
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 fn ensure_nft_table_and_chain(table: &str, chain: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Check for table; if missing, create it.
-    let status = Command::new("nft").args(["list", "table", table]).status()?;
+    let status = Command::new("nft")
+        .args(["list", "table", table])
+        .status()?;
     if !status.success() {
-        println!("[fw-helper] backend=nft creating table {}", table);
+        println!("[fw-helper] backend=nft creating table {table}");
         let status = Command::new("nft").args(["add", "table", table]).status()?;
         if !status.success() {
-            return Err(format!("failed to create nft table {}: {:?}", table, status.code()).into());
+            return Err(
+                format!("failed to create nft table {}: {:?}", table, status.code()).into(),
+            );
         }
     }
 
     // Check for chain; if missing, create a simple filter chain.
-    let status = Command::new("nft").args(["list", "chain", table, chain]).status()?;
+    let status = Command::new("nft")
+        .args(["list", "chain", table, chain])
+        .status()?;
     if !status.success() {
-        println!("[fw-helper] backend=nft creating chain {} {}", table, chain);
-        let status = Command::new("nft").args([
-            "add", "chain",
-            table,
-            chain,
-            "{", "type", "filter", "hook", "forward", "priority", "0", ";", "}",
-        ]).status()?;
+        println!("[fw-helper] backend=nft creating chain {table} {chain}");
+        let status = Command::new("nft")
+            .args([
+                "add", "chain", table, chain, "{", "type", "filter", "hook", "forward", "priority",
+                "0", ";", "}",
+            ])
+            .status()?;
         if !status.success() {
-            return Err(format!("failed to create nft chain {} {}: {:?}", table, chain, status.code()).into());
+            return Err(format!(
+                "failed to create nft chain {} {}: {:?}",
+                table,
+                chain,
+                status.code()
+            )
+            .into());
         }
     }
 
@@ -74,20 +89,22 @@ fn ensure_nft_table_and_chain(table: &str, chain: &str) -> Result<(), Box<dyn st
 }
 
 #[cfg(target_os = "linux")]
-fn backend_ebpf(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn backend_ebpf(
+    src_did: &str,
+    dst_did: &str,
+    decision: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
     let helper = env::var("RITMA_FW_EBPF_HELPER").unwrap_or_else(|_| "".to_string());
     if helper.is_empty() {
         println!(
-            "[fw-helper] backend=ebpf src_did={} dst_did={} decision={} (no helper configured)",
-            src_did, dst_did, decision
+            "[fw-helper] backend=ebpf src_did={src_did} dst_did={dst_did} decision={decision} (no helper configured)"
         );
         return Ok(());
     }
 
     println!(
-        "[fw-helper] backend=ebpf helper={} src_did={} dst_did={} decision={}",
-        helper, src_did, dst_did, decision
+        "[fw-helper] backend=ebpf helper={helper} src_did={src_did} dst_did={dst_did} decision={decision}"
     );
 
     let status = Command::new(&helper)
@@ -103,7 +120,11 @@ fn backend_ebpf(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<
 }
 
 #[cfg(target_os = "linux")]
-fn backend_nft(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn backend_nft(
+    src_did: &str,
+    dst_did: &str,
+    decision: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
     let table = env::var("RITMA_FW_NFT_TABLE").unwrap_or_else(|_| "inet".to_string());
     let chain = env::var("RITMA_FW_NFT_CHAIN").unwrap_or_else(|_| "ritma_fw".to_string());
@@ -117,13 +138,16 @@ fn backend_nft(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<d
         "deny" => {
             // Drop traffic from src_set to dst_set.
             let args = [
-                "add", "rule",
+                "add",
+                "rule",
                 &table,
                 &chain,
-                "ip", "saddr",
-                &format!("@{}", src_set),
-                "ip", "daddr",
-                &format!("@{}", dst_set),
+                "ip",
+                "saddr",
+                &format!("@{src_set}"),
+                "ip",
+                "daddr",
+                &format!("@{dst_set}"),
                 "drop",
             ];
             run_nft(&args)
@@ -131,11 +155,13 @@ fn backend_nft(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<d
         "isolate" => {
             // Drop all traffic from src_set, regardless of destination.
             let args = [
-                "add", "rule",
+                "add",
+                "rule",
                 &table,
                 &chain,
-                "ip", "saddr",
-                &format!("@{}", src_set),
+                "ip",
+                "saddr",
+                &format!("@{src_set}"),
                 "drop",
             ];
             run_nft(&args)
@@ -144,21 +170,17 @@ fn backend_nft(src_did: &str, dst_did: &str, decision: &str) -> Result<(), Box<d
             // Allow removes any existing drop rules for this (src_set, dst_set)
             // pair, treating nftables as a deny-list for this DID pair.
             println!(
-                "[fw-helper] backend=nft src_did={} dst_did={} decision=allow (cleanup)",
-                src_did, dst_did
+                "[fw-helper] backend=nft src_did={src_did} dst_did={dst_did} decision=allow (cleanup)"
             );
             cleanup_nft_drop_rules_for_pair(&table, &chain, &src_set, &dst_set)
         }
         "throttle" => {
             println!(
-                "[fw-helper] backend=nft src_did={} dst_did={} decision=throttle (not implemented)",
-                src_did, dst_did
+                "[fw-helper] backend=nft src_did={src_did} dst_did={dst_did} decision=throttle (not implemented)"
             );
             Ok(())
         }
-        other => {
-            Err(format!("unsupported decision for nft backend: {}", other).into())
-        }
+        other => Err(format!("unsupported decision for nft backend: {other}").into()),
     }
 }
 
@@ -206,8 +228,8 @@ fn cleanup_nft_drop_rules_for_pair(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let needle_src = format!("ip saddr @{}", src_set);
-    let needle_dst = format!("ip daddr @{}", dst_set);
+    let needle_src = format!("ip saddr @{src_set}");
+    let needle_dst = format!("ip daddr @{dst_set}");
 
     let mut handles = Vec::new();
     for line in stdout.lines() {
@@ -222,10 +244,7 @@ fn cleanup_nft_drop_rules_for_pair(
         if let Some(idx) = line.rfind("handle ") {
             let handle_str = &line[idx + "handle ".len()..].trim();
             // handle_str may contain trailing comments; parse up to first space.
-            let handle_token = handle_str
-                .split_whitespace()
-                .next()
-                .unwrap_or("");
+            let handle_token = handle_str.split_whitespace().next().unwrap_or("");
             if let Ok(h) = handle_token.parse::<u64>() {
                 handles.push(h);
             }
@@ -236,10 +255,7 @@ fn cleanup_nft_drop_rules_for_pair(
         let h_str = h.to_string();
         let args = ["delete", "rule", table, chain, "handle", &h_str];
         if let Err(e) = run_nft(&args) {
-            println!(
-                "[fw-helper] backend=nft failed to delete rule handle {}: {}",
-                h, e
-            );
+            println!("[fw-helper] backend=nft failed to delete rule handle {h}: {e}");
         }
     }
 

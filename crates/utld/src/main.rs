@@ -1,34 +1,36 @@
+#![allow(clippy::uninlined_format_args)]
+
 #[cfg(all(target_os = "linux", feature = "tls"))]
 mod tls_listener;
 
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use biz_api::{BusinessPlugin, MetricKind, ProductId, UsageEvent};
 use core_types::{Hash, UID};
+use dig_index::DigIndexEntry;
 use forensics_store::persist_dig_to_fs;
-use biz_api::{BusinessPlugin, UsageEvent, ProductId, MetricKind};
-use security_os::MtlsConfig;
-use security_events::{append_decision_event, DecisionEvent};
 use policy_engine::{EngineAction, EngineEvent, PolicyEngine};
-use truthscript::{Action as PolicyAction, Policy};
-use zk_snark::{self, Fr as SnarkFr};
-use utld::{handle_request, NodeRequest, NodeResponse, UtlNode};
-use sot_root::StateOfTruthRoot;
+use reqwest::blocking::Client as HttpClient;
+use security_events::{append_decision_event, DecisionEvent};
+use security_os::MtlsConfig;
 use serde::Deserialize;
 use serde_json::Value as EngineValue;
-use dig_index::DigIndexEntry;
-use reqwest::blocking::Client as HttpClient;
+use sot_root::StateOfTruthRoot;
+use truthscript::{Action as PolicyAction, Policy};
+use utld::{handle_request, NodeRequest, NodeResponse, UtlNode};
+use zk_snark::{self, Fr as SnarkFr};
 
 #[cfg(feature = "bar_governance")]
-use bar_core::{ObservedEvent as BarObservedEvent, VerdictDecision as BarVerdictDecision};
-#[cfg(feature = "bar_governance")]
 use bar_client::{BarClient, BarClientError};
+#[cfg(feature = "bar_governance")]
+use bar_core::{ObservedEvent as BarObservedEvent, VerdictDecision as BarVerdictDecision};
 
 struct FileBusinessPlugin {
     path: String,
@@ -419,7 +421,9 @@ fn main() -> std::io::Result<()> {
                 let engine_tls = engine.as_ref().map(Arc::clone);
                 let plugin_tls = plugin.as_ref().map(Arc::clone);
                 thread::spawn(move || {
-                    if let Err(e) = tls_listener::start_tls_listener(tls_addr, cfg, node_tls, engine_tls, plugin_tls) {
+                    if let Err(e) = tls_listener::start_tls_listener(
+                        tls_addr, cfg, node_tls, engine_tls, plugin_tls,
+                    ) {
                         tracing::error!("TLS listener error: {}", e);
                     }
                 });
@@ -544,9 +548,18 @@ fn enforce_policy(
             ..
         } => {
             let mut fields: BTreeMap<String, EngineValue> = BTreeMap::new();
-            fields.insert("entity_id".to_string(), EngineValue::String(entity_id.to_string()));
-            fields.insert("root_id".to_string(), EngineValue::String(root_id.to_string()));
-            fields.insert("logic_ref".to_string(), EngineValue::String(logic_ref.clone()));
+            fields.insert(
+                "entity_id".to_string(),
+                EngineValue::String(entity_id.to_string()),
+            );
+            fields.insert(
+                "root_id".to_string(),
+                EngineValue::String(root_id.to_string()),
+            );
+            fields.insert(
+                "logic_ref".to_string(),
+                EngineValue::String(logic_ref.clone()),
+            );
 
             for (k, v) in p_container.iter() {
                 if let Ok(n) = v.parse::<f64>() {
@@ -561,7 +574,10 @@ fn enforce_policy(
                 .cloned()
                 .unwrap_or_else(|| "record_transition".to_string());
 
-            let event = EngineEvent { kind: kind.clone(), fields };
+            let event = EngineEvent {
+                kind: kind.clone(),
+                fields,
+            };
             let actions = engine.evaluate(&event);
 
             // Inject policy decision metadata into params so it is visible in digs.
@@ -603,7 +619,8 @@ fn enforce_policy(
                             PolicyAction::RequireSnarkProof
                             | PolicyAction::RequirePolicyEvalProof
                             | PolicyAction::RequireDigInclusionProof => {
-                                snark_status = run_high_threat_merkle_snark(node, UID(*root_id), rule_name);
+                                snark_status =
+                                    run_high_threat_merkle_snark(node, UID(*root_id), rule_name);
                                 break;
                             }
                             _ => {}
@@ -655,11 +672,12 @@ fn enforce_policy(
                 if let Err(e) = append_decision_event(&event_rec) {
                     eprintln!("failed to append decision event: {}", e);
                 }
-                
+
                 // Emit truth snapshot for certain critical events
-                if action_kinds.contains(&"seal_current_dig".to_string()) 
+                if action_kinds.contains(&"seal_current_dig".to_string())
                     || action_kinds.contains(&"flag_for_investigation".to_string())
-                    || event_rec.policy_decision == "deny" {
+                    || event_rec.policy_decision == "deny"
+                {
                     emit_truth_snapshot(event_rec.tenant_id.clone(), "policy_decision");
                 }
 
@@ -747,7 +765,8 @@ fn apply_engine_actions(
                         Ok(keys) => {
                             let x = SnarkFr::from(root_id.0 as u64);
                             match zk_snark::prove_equality(&keys, x)
-                                .and_then(|proof| zk_snark::verify_equality(&keys, &proof, x)) {
+                                .and_then(|proof| zk_snark::verify_equality(&keys, &proof, x))
+                            {
                                 Ok(true) => {
                                     eprintln!("snark_proof_ok (rule={})", rule_name);
                                 }
@@ -765,7 +784,7 @@ fn apply_engine_actions(
                     }
                 }
             }
-            | PolicyAction::FlagForInvestigation { .. }
+            PolicyAction::FlagForInvestigation { .. }
             | PolicyAction::RequireDistilliumProof
             | PolicyAction::RequireUnknownLogicCapsule
             | PolicyAction::CaptureInput
@@ -777,7 +796,10 @@ fn apply_engine_actions(
                             eprintln!("distillium micro-proof generated (rule={})", rule_name);
                         }
                         Err(e) => {
-                            eprintln!("failed to generate micro-proof for root {:?}: {:?}", root_id, e);
+                            eprintln!(
+                                "failed to generate micro-proof for root {:?}: {:?}",
+                                root_id, e
+                            );
                         }
                     }
                 } else {
@@ -840,9 +862,7 @@ fn run_high_threat_merkle_snark(node: &UtlNode, root_id: UID, rule_name: &str) -
                                 Ok(true) => {
                                     eprintln!(
                                         "snark_high_threat_merkle_ok (rule={} score={} index={})",
-                                        rule_name,
-                                        score_scaled,
-                                        last_index,
+                                        rule_name, score_scaled, last_index,
                                     );
                                     return Some("ok".to_string());
                                 }
@@ -870,27 +890,33 @@ fn run_high_threat_merkle_snark(node: &UtlNode, root_id: UID, rule_name: &str) -
                         Err(e) => {
                             eprintln!(
                                 "snark_high_threat_merkle_setup_error (rule={}): {:?}",
-                                rule_name,
-                                e,
+                                rule_name, e,
                             );
                         }
                     }
                 } else {
                     eprintln!(
                         "snark_high_threat_merkle_path_error (rule={} root_id={} index={})",
-                        rule_name,
-                        root_id.0,
-                        last_index,
+                        rule_name, root_id.0, last_index,
                     );
                 }
             } else {
-                eprintln!("snark_high_threat_merkle_no_records (rule={} root_id={})", rule_name, root_id.0);
+                eprintln!(
+                    "snark_high_threat_merkle_no_records (rule={} root_id={})",
+                    rule_name, root_id.0
+                );
             }
         } else {
-            eprintln!("snark_high_threat_merkle_missing_records (rule={} root_id={})", rule_name, root_id.0);
+            eprintln!(
+                "snark_high_threat_merkle_missing_records (rule={} root_id={})",
+                rule_name, root_id.0
+            );
         }
     } else {
-        eprintln!("snark_high_threat_missing_score (rule={} root_id={})", rule_name, root_id.0);
+        eprintln!(
+            "snark_high_threat_missing_score (rule={} root_id={})",
+            rule_name, root_id.0
+        );
     }
 
     None
@@ -922,7 +948,7 @@ fn seal_and_index_current_dig(
             let mut policy_decision = None;
             let mut storage_path = None;
 
-            if let Some(first_rec) = dig.dig_records.get(0) {
+            if let Some(first_rec) = dig.dig_records.first() {
                 if let Some(tid) = first_rec.p_container.0.get("tenant_id") {
                     tenant_id = Some(tid.clone());
                 }
@@ -1066,12 +1092,7 @@ fn persist_dig_file(root_id: UID, dig: &dig_mem::DigFile) -> std::io::Result<()>
         .unwrap_or_default()
         .as_secs();
 
-    let filename = format!(
-        "root-{}_file-{}_{}.dig.json",
-        root_id.0,
-        dig.file_id.0,
-        ts
-    );
+    let filename = format!("root-{}_file-{}_{}.dig.json", root_id.0, dig.file_id.0, ts);
     path.push(&filename);
 
     let json = dig.to_json_string()?;
@@ -1187,7 +1208,11 @@ where
 
         // Inject DID from TLS client cert into p_container if present.
         if let Some(ref did) = peer_did {
-            if let NodeRequest::RecordTransition { ref mut p_container, .. } = req {
+            if let NodeRequest::RecordTransition {
+                ref mut p_container,
+                ..
+            } = req
+            {
                 let did_str = did.as_str().to_string();
                 p_container
                     .entry("actor_did".to_string())
@@ -1201,19 +1226,23 @@ where
 
             #[cfg(feature = "bar_governance")]
             {
-                if let Some(bar_resp) = bar_gov.maybe_apply(&mut req, &mut *node_guard, &plugin) {
+                if let Some(bar_resp) = bar_gov.maybe_apply(&mut req, &mut node_guard, &plugin) {
                     bar_resp
                 } else {
                     if let Some(engine_arc) = engine.as_ref() {
                         let mut eng_guard = engine_arc.lock().unwrap();
-                        let mut gov = PolicyGovernance { engine: &mut *eng_guard };
-                        if let Some(policy_resp) = gov.maybe_apply(&mut req, &mut *node_guard, &plugin) {
+                        let mut gov = PolicyGovernance {
+                            engine: &mut eng_guard,
+                        };
+                        if let Some(policy_resp) =
+                            gov.maybe_apply(&mut req, &mut node_guard, &plugin)
+                        {
                             policy_resp
                         } else {
-                            handle_request(&mut *node_guard, req)
+                            handle_request(&mut node_guard, req)
                         }
                     } else {
-                        handle_request(&mut *node_guard, req)
+                        handle_request(&mut node_guard, req)
                     }
                 }
             }
@@ -1222,14 +1251,16 @@ where
             {
                 if let Some(engine_arc) = engine.as_ref() {
                     let mut eng_guard = engine_arc.lock().unwrap();
-                    let mut gov = PolicyGovernance { engine: &mut *eng_guard };
-                    if let Some(policy_resp) = gov.maybe_apply(&mut req, &mut *node_guard, &plugin) {
+                    let mut gov = PolicyGovernance {
+                        engine: &mut eng_guard,
+                    };
+                    if let Some(policy_resp) = gov.maybe_apply(&mut req, &mut node_guard, &plugin) {
                         policy_resp
                     } else {
-                        handle_request(&mut *node_guard, req)
+                        handle_request(&mut node_guard, req)
                     }
                 } else {
-                    handle_request(&mut *node_guard, req)
+                    handle_request(&mut node_guard, req)
                 }
             }
         };
@@ -1244,7 +1275,7 @@ where
 fn emit_truth_snapshot(tenant_id: Option<String>, trigger: &str) {
     let dig_index_head = compute_dig_index_head();
     let policy_ledger_head = compute_policy_ledger_head();
-    
+
     let snapshot_event = DecisionEvent {
         ts: 0, // Will be set by append_decision_event
         tenant_id,
@@ -1275,7 +1306,7 @@ fn emit_truth_snapshot(tenant_id: Option<String>, trigger: &str) {
         svc_policy_id: None,
         svc_infra_id: None,
     };
-    
+
     if let Err(e) = append_decision_event(&snapshot_event) {
         eprintln!("Warning: failed to emit truth snapshot: {}", e);
     } else {
@@ -1287,14 +1318,16 @@ fn compute_dig_index_head() -> String {
     // Try SQLite first
     if let Ok(db_path) = std::env::var("UTLD_DIG_INDEX_DB") {
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT file_id FROM digs ORDER BY time_start DESC LIMIT 1") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT file_id FROM digs ORDER BY time_start DESC LIMIT 1")
+            {
                 if let Ok(row) = stmt.query_row([], |row| row.get::<_, String>(0)) {
                     return format!("sqlite:{}", row);
                 }
             }
         }
     }
-    
+
     // Fall back to JSONL head file
     if let Ok(path) = std::env::var("UTLD_DIG_INDEX") {
         let head_path = format!("{}.head", path);
@@ -1302,7 +1335,7 @@ fn compute_dig_index_head() -> String {
             return content.trim().to_string();
         }
     }
-    
+
     "unknown".to_string()
 }
 
@@ -1313,11 +1346,11 @@ fn compute_policy_ledger_head() -> String {
             return content.trim().to_string();
         }
     }
-    
+
     // Compute from policy commit ID env if available
     if let Ok(commit) = std::env::var("UTLD_POLICY_COMMIT_ID") {
         return commit;
     }
-    
+
     "unknown".to_string()
 }

@@ -1,17 +1,17 @@
 use std::collections::{BTreeMap, HashMap};
 
-use core_types::{Hash, ParamBag, UID, Sig, LogicRef, BoundaryTag, ZkArcCommitment, hash_bytes};
+use clock::TimeTick;
+use core_types::{hash_bytes, BoundaryTag, Hash, LogicRef, ParamBag, Sig, ZkArcCommitment, UID};
+use dig_mem::{DigFile, DigRecord};
+use distillium::DistilliumMicroProof;
+use entropy_tree::EntropyBin;
+use handshake::TransitionHandshake;
 use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sot_root::StateOfTruthRoot;
-use clock::TimeTick;
-use handshake::TransitionHandshake;
 use tata::TataFrame;
-use dig_mem::{DigRecord, DigFile};
-use entropy_tree::EntropyBin;
-use distillium::DistilliumMicroProof;
 use tracer::UnknownLogicCapsule;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub enum UtlError {
@@ -43,8 +43,7 @@ fn persist_roots(roots: &HashMap<UID, StateOfTruthRoot>) -> std::io::Result<()> 
         roots: roots.values().collect(),
     };
 
-    let json = serde_json::to_string_pretty(&state)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(&state).map_err(std::io::Error::other)?;
 
     let tmp_path = path.with_extension("tmp");
     {
@@ -169,6 +168,12 @@ pub struct UtlNode {
     micro_proofs: HashMap<UID, Vec<DistilliumMicroProof>>,
 }
 
+impl Default for UtlNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UtlNode {
     pub fn new() -> Self {
         Self {
@@ -184,7 +189,7 @@ impl UtlNode {
     pub fn register_root(&mut self, root: StateOfTruthRoot) {
         self.roots.insert(root.root_id, root);
         if let Err(e) = persist_roots(&self.roots) {
-            eprintln!("failed to persist roots: {}", e);
+            eprintln!("failed to persist roots: {e}");
         }
     }
 
@@ -192,6 +197,7 @@ impl UtlNode {
         self.roots.get(&id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_transition(
         &mut self,
         entity_id: UID,
@@ -287,10 +293,7 @@ impl UtlNode {
             actor_did: None,
         };
 
-        self.records
-            .entry(root_id)
-            .or_insert_with(Vec::new)
-            .push(record);
+        self.records.entry(root_id).or_default().push(record);
 
         Ok(handshake)
     }
@@ -341,10 +344,7 @@ impl UtlNode {
             actor_did: None,
         };
 
-        self.records
-            .entry(root_id)
-            .or_insert_with(Vec::new)
-            .push(record);
+        self.records.entry(root_id).or_default().push(record);
 
         Ok(())
     }
@@ -372,8 +372,7 @@ impl UtlNode {
         time_range: (u64, u64),
     ) -> Result<DigFile> {
         // Ensure the root exists so callers cannot accidentally create orphan files.
-        self
-            .roots
+        self.roots
             .get(&root_id)
             .ok_or(UtlError::UnknownRoot(root_id))?;
 
@@ -391,7 +390,7 @@ impl UtlNode {
 
         self.sealed_files
             .entry(root_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(dig.clone());
 
         // Clear in-memory records for this root after sealing.
@@ -400,13 +399,8 @@ impl UtlNode {
         Ok(dig)
     }
 
-    pub fn build_entropy_bin_for_root(
-        &mut self,
-        root_id: UID,
-        bin_id: UID,
-    ) -> Result<EntropyBin> {
-        self
-            .roots
+    pub fn build_entropy_bin_for_root(&mut self, root_id: UID, bin_id: UID) -> Result<EntropyBin> {
+        self.roots
             .get(&root_id)
             .ok_or(UtlError::UnknownRoot(root_id))?;
 
@@ -416,10 +410,9 @@ impl UtlNode {
             .ok_or(UtlError::NoRecordsForRoot(root_id))?;
 
         let bin = EntropyBin::from_records(bin_id, records);
-        self
-            .entropy_bins
+        self.entropy_bins
             .entry(root_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(bin.clone());
         Ok(bin)
     }
@@ -429,16 +422,11 @@ impl UtlNode {
         root_id: UID,
         capsule: UnknownLogicCapsule,
     ) -> Result<()> {
-        self
-            .roots
+        self.roots
             .get(&root_id)
             .ok_or(UtlError::UnknownRoot(root_id))?;
 
-        self
-            .capsules
-            .entry(root_id)
-            .or_insert_with(Vec::new)
-            .push(capsule);
+        self.capsules.entry(root_id).or_default().push(capsule);
 
         Ok(())
     }
@@ -455,7 +443,7 @@ impl UtlNode {
 
         self.micro_proofs
             .entry(root_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(proof.clone());
 
         Ok(proof)
@@ -472,12 +460,16 @@ fn load_sig_key() -> Option<Vec<u8>> {
             Ok(text) => match hex::decode(text.trim()) {
                 Ok(b) => return Some(b),
                 Err(e) => {
-                    eprintln!("UTLD_SIG_KEY_FILE is not valid hex ({}); skipping signature verification", e);
+                    eprintln!(
+                        "UTLD_SIG_KEY_FILE is not valid hex ({e}); skipping signature verification"
+                    );
                     return None;
                 }
             },
             Err(e) => {
-                eprintln!("failed to read UTLD_SIG_KEY_FILE ({}); skipping signature verification", e);
+                eprintln!(
+                    "failed to read UTLD_SIG_KEY_FILE ({e}); skipping signature verification"
+                );
                 return None;
             }
         }
@@ -488,7 +480,7 @@ fn load_sig_key() -> Option<Vec<u8>> {
         match hex::decode(&key_hex) {
             Ok(b) => Some(b),
             Err(e) => {
-                eprintln!("UTLD_SIG_KEY is not valid hex ({}); skipping signature verification", e);
+                eprintln!("UTLD_SIG_KEY is not valid hex ({e}); skipping signature verification");
                 None
             }
         }
@@ -504,7 +496,7 @@ fn load_policy_burn_key() -> std::result::Result<Option<Vec<u8>>, String> {
     // Prefer file-based key if provided.
     if let Ok(path) = env::var("UTLD_POLICY_BURN_KEY_FILE") {
         let text = fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read UTLD_POLICY_BURN_KEY_FILE: {}", e))?;
+            .map_err(|e| format!("failed to read UTLD_POLICY_BURN_KEY_FILE: {e}"))?;
         let bytes = hex::decode(text.trim())
             .map_err(|_| "UTLD_POLICY_BURN_KEY_FILE is not valid hex".to_string())?;
         return Ok(Some(bytes));
@@ -579,8 +571,9 @@ mod u128_as_string {
 }
 
 mod u128_vec_as_string {
-    use serde::{self, Deserialize, Deserializer, Serializer, Serialize};
+    use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
 
+    #[allow(clippy::ptr_arg)]
     pub fn serialize<S>(values: &Vec<u128>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -671,7 +664,7 @@ pub fn handle_request(node: &mut UtlNode, req: NodeRequest) -> NodeResponse {
                 message: format_error(e),
             },
         },
-        NodeRequest::BuildEntropyBin { root_id, bin_id } =>
+        NodeRequest::BuildEntropyBin { root_id, bin_id } => {
             match node.build_entropy_bin_for_root(UID(root_id), UID(bin_id)) {
                 Ok(bin) => NodeResponse::EntropyBinSummary {
                     root_id,
@@ -681,7 +674,8 @@ pub fn handle_request(node: &mut UtlNode, req: NodeRequest) -> NodeResponse {
                 Err(e) => NodeResponse::Error {
                     message: format_error(e),
                 },
-            },
+            }
+        }
         NodeRequest::PolicyBurn { request } => {
             let req_clone = request.clone();
             match handle_policy_burn(request) {
@@ -697,7 +691,10 @@ pub fn handle_request(node: &mut UtlNode, req: NodeRequest) -> NodeResponse {
                                 map.insert("event_kind".to_string(), "policy_burn".to_string());
                                 map.insert("policy_id".to_string(), req_clone.policy_id.clone());
                                 map.insert("version".to_string(), req_clone.version.to_string());
-                                map.insert("policy_hash_hex".to_string(), req_clone.policy_hash_hex.clone());
+                                map.insert(
+                                    "policy_hash_hex".to_string(),
+                                    req_clone.policy_hash_hex.clone(),
+                                );
                                 if let Some(cue) = req_clone.cue_hash_hex.clone() {
                                     map.insert("cue_hash_hex".to_string(), cue);
                                 }
@@ -709,22 +706,21 @@ pub fn handle_request(node: &mut UtlNode, req: NodeRequest) -> NodeResponse {
                                     Ok(v) => v,
                                     Err(e) => {
                                         eprintln!(
-                                            "failed to serialize PolicyBurnRequest for dig record: {}",
-                                            e
+                                            "failed to serialize PolicyBurnRequest for dig record: {e}"
                                         );
                                         Vec::new()
                                     }
                                 };
 
                                 let params = ParamBag(map);
-                                if let Err(e) = node.record_policy_burn_event(root_id, params, data) {
-                                    eprintln!("failed to record policy burn as dig record: {:?}", e);
+                                if let Err(e) = node.record_policy_burn_event(root_id, params, data)
+                                {
+                                    eprintln!("failed to record policy burn as dig record: {e:?}");
                                 }
                             }
                             Err(e) => {
                                 eprintln!(
-                                    "UTLD_POLICY_ROOT_ID is not a valid u128 ({}); skipping policy burn dig record",
-                                    e
+                                    "UTLD_POLICY_ROOT_ID is not a valid u128 ({e}); skipping policy burn dig record"
                                 );
                             }
                         }
@@ -734,12 +730,9 @@ pub fn handle_request(node: &mut UtlNode, req: NodeRequest) -> NodeResponse {
                 }
                 Err(msg) => NodeResponse::Error { message: msg },
             }
-        },
+        }
         NodeRequest::ListRoots => {
-            let root_ids = node
-                .roots_iter()
-                .map(|r| r.root_id.0)
-                .collect::<Vec<_>>();
+            let root_ids = node.roots_iter().map(|r| r.root_id.0).collect::<Vec<_>>();
             NodeResponse::Roots { root_ids }
         }
     }
@@ -777,7 +770,7 @@ fn compute_policy_entry_hash(prev: Option<&str>, line: &[u8]) -> String {
     let hash = hash_bytes(&data);
     let mut s = String::with_capacity(64);
     for b in &hash.0 {
-        s.push_str(&format!("{:02x}", b));
+        s.push_str(&format!("{b:02x}"));
     }
     s
 }
@@ -820,13 +813,13 @@ fn load_last_policy_version(policy_id: &str) -> std::io::Result<Option<u64>> {
 }
 
 fn append_policy_burn_entry(entry: &PolicyBurnEntry) -> std::io::Result<()> {
+    use fs2::FileExt;
     use std::fs::OpenOptions;
     use std::io::Write;
-    use fs2::FileExt;
 
     let path = policy_ledger_path();
 
-    let head_path = format!("{}.head", path);
+    let head_path = format!("{path}.head");
     let prev_hash = std::fs::read_to_string(&head_path)
         .ok()
         .map(|s| s.trim().to_string());
@@ -834,24 +827,20 @@ fn append_policy_burn_entry(entry: &PolicyBurnEntry) -> std::io::Result<()> {
     let mut chained_entry = entry.clone();
     chained_entry.prev_entry_hash = prev_hash.clone();
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     // Serialize appends with an advisory file lock so multiple utld instances
     // cannot interleave writes.
     file.lock_exclusive()?;
 
-    let line = serde_json::to_string(&chained_entry)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let line = serde_json::to_string(&chained_entry).map_err(std::io::Error::other)?;
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
     file.sync_all()?;
 
     let current_hash = compute_policy_entry_hash(prev_hash.as_deref(), line.as_bytes());
-    if let Err(e) = std::fs::write(&head_path, format!("{}\n", current_hash)) {
-        eprintln!("failed to update policy ledger head {}: {}", head_path, e);
+    if let Err(e) = std::fs::write(&head_path, format!("{current_hash}\n")) {
+        eprintln!("failed to update policy ledger head {head_path}: {e}");
     }
 
     Ok(())
@@ -866,7 +855,7 @@ fn handle_policy_burn(req: PolicyBurnRequest) -> std::result::Result<(), String>
     }
 
     let last = load_last_policy_version(&req.policy_id)
-        .map_err(|e| format!("failed to read policy ledger: {}", e))?;
+        .map_err(|e| format!("failed to read policy ledger: {e}"))?;
     if let Some(last_v) = last {
         if req.version <= last_v {
             return Err(format!(
@@ -877,12 +866,10 @@ fn handle_policy_burn(req: PolicyBurnRequest) -> std::result::Result<(), String>
     }
 
     if let Some(key_bytes) = load_policy_burn_key()? {
-        let sig_hex = req
-            .signature_hex
-            .clone()
-            .ok_or_else(|| "policy burn signature required when UTLD_POLICY_BURN_KEY is set".to_string())?;
-        let sig_bytes = hex::decode(&sig_hex)
-            .map_err(|e| format!("invalid signature_hex: {}", e))?;
+        let sig_hex = req.signature_hex.clone().ok_or_else(|| {
+            "policy burn signature required when UTLD_POLICY_BURN_KEY is set".to_string()
+        })?;
+        let sig_bytes = hex::decode(&sig_hex).map_err(|e| format!("invalid signature_hex: {e}"))?;
 
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(&key_bytes)
@@ -916,5 +903,5 @@ fn handle_policy_burn(req: PolicyBurnRequest) -> std::result::Result<(), String>
     };
 
     append_policy_burn_entry(&entry)
-        .map_err(|e| format!("failed to append policy ledger entry: {}", e))
+        .map_err(|e| format!("failed to append policy ledger entry: {e}"))
 }

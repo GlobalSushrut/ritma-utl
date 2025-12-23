@@ -1,5 +1,8 @@
-use bar_powers::{PipelinePower, PipelineInput, PipelineOutput, BarPowerError};
-use common_models::{DecisionEvent, Verdict, VerdictType, Severity, VerdictExplain, VerdictRangesUsed, Actor, ActorType, Subject, Action, Context, EnvStamp, RedactionInfo};
+use bar_powers::{BarPowerError, PipelineInput, PipelineOutput, PipelinePower};
+use common_models::{
+    Action, Actor, ActorType, Context, DecisionEvent, EnvStamp, RedactionInfo, Severity, Subject,
+    Verdict, VerdictExplain, VerdictRangesUsed, VerdictType,
+};
 use index_db::IndexDb;
 use thiserror::Error;
 
@@ -74,7 +77,11 @@ impl MinimalPipeline {
     }
 
     /// Create a simple verdict for an event and persist it.
-    pub fn create_verdict(&self, event: &DecisionEvent, verdict_type: VerdictType) -> Result<Verdict> {
+    pub fn create_verdict(
+        &self,
+        event: &DecisionEvent,
+        verdict_type: VerdictType,
+    ) -> Result<Verdict> {
         let verdict = Verdict {
             verdict_id: format!("v_{}", uuid::Uuid::new_v4()),
             namespace_id: event.namespace_id.clone(),
@@ -103,10 +110,12 @@ impl MinimalPipeline {
 
 impl PipelinePower for MinimalPipeline {
     fn process(&self, input: PipelineInput) -> bar_powers::Result<PipelineOutput> {
-        let event = self.process_event(input)
+        let event = self
+            .process_event(input)
             .map_err(|e| BarPowerError::Pipeline(e.to_string()))?;
-        
-        let verdict = self.create_verdict(&event, VerdictType::Other)
+
+        let verdict = self
+            .create_verdict(&event, VerdictType::Other)
             .map_err(|e| BarPowerError::Pipeline(e.to_string()))?;
 
         Ok(PipelineOutput {
@@ -127,9 +136,9 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let path = tmp.path().join("index_db.sqlite");
         let db = IndexDb::open(path.to_str().unwrap()).expect("open index_db");
-        
+
         let pipeline = MinimalPipeline::new(db);
-        
+
         let input = PipelineInput {
             candidate: DecisionEventCandidate {
                 namespace_id: "ns://test/prod/app/svc".to_string(),

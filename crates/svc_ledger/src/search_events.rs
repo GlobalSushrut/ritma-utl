@@ -2,10 +2,10 @@
 // Audit trail for all search queries with DID-based authentication and rate limiting
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::{Write, BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Search event capturing who searched for what
@@ -13,39 +13,39 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct SearchEvent {
     /// Unique query ID
     pub query_id: String,
-    
+
     /// Caller DID (from mTLS cert)
     pub caller_did: String,
-    
+
     /// Search query string
     pub query: String,
-    
+
     /// Search filters applied
     pub filters: HashMap<String, String>,
-    
+
     /// Timestamp
     pub timestamp: u64,
-    
+
     /// Number of results returned
     pub results_count: usize,
-    
+
     /// SVC policy ID that authorized this search
     pub svc_policy_id: Option<String>,
-    
+
     /// Purpose/justification for search
     pub purpose: String,
-    
+
     /// Signature over search event
     pub signature: String,
-    
+
     /// Schema version
     #[serde(default)]
     pub schema_version: u32,
-    
+
     /// Hash of previous search event (chain)
     #[serde(default)]
     pub prev_hash: Option<String>,
-    
+
     /// Hash of this search event
     #[serde(default)]
     pub event_hash: String,
@@ -70,16 +70,16 @@ impl SearchEvent {
 pub struct SecureSearchQuery {
     /// Caller DID
     pub caller_did: String,
-    
+
     /// Query string
     pub query: String,
-    
+
     /// Filters
     pub filters: HashMap<String, String>,
-    
+
     /// Purpose
     pub purpose: String,
-    
+
     /// Tenant ID (for isolation)
     pub tenant_id: Option<String>,
 }
@@ -89,19 +89,19 @@ pub struct SecureSearchQuery {
 pub struct SearchResult {
     /// Result ID
     pub id: String,
-    
+
     /// Result type (decision, burn, control, etc.)
     pub result_type: String,
-    
+
     /// Result data
     pub data: serde_json::Value,
-    
+
     /// SVC commit ID
     pub svc_commit_id: Option<String>,
-    
+
     /// Infrastructure version ID
     pub infra_version_id: Option<String>,
-    
+
     /// Tenant ID
     pub tenant_id: Option<String>,
 }
@@ -113,7 +113,6 @@ pub struct SearchRateLimiter {
 
 #[derive(Debug, Clone)]
 struct RateLimit {
-    did: String,
     count: u32,
     window_start: u64,
     max_per_window: u32,
@@ -128,14 +127,18 @@ impl SearchRateLimiter {
     }
 
     /// Check if DID is within rate limit
-    pub fn check_limit(&mut self, did: &str, max_per_window: u32, window_secs: u64) -> Result<(), String> {
+    pub fn check_limit(
+        &mut self,
+        did: &str,
+        max_per_window: u32,
+        window_secs: u64,
+    ) -> Result<(), String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         let limit = self.limits.entry(did.to_string()).or_insert(RateLimit {
-            did: did.to_string(),
             count: 0,
             window_start: now,
             max_per_window,
@@ -161,6 +164,12 @@ impl SearchRateLimiter {
     }
 }
 
+impl Default for SearchRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Hyper-secure search gateway
 pub struct SecureSearchGateway {
     event_log_path: String,
@@ -180,10 +189,7 @@ impl SecureSearchGateway {
     }
 
     /// Execute a secure search query
-    pub fn search(
-        &mut self,
-        query: SecureSearchQuery,
-    ) -> Result<Vec<SearchResult>, String> {
+    pub fn search(&mut self, query: SecureSearchQuery) -> Result<Vec<SearchResult>, String> {
         // 1. Rate limiting
         self.rate_limiter.check_limit(
             &query.caller_did,
@@ -216,19 +222,26 @@ impl SecureSearchGateway {
     }
 
     /// Execute actual search (stub)
-    fn execute_search_backend(&self, query: &SecureSearchQuery) -> Result<Vec<SearchResult>, String> {
+    fn execute_search_backend(
+        &self,
+        _query: &SecureSearchQuery,
+    ) -> Result<Vec<SearchResult>, String> {
         // Stub: In production, this would:
         // - Query Elasticsearch/OpenSearch
         // - Apply tenant filters
         // - Redact sensitive fields
         // - Correlate with SVC commits
-        
+
         // For now, return empty results
         Ok(Vec::new())
     }
 
     /// Log search event to audit trail
-    fn log_search_event(&self, query: &SecureSearchQuery, results_count: usize) -> Result<(), String> {
+    fn log_search_event(
+        &self,
+        query: &SecureSearchQuery,
+        results_count: usize,
+    ) -> Result<(), String> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -237,8 +250,9 @@ impl SecureSearchGateway {
         let query_id = format!("search_{}_{}", query.caller_did, timestamp);
 
         // Get previous event hash
-        let prev_hash = self.read_last_event_hash()
-            .map_err(|e| format!("Failed to read last event hash: {}", e))?;
+        let prev_hash = self
+            .read_last_event_hash()
+            .map_err(|e| format!("Failed to read last event hash: {e}"))?;
 
         let mut event = SearchEvent {
             query_id,
@@ -266,16 +280,15 @@ impl SecureSearchGateway {
             .create(true)
             .append(true)
             .open(&self.event_log_path)
-            .map_err(|e| format!("Failed to open search log: {}", e))?;
+            .map_err(|e| format!("Failed to open search log: {e}"))?;
 
-        let line = serde_json::to_string(&event)
-            .map_err(|e| format!("Failed to serialize event: {}", e))?;
+        let line =
+            serde_json::to_string(&event).map_err(|e| format!("Failed to serialize event: {e}"))?;
         file.write_all(line.as_bytes())
-            .map_err(|e| format!("Failed to write event: {}", e))?;
+            .map_err(|e| format!("Failed to write event: {e}"))?;
         file.write_all(b"\n")
-            .map_err(|e| format!("Failed to write newline: {}", e))?;
-        file.flush()
-            .map_err(|e| format!("Failed to flush: {}", e))?;
+            .map_err(|e| format!("Failed to write newline: {e}"))?;
+        file.flush().map_err(|e| format!("Failed to flush: {e}"))?;
 
         Ok(())
     }
@@ -296,7 +309,7 @@ impl SecureSearchGateway {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             if let Ok(event) = serde_json::from_str::<SearchEvent>(&line) {
                 last_hash = Some(event.event_hash);
             }
@@ -317,19 +330,19 @@ impl SecureSearchGateway {
     /// Verify search event chain integrity
     pub fn verify_chain(&self) -> Result<(), String> {
         let file = std::fs::File::open(&self.event_log_path)
-            .map_err(|e| format!("Failed to open log: {}", e))?;
+            .map_err(|e| format!("Failed to open log: {e}"))?;
 
         let reader = BufReader::new(file);
         let mut events = Vec::new();
 
         for line in reader.lines() {
-            let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
+            let line = line.map_err(|e| format!("Failed to read line: {e}"))?;
             if line.trim().is_empty() {
                 continue;
             }
 
-            let event: SearchEvent = serde_json::from_str(&line)
-                .map_err(|e| format!("Failed to parse event: {}", e))?;
+            let event: SearchEvent =
+                serde_json::from_str(&line).map_err(|e| format!("Failed to parse event: {e}"))?;
             events.push(event);
         }
 
@@ -353,11 +366,13 @@ impl SecureSearchGateway {
         // Verify chain linkage
         for i in 1..events.len() {
             let prev_hash = &events[i - 1].event_hash;
-            let current_prev = events[i].prev_hash.as_ref()
-                .ok_or_else(|| format!("Event {} missing prev_hash", i))?;
-            
+            let current_prev = events[i]
+                .prev_hash
+                .as_ref()
+                .ok_or_else(|| format!("Event {i} missing prev_hash"))?;
+
             if prev_hash != current_prev {
-                return Err(format!("Chain broken at event {}", i));
+                return Err(format!("Chain broken at event {i}"));
             }
         }
 
@@ -424,7 +439,7 @@ mod tests {
                 tenant_id: None,
             };
             gateway.search(query).unwrap();
-            
+
             // Small delay to ensure unique timestamps
             std::thread::sleep(std::time::Duration::from_millis(10));
         }

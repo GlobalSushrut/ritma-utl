@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
-use serde::{Serialize, Deserialize};
 use crate::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Permission(pub String);
@@ -31,7 +31,9 @@ pub struct RbacManager {
 }
 
 impl RbacManager {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn upsert_role(&mut self, role: Role) {
         self.roles.insert(role.id.clone(), role);

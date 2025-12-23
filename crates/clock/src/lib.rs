@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct TimeTick {
@@ -25,7 +25,7 @@ impl TimeTick {
         let k = 1e-9_f64;
         let x = k * t;
         let tan = x.tan();
-        let tan_clamped = tan.max(-1e6).min(1e6);
+        let tan_clamped = tan.clamp(-1e6, 1e6);
         t * tan_clamped.abs()
     }
 }

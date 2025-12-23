@@ -1,9 +1,9 @@
 // Compliance Burn - Immutable Merkle Tree Chain for Compliance Records
 // Creates cryptographically verifiable, tamper-evident compliance snapshots
 
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
 use crate::ControlEvalRecord;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// A compliance burn represents an immutable snapshot of compliance state
 /// with a Merkle tree root for cryptographic verification
@@ -11,37 +11,37 @@ use crate::ControlEvalRecord;
 pub struct ComplianceBurn {
     /// Unique burn ID
     pub burn_id: String,
-    
+
     /// Timestamp of burn
     pub timestamp: u64,
-    
+
     /// Tenant ID this burn applies to
     pub tenant_id: String,
-    
+
     /// Framework being burned (SOC2, HIPAA, etc.)
     pub framework: String,
-    
+
     /// Merkle root of all records in this burn
     pub merkle_root: String,
-    
+
     /// Number of records in this burn
     pub record_count: usize,
-    
+
     /// Hash of previous burn (chain burns together)
     pub prev_burn_hash: Option<String>,
-    
+
     /// Hash of this burn record
     pub burn_hash: String,
-    
+
     /// Merkle tree leaves (record hashes)
     pub leaves: Vec<String>,
-    
+
     /// Compliance summary
     pub summary: BurnSummary,
-    
+
     /// Signature over burn (for non-repudiation)
     pub signature: Option<String>,
-    
+
     // SVC (Security Version Control) metadata
     /// SVC commit ID for this burn
     #[serde(default)]
@@ -68,13 +68,13 @@ pub struct BurnSummary {
 pub struct MerkleProof {
     /// Record hash (leaf)
     pub leaf_hash: String,
-    
+
     /// Sibling hashes from leaf to root
     pub proof_path: Vec<String>,
-    
+
     /// Position indicators (left=0, right=1)
     pub positions: Vec<u8>,
-    
+
     /// Merkle root this proof validates against
     pub root: String,
 }
@@ -124,10 +124,7 @@ impl BurnBuilder {
             .as_secs();
 
         // Compute leaf hashes (one per record)
-        let leaves: Vec<String> = self.records
-            .iter()
-            .map(|r| compute_leaf_hash(r))
-            .collect();
+        let leaves: Vec<String> = self.records.iter().map(compute_leaf_hash).collect();
 
         // Build Merkle tree and get root
         let merkle_root = compute_merkle_root(&leaves)?;
@@ -139,12 +136,10 @@ impl BurnBuilder {
         use std::sync::atomic::{AtomicU64, Ordering};
         static BURN_COUNTER: AtomicU64 = AtomicU64::new(0);
         let nonce = BURN_COUNTER.fetch_add(1, Ordering::SeqCst);
-        
-        let burn_id = format!("burn_{}_{}_{}_{}",
-            self.tenant_id,
-            self.framework,
-            timestamp,
-            nonce
+
+        let burn_id = format!(
+            "burn_{}_{}_{}_{}",
+            self.tenant_id, self.framework, timestamp, nonce
         );
 
         // Create burn record
@@ -160,7 +155,7 @@ impl BurnBuilder {
             leaves,
             summary,
             signature: None,
-            svc_commit_id: None, // Set by caller if needed
+            svc_commit_id: None,    // Set by caller if needed
             infra_version_id: None, // Set by caller if needed
         };
 
@@ -221,8 +216,8 @@ fn compute_burn_hash(burn: &ComplianceBurn) -> Result<String, String> {
     hashable.burn_hash = String::new();
     hashable.signature = None;
 
-    let json = serde_json::to_string(&hashable)
-        .map_err(|e| format!("Failed to serialize burn: {}", e))?;
+    let json =
+        serde_json::to_string(&hashable).map_err(|e| format!("Failed to serialize burn: {e}"))?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
@@ -256,7 +251,11 @@ fn compute_summary(records: &[ControlEvalRecord], end_time: u64) -> BurnSummary 
         failed_controls: failed,
         pass_rate,
         frameworks: frameworks.into_iter().collect(),
-        start_time: if start_time == u64::MAX { end_time } else { start_time },
+        start_time: if start_time == u64::MAX {
+            end_time
+        } else {
+            start_time
+        },
         end_time,
     }
 }
@@ -332,7 +331,7 @@ pub fn verify_merkle_proof(proof: &MerkleProof) -> bool {
 
     for (sibling, position) in proof.proof_path.iter().zip(&proof.positions) {
         let mut hasher = Sha256::new();
-        
+
         if *position == 0 {
             // Current is left, sibling is right
             hasher.update(current_hash.as_bytes());
@@ -342,7 +341,7 @@ pub fn verify_merkle_proof(proof: &MerkleProof) -> bool {
             hasher.update(sibling.as_bytes());
             hasher.update(current_hash.as_bytes());
         }
-        
+
         current_hash = hex::encode(hasher.finalize());
     }
 
@@ -364,22 +363,32 @@ pub fn verify_burn_chain(burns: &[ComplianceBurn]) -> Result<(), String> {
     }
 
     // Build a map of burn_hash -> burn for chain verification
-    let mut burn_map: std::collections::HashMap<String, &ComplianceBurn> = std::collections::HashMap::new();
+    let mut burn_map: std::collections::HashMap<String, &ComplianceBurn> =
+        std::collections::HashMap::new();
     for burn in burns {
         burn_map.insert(burn.burn_hash.clone(), burn);
     }
 
     // Find the first burn (one with no prev_burn_hash)
-    let first_burns: Vec<_> = burns.iter().filter(|b| b.prev_burn_hash.is_none()).collect();
+    let first_burns: Vec<_> = burns
+        .iter()
+        .filter(|b| b.prev_burn_hash.is_none())
+        .collect();
     if first_burns.len() != 1 {
-        return Err(format!("Expected exactly 1 first burn, found {}", first_burns.len()));
+        return Err(format!(
+            "Expected exactly 1 first burn, found {}",
+            first_burns.len()
+        ));
     }
 
     // Verify chain linkage by following prev_burn_hash
     for burn in burns {
         if let Some(ref prev_hash) = burn.prev_burn_hash {
             if !burn_map.contains_key(prev_hash) {
-                return Err(format!("Burn {} references missing prev_burn {}", burn.burn_id, prev_hash));
+                return Err(format!(
+                    "Burn {} references missing prev_burn {}",
+                    burn.burn_id, prev_hash
+                ));
             }
         }
     }

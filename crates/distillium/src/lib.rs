@@ -1,8 +1,8 @@
-use core_types::{Hash, UID, ZkProof};
-use clock::TimeTick;
-use serde::{Deserialize, Serialize};
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
+use clock::TimeTick;
+use core_types::{Hash, ZkProof, UID};
+use serde::{Deserialize, Serialize};
 
 /// Distillium micro-proof: a compact proof capsule over a state hash and root.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -20,7 +20,12 @@ impl DistilliumMicroProof {
     ///
     /// For now this is a hash-based proof capsule with an optional zk snippet
     /// reserved for future integration.
-    pub fn new(parent_root: UID, state_hash: Hash, lock_flag: bool, zk_snip: Option<ZkProof>) -> Self {
+    pub fn new(
+        parent_root: UID,
+        state_hash: Hash,
+        lock_flag: bool,
+        zk_snip: Option<ZkProof>,
+    ) -> Self {
         let tick = TimeTick::now();
 
         // If no zk_snip was provided, derive a field-based commitment from the
@@ -61,17 +66,10 @@ mod tests {
         assert_eq!(proof.parent_root.0, root.0);
         assert_eq!(proof.state_hash.0, state_hash.0);
         assert!(proof.timestamp > 0);
-        let zk_len = proof
-            .zk_snip
-            .as_ref()
-            .map(|p| p.0.len())
-            .unwrap_or(0);
+        let zk_len = proof.zk_snip.as_ref().map(|p| p.0.len()).unwrap_or(0);
         println!(
             "distillium micro_proof: micro_id={} parent_root={} timestamp={} zk_snip_len={}",
-            proof.micro_id.0,
-            proof.parent_root.0,
-            proof.timestamp,
-            zk_len
+            proof.micro_id.0, proof.parent_root.0, proof.timestamp, zk_len
         );
     }
 }

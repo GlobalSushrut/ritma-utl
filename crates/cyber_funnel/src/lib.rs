@@ -90,7 +90,9 @@ impl FunnelTracker {
             )));
         }
 
-        let next_stage = self.current_stage.next()
+        let next_stage = self
+            .current_stage
+            .next()
             .ok_or_else(|| FunnelError::InvalidTransition("Already at final stage".to_string()))?;
 
         // Check minimum confidence for next stage
@@ -136,7 +138,7 @@ impl FunnelTracker {
         for window in self.transitions.windows(2) {
             let prev = &window[0];
             let curr = &window[1];
-            
+
             // Check if stages are consecutive
             if prev.to_stage.next() != Some(curr.to_stage) && prev.to_stage != curr.from_stage {
                 return Err(FunnelError::SilentEscalation(format!(
@@ -162,17 +164,24 @@ mod tests {
     #[test]
     fn funnel_stages_have_monotonic_confidence() {
         assert!(FunnelStage::Observe.min_confidence() < FunnelStage::Canonicalize.min_confidence());
-        assert!(FunnelStage::Canonicalize.min_confidence() < FunnelStage::Correlate.min_confidence());
-        assert!(FunnelStage::Correlate.min_confidence() < FunnelStage::DetectIntentDrift.min_confidence());
+        assert!(
+            FunnelStage::Canonicalize.min_confidence() < FunnelStage::Correlate.min_confidence()
+        );
+        assert!(
+            FunnelStage::Correlate.min_confidence()
+                < FunnelStage::DetectIntentDrift.min_confidence()
+        );
     }
 
     #[test]
     fn funnel_tracker_advances_with_valid_confidence() {
         let mut tracker = FunnelTracker::new();
-        
+
         assert_eq!(tracker.current_stage(), FunnelStage::Observe);
-        
-        let stage = tracker.advance(0.2, "canonicalized".to_string()).expect("advance");
+
+        let stage = tracker
+            .advance(0.2, "canonicalized".to_string())
+            .expect("advance");
         assert_eq!(stage, FunnelStage::Canonicalize);
         assert_eq!(tracker.current_confidence(), 0.2);
     }
@@ -181,7 +190,7 @@ mod tests {
     fn funnel_tracker_rejects_confidence_decrease() {
         let mut tracker = FunnelTracker::new();
         tracker.advance(0.5, "test".to_string()).expect("advance");
-        
+
         let result = tracker.advance(0.3, "decrease".to_string());
         assert!(result.is_err());
     }
@@ -189,7 +198,7 @@ mod tests {
     #[test]
     fn funnel_tracker_rejects_insufficient_confidence() {
         let mut tracker = FunnelTracker::new();
-        
+
         // Try to advance to Canonicalize with confidence below minimum
         let result = tracker.advance(0.05, "too low".to_string());
         assert!(result.is_err());
@@ -198,10 +207,10 @@ mod tests {
     #[test]
     fn funnel_tracker_validates_no_silent_escalation() {
         let mut tracker = FunnelTracker::new();
-        
+
         tracker.advance(0.2, "step1".to_string()).expect("advance");
         tracker.advance(0.4, "step2".to_string()).expect("advance");
-        
+
         assert!(tracker.validate_no_silent_escalation().is_ok());
     }
 }

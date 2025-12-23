@@ -32,11 +32,11 @@ pub struct Control {
 }
 
 pub fn load_controls_from_file(path: &str) -> Result<Vec<Control>, String> {
-    let content = read_to_string(path)
-        .map_err(|e| format!("failed to read controls file {}: {}", path, e))?;
+    let content =
+        read_to_string(path).map_err(|e| format!("failed to read controls file {path}: {e}"))?;
 
     serde_json::from_str::<Vec<Control>>(&content)
-        .map_err(|e| format!("failed to parse controls from {}: {}", path, e))
+        .map_err(|e| format!("failed to parse controls from {path}: {e}"))
 }
 
 #[cfg(test)]

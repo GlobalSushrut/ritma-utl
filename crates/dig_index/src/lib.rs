@@ -1,12 +1,15 @@
 pub mod query;
 
+use core_types::hash_bytes;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
-use rusqlite::{params, Connection};
-use core_types::hash_bytes;
 
-pub use query::{DigIndexQuery, files_by_svc_commit, files_by_camera_frame, files_by_actor, files_by_compliance_burn, tenant_statistics, TenantStats};
+pub use query::{
+    files_by_actor, files_by_camera_frame, files_by_compliance_burn, files_by_svc_commit,
+    tenant_statistics, DigIndexQuery, TenantStats,
+};
 
 /// Enhanced index entry for a sealed DigFile with SVC and CCTV correlation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,27 +31,27 @@ pub struct DigIndexEntry {
     pub policy_commit_id: Option<String>,
     #[serde(default)]
     pub prev_index_hash: Option<String>,
-    
+
     // Enhanced SVC metadata
     #[serde(default)]
     pub svc_commits: Vec<String>,
     #[serde(default)]
     pub infra_version_id: Option<String>,
-    
+
     // CCTV correlation
     #[serde(default)]
     pub camera_frames: Vec<String>,
-    
+
     // Actor tracking
     #[serde(default)]
     pub actor_dids: Vec<String>,
-    
+
     // Compliance metadata
     #[serde(default)]
     pub compliance_framework: Option<String>,
     #[serde(default)]
     pub compliance_burn_id: Option<String>,
-    
+
     // File metadata
     #[serde(default)]
     pub file_hash: Option<String>,
@@ -58,7 +61,7 @@ pub struct DigIndexEntry {
     pub encryption: Option<String>,
     #[serde(default)]
     pub signature: Option<String>,
-    
+
     // Schema version
     #[serde(default)]
     pub schema_version: u32,
@@ -106,14 +109,14 @@ fn compute_index_hash(prev: Option<&str>, line: &[u8]) -> String {
     let hash = hash_bytes(&data);
     let mut s = String::with_capacity(64);
     for b in &hash.0 {
-        s.push_str(&format!("{:02x}", b));
+        s.push_str(&format!("{b:02x}"));
     }
 
     s
 }
 
 fn append_index_entry_to_path(path: &str, entry: &DigIndexEntry) -> std::io::Result<()> {
-    let head_path = format!("{}.head", path);
+    let head_path = format!("{path}.head");
     let prev_hash = std::fs::read_to_string(&head_path)
         .ok()
         .map(|s| s.trim().to_string());
@@ -121,24 +124,20 @@ fn append_index_entry_to_path(path: &str, entry: &DigIndexEntry) -> std::io::Res
     let mut chained_entry = entry.clone();
     chained_entry.prev_index_hash = prev_hash.clone();
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
     use fs2::FileExt;
 
     file.lock_exclusive()?;
 
-    let line = serde_json::to_string(&chained_entry)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let line = serde_json::to_string(&chained_entry).map_err(std::io::Error::other)?;
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
     file.sync_all()?;
 
     let current_hash = compute_index_hash(prev_hash.as_deref(), line.as_bytes());
-    if let Err(e) = std::fs::write(&head_path, format!("{}\n", current_hash)) {
-        eprintln!("failed to update dig index head {}: {}", head_path, e);
+    if let Err(e) = std::fs::write(&head_path, format!("{current_hash}\n")) {
+        eprintln!("failed to update dig index head {head_path}: {e}");
     }
 
     Ok(())
@@ -152,14 +151,14 @@ pub fn append_index_entry(entry: &DigIndexEntry) -> std::io::Result<()> {
     if let Ok(cold_path) = std::env::var("UTLD_DIG_INDEX_COLD") {
         if !cold_path.trim().is_empty() {
             if let Err(e) = append_index_entry_to_path(&cold_path, entry) {
-                eprintln!("failed to append dig index entry to cold path {}: {}", cold_path, e);
+                eprintln!("failed to append dig index entry to cold path {cold_path}: {e}");
             }
         }
     }
 
     if let Ok(db_path) = std::env::var("UTLD_DIG_INDEX_DB") {
         if let Err(e) = append_index_entry_db(&db_path, entry) {
-            eprintln!("failed to append dig index entry to db {}: {}", db_path, e);
+            eprintln!("failed to append dig index entry to db {db_path}: {e}");
         }
     }
 

@@ -1,5 +1,5 @@
-use core_types::{Hash, ParamBag, UID, ZkArcCommitment};
-use serde::{Serialize, Deserialize};
+use core_types::{Hash, ParamBag, ZkArcCommitment, UID};
+use serde::{Deserialize, Serialize};
 
 pub type RootParams = ParamBag;
 pub type TransitionHookId = UID;

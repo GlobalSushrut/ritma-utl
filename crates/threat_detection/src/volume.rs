@@ -1,7 +1,7 @@
 //! Volume semantics: detect spikes and slow-and-low exfiltration
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Time window for volume tracking (placeholder for future)
 #[derive(Debug, Clone, Copy)]
@@ -36,7 +36,11 @@ pub struct VolumeTracker {
 }
 
 impl VolumeTracker {
-    pub fn new() -> Self { Self { actor_volumes: HashMap::new() } }
+    pub fn new() -> Self {
+        Self {
+            actor_volumes: HashMap::new(),
+        }
+    }
 
     /// Learn from observed event volume (bytes)
     pub fn track_actor(&mut self, actor_id: &str, volume_bytes: u64) {
@@ -57,17 +61,27 @@ impl VolumeTracker {
     /// Detect anomaly for an incoming volume compared to learned baseline
     pub fn detect_actor_anomaly(&self, actor_id: &str, volume_bytes: u64) -> Option<VolumeAnomaly> {
         let stats = self.actor_volumes.get(actor_id)?;
-        if stats.baseline_rate <= 0.0 { return None; }
+        if stats.baseline_rate <= 0.0 {
+            return None;
+        }
         let current = volume_bytes as f64;
         let baseline = stats.baseline_rate;
 
         // Simple spike factor relative to baseline; treat >3x as anomalous
         let factor = current / baseline;
-        if factor <= 3.0 { return None; }
+        if factor <= 3.0 {
+            return None;
+        }
 
         // Map factor to severity in (0,1]; 3x -> 0, 10x -> ~1
-        let severity = ((factor - 3.0) / 7.0).min(1.0).max(0.0);
-        Some(VolumeAnomaly { is_anomaly: true, z_like: factor, current, baseline, severity })
+        let severity = ((factor - 3.0) / 7.0).clamp(0.0, 1.0);
+        Some(VolumeAnomaly {
+            is_anomaly: true,
+            z_like: factor,
+            current,
+            baseline,
+            severity,
+        })
     }
 }
 
@@ -79,19 +93,35 @@ mod tests {
     fn volume_tracker_detects_spikes() {
         let mut vt = VolumeTracker::new();
         // Learn baseline: ~100 bytes per record
-        for _ in 0..20 { vt.track_actor("alice", 100); }
+        for _ in 0..20 {
+            vt.track_actor("alice", 100);
+        }
         vt.calibrate();
-        let anom = vt.detect_actor_anomaly("alice", 1200).expect("should find anomaly");
+        let anom = vt
+            .detect_actor_anomaly("alice", 1200)
+            .expect("should find anomaly");
         assert!(anom.is_anomaly);
-        assert!(anom.severity > 0.5, "expected high severity for 12x spike, got {}", anom.severity);
+        assert!(
+            anom.severity > 0.5,
+            "expected high severity for 12x spike, got {}",
+            anom.severity
+        );
     }
 
     #[test]
     fn volume_tracker_ignores_small_changes() {
         let mut vt = VolumeTracker::new();
-        for _ in 0..10 { vt.track_actor("bob", 200); }
+        for _ in 0..10 {
+            vt.track_actor("bob", 200);
+        }
         vt.calibrate();
-        assert!(vt.detect_actor_anomaly("bob", 500).is_none(), "~2.5x should be below 3x threshold");
-        assert!(vt.detect_actor_anomaly("bob", 601).is_some(), "just over 3x should trigger");
+        assert!(
+            vt.detect_actor_anomaly("bob", 500).is_none(),
+            "~2.5x should be below 3x threshold"
+        );
+        assert!(
+            vt.detect_actor_anomaly("bob", 601).is_some(),
+            "just over 3x should trigger"
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::io::{BufRead, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -12,12 +12,10 @@ use tracing_subscriber::EnvFilter;
 
 fn init_tracing() {
     let filter = EnvFilter::from_default_env();
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-fn handle_client(mut stream: UnixStream, agent: Arc<dyn BarAgent>) {
+fn handle_client(stream: UnixStream, agent: Arc<dyn BarAgent>) {
     // Best-effort short timeouts so misbehaving clients do not hang
     // connections indefinitely.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
@@ -25,7 +23,7 @@ fn handle_client(mut stream: UnixStream, agent: Arc<dyn BarAgent>) {
 
     let peer = stream
         .peer_addr()
-        .map(|addr| format!("{:?}", addr))
+        .map(|addr| format!("{addr:?}"))
         .unwrap_or_else(|_| "unknown".to_string());
 
     let reader_stream = match stream.try_clone() {
@@ -66,7 +64,7 @@ fn handle_client(mut stream: UnixStream, agent: Arc<dyn BarAgent>) {
                 let err_resp = serde_json::json!({
                     "error": format!("invalid_observed_event: {}", e),
                 });
-                if let Err(werr) = writeln!(writer, "{}", err_resp) {
+                if let Err(werr) = writeln!(writer, "{err_resp}") {
                     error!("failed to write error response to {}: {}", peer, werr);
                     break;
                 }
@@ -86,7 +84,8 @@ fn handle_client(mut stream: UnixStream, agent: Arc<dyn BarAgent>) {
 fn main() -> std::io::Result<()> {
     init_tracing();
 
-    let socket_path = std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/tmp/bar_daemon.sock".to_string());
+    let socket_path =
+        std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/tmp/bar_daemon.sock".to_string());
 
     if Path::new(&socket_path).exists() {
         std::fs::remove_file(&socket_path)?;

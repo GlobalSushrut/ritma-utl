@@ -1,7 +1,7 @@
 // TruthScript v2 Executor - Infrastructure Action Execution
 // Executes v2 actions against Ritma infrastructure (eBPF, cgroups, mTLS, DIDs)
 
-use crate::v2::{ActionV2, ConditionV2, PolicyV2, RuleV2, WhenV2, LogicalOperator};
+use crate::v2::{ActionV2, ConditionV2, LogicalOperator, PolicyV2, RuleV2, WhenV2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -10,25 +10,25 @@ use std::collections::HashMap;
 pub struct ExecutionContext {
     /// Event being evaluated
     pub event: HashMap<String, serde_json::Value>,
-    
+
     /// DID of the actor (from mTLS cert)
     pub actor_did: Option<String>,
-    
+
     /// Source IP address
     pub source_ip: Option<String>,
-    
+
     /// Destination IP/port
     pub destination: Option<(String, u16)>,
-    
+
     /// mTLS verification status
     pub mtls_verified: bool,
-    
+
     /// Current cgroup path
     pub cgroup_path: Option<String>,
-    
+
     /// eBPF map paths available
     pub ebpf_maps: HashMap<String, String>,
-    
+
     /// Consensus votes collected
     pub consensus_votes: Vec<String>,
 }
@@ -120,15 +120,18 @@ impl PolicyExecutorV2 {
 
         // Evaluate conditions based on operator
         match when.operator {
-            LogicalOperator::All => {
-                when.conditions.iter().all(|c| self.evaluate_condition(c, context))
-            }
-            LogicalOperator::Any => {
-                when.conditions.iter().any(|c| self.evaluate_condition(c, context))
-            }
-            LogicalOperator::None => {
-                !when.conditions.iter().any(|c| self.evaluate_condition(c, context))
-            }
+            LogicalOperator::All => when
+                .conditions
+                .iter()
+                .all(|c| self.evaluate_condition(c, context)),
+            LogicalOperator::Any => when
+                .conditions
+                .iter()
+                .any(|c| self.evaluate_condition(c, context)),
+            LogicalOperator::None => !when
+                .conditions
+                .iter()
+                .any(|c| self.evaluate_condition(c, context)),
         }
     }
 
@@ -142,25 +145,25 @@ impl PolicyExecutorV2 {
             ConditionV2::FieldEquals { field, value } => {
                 context.event.get(field).and_then(|v| v.as_str()) == Some(value)
             }
-            ConditionV2::FieldGreaterThan { field, threshold } => {
-                context.event.get(field)
-                    .and_then(|v| v.as_f64())
-                    .map(|v| v > *threshold)
-                    .unwrap_or(false)
-            }
+            ConditionV2::FieldGreaterThan { field, threshold } => context
+                .event
+                .get(field)
+                .and_then(|v| v.as_f64())
+                .map(|v| v > *threshold)
+                .unwrap_or(false),
 
             // DID conditions
-            ConditionV2::DidEquals { did } => {
-                context.actor_did.as_deref() == Some(did)
-            }
-            ConditionV2::DidPrefix { prefix } => {
-                context.actor_did.as_ref()
-                    .map(|d| d.starts_with(prefix))
-                    .unwrap_or(false)
-            }
+            ConditionV2::DidEquals { did } => context.actor_did.as_deref() == Some(did),
+            ConditionV2::DidPrefix { prefix } => context
+                .actor_did
+                .as_ref()
+                .map(|d| d.starts_with(prefix))
+                .unwrap_or(false),
             ConditionV2::DidPattern { pattern } => {
                 // Simplified pattern matching (would use regex in production)
-                context.actor_did.as_ref()
+                context
+                    .actor_did
+                    .as_ref()
                     .map(|d| d.contains(pattern))
                     .unwrap_or(false)
             }
@@ -171,23 +174,19 @@ impl PolicyExecutorV2 {
             ConditionV2::MtlsCertIssuer { issuer: _ } => context.mtls_verified, // Stub
 
             // Network conditions
-            ConditionV2::SourceIp { ip } => {
-                context.source_ip.as_deref() == Some(ip)
-            }
+            ConditionV2::SourceIp { ip } => context.source_ip.as_deref() == Some(ip),
             ConditionV2::SourceIpInRange { cidr: _ } => {
                 // Stub: would check CIDR range
                 context.source_ip.is_some()
             }
-            ConditionV2::DestinationPort { port } => {
-                context.destination.as_ref()
-                    .map(|(_, p)| p == port)
-                    .unwrap_or(false)
-            }
+            ConditionV2::DestinationPort { port } => context
+                .destination
+                .as_ref()
+                .map(|(_, p)| p == port)
+                .unwrap_or(false),
 
             // Resource conditions
-            ConditionV2::CgroupExists { path } => {
-                context.cgroup_path.as_deref() == Some(path)
-            }
+            ConditionV2::CgroupExists { path } => context.cgroup_path.as_deref() == Some(path),
 
             // eBPF conditions
             ConditionV2::EbpfMapHasKey { map_path, key: _ } => {
@@ -195,9 +194,7 @@ impl PolicyExecutorV2 {
             }
 
             // Consensus conditions
-            ConditionV2::ValidatorCount { min } => {
-                context.consensus_votes.len() >= *min as usize
-            }
+            ConditionV2::ValidatorCount { min } => context.consensus_votes.len() >= *min as usize,
 
             // Catch-all for unimplemented conditions
             _ => false,
@@ -205,10 +202,10 @@ impl PolicyExecutorV2 {
     }
 
     /// Execute a single action
-    fn execute_action(&self, action: &ActionV2, context: &ExecutionContext) -> ActionResult {
+    fn execute_action(&self, action: &ActionV2, _context: &ExecutionContext) -> ActionResult {
         if self.dry_run {
             return ActionResult {
-                action_name: format!("{:?}", action),
+                action_name: format!("{action:?}"),
                 success: true,
                 output: Some("[DRY RUN]".to_string()),
                 error: None,
@@ -219,7 +216,7 @@ impl PolicyExecutorV2 {
             ActionV2::Deny { reason } => ActionResult {
                 action_name: "deny".to_string(),
                 success: true,
-                output: Some(format!("Denied: {}", reason)),
+                output: Some(format!("Denied: {reason}")),
                 error: None,
             },
 
@@ -228,17 +225,21 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "ebpf_drop".to_string(),
                     success: true,
-                    output: Some(format!("eBPF drop: {}", reason)),
+                    output: Some(format!("eBPF drop: {reason}")),
                     error: None,
                 }
             }
 
-            ActionV2::EbpfUpdateMap { map_path, key, value } => {
+            ActionV2::EbpfUpdateMap {
+                map_path,
+                key,
+                value,
+            } => {
                 // In production: exec bpftool map update
                 ActionResult {
                     action_name: "ebpf_update_map".to_string(),
                     success: true,
-                    output: Some(format!("Updated {} key={} value={}", map_path, key, value)),
+                    output: Some(format!("Updated {map_path} key={key} value={value}")),
                     error: None,
                 }
             }
@@ -248,7 +249,7 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "cgroup_set_cpu_limit".to_string(),
                     success: true,
-                    output: Some(format!("Set CPU limit to {}%", percent)),
+                    output: Some(format!("Set CPU limit to {percent}%")),
                     error: None,
                 }
             }
@@ -258,7 +259,7 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "cgroup_set_memory_limit".to_string(),
                     success: true,
-                    output: Some(format!("Set memory limit to {}MB", mb)),
+                    output: Some(format!("Set memory limit to {mb}MB")),
                     error: None,
                 }
             }
@@ -268,7 +269,7 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "network_quarantine".to_string(),
                     success: true,
-                    output: Some(format!("Quarantined for {}s", duration_secs)),
+                    output: Some(format!("Quarantined for {duration_secs}s")),
                     error: None,
                 }
             }
@@ -278,7 +279,7 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "did_revoke".to_string(),
                     success: true,
-                    output: Some(format!("Revoked DID {}: {}", did, reason)),
+                    output: Some(format!("Revoked DID {did}: {reason}")),
                     error: None,
                 }
             }
@@ -288,7 +289,7 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "emit_decision_event".to_string(),
                     success: true,
-                    output: Some(format!("Emitted to {}", index)),
+                    output: Some(format!("Emitted to {index}")),
                     error: None,
                 }
             }
@@ -298,7 +299,7 @@ impl PolicyExecutorV2 {
                 ActionResult {
                     action_name: "service_stop".to_string(),
                     success: true,
-                    output: Some(format!("Stopped service {}", service_name)),
+                    output: Some(format!("Stopped service {service_name}")),
                     error: None,
                 }
             }
@@ -317,13 +318,13 @@ impl PolicyExecutorV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PolicyHeader;
     use crate::v2::{InfraContext, RuleScope};
+    use crate::PolicyHeader;
 
     #[test]
     fn executor_evaluates_did_condition() {
         let executor = PolicyExecutorV2::new(true);
-        
+
         let mut context = ExecutionContext {
             event: HashMap::new(),
             actor_did: Some("did:ritma:tenant:acme:user:alice".to_string()),
@@ -334,7 +335,9 @@ mod tests {
             ebpf_maps: HashMap::new(),
             consensus_votes: vec![],
         };
-        context.event.insert("kind".to_string(), serde_json::json!("api_call"));
+        context
+            .event
+            .insert("kind".to_string(), serde_json::json!("api_call"));
 
         let condition = ConditionV2::DidPrefix {
             prefix: "did:ritma:tenant:acme".to_string(),
@@ -346,7 +349,7 @@ mod tests {
     #[test]
     fn executor_executes_ebpf_action() {
         let executor = PolicyExecutorV2::new(true);
-        
+
         let context = ExecutionContext {
             event: HashMap::new(),
             actor_did: None,
@@ -371,7 +374,7 @@ mod tests {
     #[test]
     fn executor_respects_rule_priority() {
         let executor = PolicyExecutorV2::new(true);
-        
+
         let policy = PolicyV2 {
             header: PolicyHeader {
                 name: "test".to_string(),
@@ -392,14 +395,18 @@ mod tests {
                 RuleV2 {
                     name: "low_priority".to_string(),
                     when: None,
-                    actions: vec![ActionV2::Deny { reason: "low".to_string() }],
+                    actions: vec![ActionV2::Deny {
+                        reason: "low".to_string(),
+                    }],
                     priority: 1,
                     scope: RuleScope::Global,
                 },
                 RuleV2 {
                     name: "high_priority".to_string(),
                     when: None,
-                    actions: vec![ActionV2::Deny { reason: "high".to_string() }],
+                    actions: vec![ActionV2::Deny {
+                        reason: "high".to_string(),
+                    }],
                     priority: 100,
                     scope: RuleScope::Global,
                 },
@@ -419,7 +426,7 @@ mod tests {
         };
 
         let results = executor.execute(&policy, &context);
-        
+
         // High priority rule should be evaluated first
         assert_eq!(results[0].rule_name, "high_priority");
         assert_eq!(results[1].rule_name, "low_priority");

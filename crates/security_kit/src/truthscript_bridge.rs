@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use truthscript::Policy as TsPolicy;
 use crate::containers::ParamBundle;
 use crate::Result;
+use serde::{Deserialize, Serialize};
+use truthscript::Policy as TsPolicy;
 
 /// Placeholder hook for integrating TruthScript policies with the SDK.
 #[derive(Debug, Clone, Serialize, Deserialize)]

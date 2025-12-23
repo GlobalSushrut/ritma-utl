@@ -1,43 +1,46 @@
-mod tls_transport;
 mod metrics;
+mod tls_transport;
 
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::fs::File;
 use std::io::BufRead;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use axum::{extract::{State, Query, Extension}, routing::{get, post}, Json, Router};
-use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
-use security_tools::{SecurityEvent, SecurityTool, ToolVerdict, Value as SecValue};
-use utl_client::UtlClient;
-use utld::{NodeRequest, NodeResponse};
-use biz_api::UsageEvent;
-use security_events::DecisionEvent;
-use dig_index::DigIndexEntry;
-use compliance_index::ControlEvalRecord;
-use security_os::MtlsConfig;
-use security_kit::{SecurityKit, SecurityKitError};
-use security_kit::containers::ParamBundle;
-use security_kit::compliance::EvidenceBuilder;
-use security_kit::reporting::SecurityReport;
-use evidence_package::{
-    PackageSigner, SigningKey,
-    PackageScope, EvidencePackageManifest,
+use crate::tls_transport::PeerDid;
+use axum::{
+    extract::{Extension, Query, State},
+    routing::{get, post},
+    Json, Router,
 };
-use node_keystore::{NodeKeystore, KeystoreKey};
+use biz_api::UsageEvent;
+use compliance_index::ControlEvalRecord;
+use dig_index::DigIndexEntry;
+use evidence_package::{EvidencePackageManifest, PackageScope, PackageSigner, SigningKey};
+use node_keystore::{KeystoreKey, NodeKeystore};
 use opentelemetry::global;
 use opentelemetry_sdk::trace as sdktrace;
-use tracing_opentelemetry::OpenTelemetryLayer;
+use security_events::DecisionEvent;
+use security_kit::compliance::EvidenceBuilder;
+use security_kit::containers::ParamBundle;
+use security_kit::reporting::SecurityReport;
+use security_kit::{SecurityKit, SecurityKitError};
+use security_os::MtlsConfig;
+use security_tools::{SecurityEvent, SecurityTool, ToolVerdict, Value as SecValue};
+use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
-use tracing_subscriber::layer::{Context as LayerContext, Layer};
+use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Registry;
-use crate::tls_transport::PeerDid;
+use utl_client::UtlClient;
+use utld::{NodeRequest, NodeResponse};
+
+type UsageTotals = BTreeMap<(String, String, String), u64>;
 
 #[derive(Clone)]
 struct AppState {
@@ -45,7 +48,7 @@ struct AppState {
     auth_token: Option<String>,
     auth_tenants: BTreeMap<String, String>,
     metrics: Arc<Metrics>,
-    usage_totals: Arc<Mutex<BTreeMap<(String, String, String), u64>>>,
+    usage_totals: Arc<Mutex<UsageTotals>>,
 }
 
 fn load_http_mtls_config_from_env() -> Option<MtlsConfig> {
@@ -85,7 +88,9 @@ struct DecisionSearchQuery {
     limit: usize,
 }
 
-fn default_limit() -> usize { 100 }
+fn default_limit() -> usize {
+    100
+}
 
 #[derive(Serialize)]
 struct DecisionSearchResult {
@@ -98,7 +103,7 @@ async fn search_decisions(
     let path = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
     let file = File::open(&path)
-        .map_err(|e| bad_request(format!("failed to open decision events {}: {}", path, e)))?;
+        .map_err(|e| bad_request(format!("failed to open decision events {path}: {e}")))?;
     let reader = std::io::BufReader::new(file);
 
     let mut out = Vec::new();
@@ -106,7 +111,7 @@ async fn search_decisions(
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("search_decisions: failed to read line: {}", e);
+                eprintln!("search_decisions: failed to read line: {e}");
                 continue;
             }
         };
@@ -116,31 +121,45 @@ async fn search_decisions(
         let ev: DecisionEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("search_decisions: failed to parse DecisionEvent: {}", e);
+                eprintln!("search_decisions: failed to parse DecisionEvent: {e}");
                 continue;
             }
         };
 
         if let Some(ref tid) = q.tenant_id {
-            if ev.tenant_id.as_deref() != Some(tid.as_str()) { continue; }
+            if ev.tenant_id.as_deref() != Some(tid.as_str()) {
+                continue;
+            }
         }
         if let Some(ref kind) = q.event_kind {
-            if ev.event_kind != *kind { continue; }
+            if ev.event_kind != *kind {
+                continue;
+            }
         }
         if let Some(ref cid) = q.policy_commit_id {
-            if ev.policy_commit_id.as_deref() != Some(cid.as_str()) { continue; }
+            if ev.policy_commit_id.as_deref() != Some(cid.as_str()) {
+                continue;
+            }
         }
         if let Some(ref name) = q.policy_name {
-            if ev.policy_name.as_deref() != Some(name.as_str()) { continue; }
+            if ev.policy_name.as_deref() != Some(name.as_str()) {
+                continue;
+            }
         }
         if let Some(ref dec) = q.policy_decision {
-            if ev.policy_decision != *dec { continue; }
+            if ev.policy_decision != *dec {
+                continue;
+            }
         }
         if let Some(ts_start) = q.ts_start {
-            if ev.ts < ts_start { continue; }
+            if ev.ts < ts_start {
+                continue;
+            }
         }
         if let Some(ts_end) = q.ts_end {
-            if ev.ts > ts_end { continue; }
+            if ev.ts > ts_end {
+                continue;
+            }
         }
         if let Some(ref txt) = q.text {
             let haystacks = [
@@ -155,7 +174,9 @@ async fn search_decisions(
         }
 
         out.push(DecisionSearchResult { event: ev });
-        if out.len() >= q.limit { break; }
+        if out.len() >= q.limit {
+            break;
+        }
     }
 
     Ok(Json(out))
@@ -191,7 +212,7 @@ async fn securitykit_connectors_dry_run(
             other => {
                 return Err((
                     axum::http::StatusCode::BAD_REQUEST,
-                    format!("unknown connector: {}", other),
+                    format!("unknown connector: {other}"),
                 ));
             }
         }
@@ -199,14 +220,10 @@ async fn securitykit_connectors_dry_run(
 
     match builder.dry_run_connectors(&req.params) {
         Ok(()) => Ok(Json(SecurityKitDryRunResponse { status: "ok" })),
-        Err(SecurityKitError::ConnectorError(msg)) => Err((
-            axum::http::StatusCode::BAD_REQUEST,
-            msg,
-        )),
-        Err(e) => Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            e.to_string(),
-        )),
+        Err(SecurityKitError::ConnectorError(msg)) => {
+            Err((axum::http::StatusCode::BAD_REQUEST, msg))
+        }
+        Err(e) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
 }
 
@@ -220,10 +237,12 @@ async fn securitykit_evidence_package(
             framework: req.framework.clone(),
         },
         "burn" => {
-            let fw = req.framework.clone().ok_or_else(|| (
-                axum::http::StatusCode::BAD_REQUEST,
-                "framework required for burn scope".to_string(),
-            ))?;
+            let fw = req.framework.clone().ok_or_else(|| {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "framework required for burn scope".to_string(),
+                )
+            })?;
             PackageScope::ComplianceBurn {
                 burn_id: req.scope_id.clone(),
                 framework: fw,
@@ -237,14 +256,18 @@ async fn securitykit_evidence_package(
                     "time_range scope_id must be start:end".to_string(),
                 ));
             }
-            let start = parts[0].parse::<u64>().map_err(|e| (
-                axum::http::StatusCode::BAD_REQUEST,
-                format!("invalid start time: {}", e),
-            ))?;
-            let end = parts[1].parse::<u64>().map_err(|e| (
-                axum::http::StatusCode::BAD_REQUEST,
-                format!("invalid end time: {}", e),
-            ))?;
+            let start = parts[0].parse::<u64>().map_err(|e| {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    format!("invalid start time: {e}"),
+                )
+            })?;
+            let end = parts[1].parse::<u64>().map_err(|e| {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    format!("invalid end time: {e}"),
+                )
+            })?;
             PackageScope::TimeRange {
                 time_start: start,
                 time_end: end,
@@ -254,7 +277,7 @@ async fn securitykit_evidence_package(
         other => {
             return Err((
                 axum::http::StatusCode::BAD_REQUEST,
-                format!("unsupported scope_type: {}", other),
+                format!("unsupported scope_type: {other}"),
             ));
         }
     };
@@ -266,10 +289,7 @@ async fn securitykit_evidence_package(
 
     let mut manifest = builder
         .build()
-        .map_err(|e| (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            e.to_string(),
-        ))?;
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if req.sign {
         let mut signed = false;
@@ -277,27 +297,19 @@ async fn securitykit_evidence_package(
         // Prefer node keystore if configured.
         if let Ok(key_id) = std::env::var("RITMA_KEY_ID") {
             if let Err(msg) = enforce_key_governance_for_signing(&key_id).await {
-                return Err((
-                    axum::http::StatusCode::FORBIDDEN,
-                    msg,
-                ));
+                return Err((axum::http::StatusCode::FORBIDDEN, msg));
             }
 
-            match NodeKeystore::from_env()
-                .and_then(|ks| ks.key_for_signing(&key_id))
-            {
+            match NodeKeystore::from_env().and_then(|ks| ks.key_for_signing(&key_id)) {
                 Ok(keystore_key) => {
                     let signing_key = match keystore_key {
                         KeystoreKey::HmacSha256(bytes) => SigningKey::HmacSha256(bytes),
                         KeystoreKey::Ed25519(sk) => SigningKey::Ed25519(sk),
                     };
                     let signer = PackageSigner::new(signing_key, "utl_http".to_string());
-                    signer
-                        .sign(&mut manifest)
-                        .map_err(|e| (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            e.to_string(),
-                        ))?;
+                    signer.sign(&mut manifest).map_err(|e| {
+                        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                    })?;
                     signed = true;
                 }
                 Err(e) => {
@@ -315,17 +327,14 @@ async fn securitykit_evidence_package(
         if !signed {
             match PackageSigner::from_env("UTLD_PACKAGE_SIG_KEY", "utl_http".to_string()) {
                 Ok(signer) => {
-                    signer
-                        .sign(&mut manifest)
-                        .map_err(|e| (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            e.to_string(),
-                        ))?;
+                    signer.sign(&mut manifest).map_err(|e| {
+                        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                    })?;
                 }
                 Err(e) => {
                     return Err((
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("failed to load signing key: {}", e),
+                        format!("failed to load signing key: {e}"),
                     ));
                 }
             }
@@ -397,11 +406,7 @@ async fn enforce_key_governance_for_signing(key_id: &str) -> Result<(), String> 
     };
 
     let client = reqwest::Client::new();
-    let mut req = client.get(format!(
-        "{}/keys/{}",
-        base.trim_end_matches('/'),
-        key_id,
-    ));
+    let mut req = client.get(format!("{}/keys/{}", base.trim_end_matches('/'), key_id,));
 
     if let Ok(api_key) = std::env::var("RITMA_CLOUD_API_KEY") {
         if !api_key.is_empty() {
@@ -456,8 +461,7 @@ async fn enforce_key_governance_for_signing(key_id: &str) -> Result<(), String> 
         );
         return Err(format!(
             "signing key {} is {} according to ritma_cloud governance",
-            key_id,
-            governance.status,
+            key_id, governance.status,
         ));
     }
 
@@ -466,28 +470,35 @@ async fn enforce_key_governance_for_signing(key_id: &str) -> Result<(), String> 
 
 fn summarize_scope(scope: &PackageScope) -> (String, Option<String>, Option<String>) {
     match scope {
-        PackageScope::PolicyCommit { commit_id, framework } => (
-            format!("policy_commit:{}", commit_id),
+        PackageScope::PolicyCommit {
+            commit_id,
+            framework,
+        } => (
+            format!("policy_commit:{commit_id}"),
             Some("policy_commit".to_string()),
             framework.clone(),
         ),
         PackageScope::ComplianceBurn { burn_id, framework } => (
-            format!("burn:{}", burn_id),
+            format!("burn:{burn_id}"),
             Some("compliance_burn".to_string()),
             Some(framework.clone()),
         ),
         PackageScope::Incident { incident_id, .. } => (
-            format!("incident:{}", incident_id),
+            format!("incident:{incident_id}"),
             Some("incident".to_string()),
             None,
         ),
-        PackageScope::TimeRange { time_start, time_end, framework } => (
-            format!("time_range:{}:{}", time_start, time_end),
+        PackageScope::TimeRange {
+            time_start,
+            time_end,
+            framework,
+        } => (
+            format!("time_range:{time_start}:{time_end}"),
             Some("time_range".to_string()),
             framework.clone(),
         ),
         PackageScope::Custom { description, .. } => (
-            format!("custom:{}", description),
+            format!("custom:{description}"),
             Some("custom".to_string()),
             None,
         ),
@@ -671,10 +682,7 @@ async fn securitykit_report(
 ) -> Result<Json<SecurityReport>, (axum::http::StatusCode, String)> {
     SecurityReport::generate_for_tenant(q.tenant_id.as_deref())
         .map(Json)
-        .map_err(|e| (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            e.to_string(),
-        ))
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 #[derive(Deserialize, Debug)]
@@ -699,10 +707,9 @@ struct DigSearchResult {
 async fn search_digs(
     Query(q): Query<DigSearchQuery>,
 ) -> Result<Json<Vec<DigSearchResult>>, (axum::http::StatusCode, String)> {
-    let path = std::env::var("UTLD_DIG_INDEX")
-        .unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
     let file = File::open(&path)
-        .map_err(|e| bad_request(format!("failed to open dig index {}: {}", path, e)))?;
+        .map_err(|e| bad_request(format!("failed to open dig index {path}: {e}")))?;
     let reader = std::io::BufReader::new(file);
 
     let mut out = Vec::new();
@@ -710,7 +717,7 @@ async fn search_digs(
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("search_digs: failed to read line: {}", e);
+                eprintln!("search_digs: failed to read line: {e}");
                 continue;
             }
         };
@@ -720,32 +727,46 @@ async fn search_digs(
         let entry: DigIndexEntry = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("search_digs: failed to parse DigIndexEntry: {}", e);
+                eprintln!("search_digs: failed to parse DigIndexEntry: {e}");
                 continue;
             }
         };
 
         if let Some(ref tid) = q.tenant_id {
-            if entry.tenant_id.as_deref() != Some(tid.as_str()) { continue; }
+            if entry.tenant_id.as_deref() != Some(tid.as_str()) {
+                continue;
+            }
         }
         if let Some(ref rid) = q.root_id {
-            if entry.root_id != *rid { continue; }
+            if entry.root_id != *rid {
+                continue;
+            }
         }
         if let Some(ref cid) = q.policy_commit_id {
-            if entry.policy_commit_id.as_deref() != Some(cid.as_str()) { continue; }
+            if entry.policy_commit_id.as_deref() != Some(cid.as_str()) {
+                continue;
+            }
         }
         if let Some(ref dec) = q.policy_decision {
-            if entry.policy_decision.as_deref() != Some(dec.as_str()) { continue; }
+            if entry.policy_decision.as_deref() != Some(dec.as_str()) {
+                continue;
+            }
         }
         if let Some(t0) = q.time_start {
-            if entry.time_end < t0 { continue; }
+            if entry.time_end < t0 {
+                continue;
+            }
         }
         if let Some(t1) = q.time_end {
-            if entry.time_start > t1 { continue; }
+            if entry.time_start > t1 {
+                continue;
+            }
         }
 
         out.push(DigSearchResult { entry });
-        if out.len() >= q.limit { break; }
+        if out.len() >= q.limit {
+            break;
+        }
     }
 
     Ok(Json(out))
@@ -844,10 +865,7 @@ where
         let outcome = visitor.outcome.unwrap_or_else(|| "unknown".to_string());
 
         let key = format!(
-            "ritma_securitykit_slo_events_total{{component=\"{}\",operation=\"{}\",outcome=\"{}\"}} ",
-            component,
-            operation,
-            outcome,
+            "ritma_securitykit_slo_events_total{{component=\"{component}\",operation=\"{operation}\",outcome=\"{outcome}\"}} ",
         );
         crate::metrics::inc_labeled_counter(&key);
 
@@ -872,7 +890,7 @@ async fn search_compliance(
     let path = std::env::var("UTLD_COMPLIANCE_INDEX")
         .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
     let file = File::open(&path)
-        .map_err(|e| bad_request(format!("failed to open compliance index {}: {}", path, e)))?;
+        .map_err(|e| bad_request(format!("failed to open compliance index {path}: {e}")))?;
     let reader = std::io::BufReader::new(file);
 
     let mut out = Vec::new();
@@ -880,7 +898,7 @@ async fn search_compliance(
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("search_compliance: failed to read line: {}", e);
+                eprintln!("search_compliance: failed to read line: {e}");
                 continue;
             }
         };
@@ -890,26 +908,36 @@ async fn search_compliance(
         let rec: ControlEvalRecord = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("search_compliance: failed to parse ControlEvalRecord: {}", e);
+                eprintln!("search_compliance: failed to parse ControlEvalRecord: {e}");
                 continue;
             }
         };
 
         if let Some(ref cid) = q.control_id {
-            if rec.control_id != *cid { continue; }
+            if rec.control_id != *cid {
+                continue;
+            }
         }
         if let Some(ref fw) = q.framework {
-            if rec.framework != *fw { continue; }
+            if rec.framework != *fw {
+                continue;
+            }
         }
         if let Some(ref pid) = q.policy_commit_id {
-            if rec.commit_id.as_deref() != Some(pid.as_str()) { continue; }
+            if rec.commit_id.as_deref() != Some(pid.as_str()) {
+                continue;
+            }
         }
         if let Some(ref tid) = q.tenant_id {
-            if rec.tenant_id.as_deref() != Some(tid.as_str()) { continue; }
+            if rec.tenant_id.as_deref() != Some(tid.as_str()) {
+                continue;
+            }
         }
 
         out.push(ComplianceSearchResult { record: rec });
-        if out.len() >= q.limit { break; }
+        if out.len() >= q.limit {
+            break;
+        }
     }
 
     Ok(Json(out))
@@ -939,10 +967,10 @@ async fn ingest_usage_event(
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     // Derive string keys for product and metric using serde's snake_case
     // representation, matching what utld and biz_api already emit.
-    let product_val = serde_json::to_value(&ev.product)
-        .map_err(|e| bad_request(format!("failed to serialize product: {:?}", e)))?;
-    let metric_val = serde_json::to_value(&ev.metric)
-        .map_err(|e| bad_request(format!("failed to serialize metric: {:?}", e)))?;
+    let product_val = serde_json::to_value(ev.product)
+        .map_err(|e| bad_request(format!("failed to serialize product: {e:?}")))?;
+    let metric_val = serde_json::to_value(ev.metric)
+        .map_err(|e| bad_request(format!("failed to serialize metric: {e:?}")))?;
 
     let product = product_val
         .as_str()
@@ -1074,8 +1102,7 @@ fn init_tracing() {
         .with(otel_layer)
         .with(fmt_layer);
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
 #[tokio::main]
@@ -1088,7 +1115,13 @@ async fn main() {
     let auth_tenants = load_tenant_tokens();
     let metrics = Arc::new(Metrics::new());
     let usage_totals = Arc::new(Mutex::new(BTreeMap::new()));
-    let state = AppState { client, auth_token, auth_tenants, metrics, usage_totals };
+    let state = AppState {
+        client,
+        auth_token,
+        auth_tenants,
+        metrics,
+        usage_totals,
+    };
 
     // Best-effort key metadata telemetry to ritma_cloud on startup.
     tokio::spawn(async {
@@ -1114,8 +1147,14 @@ async fn main() {
         .route("/search/decisions", get(search_decisions))
         .route("/search/digs", get(search_digs))
         .route("/search/compliance", get(search_compliance))
-        .route("/securitykit/connectors/dry_run", post(securitykit_connectors_dry_run))
-        .route("/securitykit/evidence_package", post(securitykit_evidence_package))
+        .route(
+            "/securitykit/connectors/dry_run",
+            post(securitykit_connectors_dry_run),
+        )
+        .route(
+            "/securitykit/evidence_package",
+            post(securitykit_evidence_package),
+        )
         .route("/securitykit/report", get(securitykit_report))
         .with_state(state);
 
@@ -1131,7 +1170,9 @@ async fn main() {
                 Ok(tls_addr) => {
                     let app_clone = app.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = tls_transport::serve_https_tokio_rustls(tls_addr, cfg, app_clone).await {
+                        if let Err(e) =
+                            tls_transport::serve_https_tokio_rustls(tls_addr, cfg, app_clone).await
+                        {
                             tracing::error!("HTTPS server error: {}", e);
                         }
                     });
@@ -1153,31 +1194,29 @@ async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn readiness(State(state): State<AppState>) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+async fn readiness(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     // Check if we can reach utld
     match state.client.send(&NodeRequest::ListRoots) {
-        Ok(NodeResponse::Roots { .. }) => {
-            Ok(Json(serde_json::json!({
-                "status": "ready",
-                "utld": "connected"
-            })))
-        }
-        Ok(_) => {
-            Ok(Json(serde_json::json!({
-                "status": "ready",
-                "utld": "connected"
-            })))
-        }
-        Err(e) => {
-            Err((
-                axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                format!("utld not ready: {:?}", e),
-            ))
-        }
+        Ok(NodeResponse::Roots { .. }) => Ok(Json(serde_json::json!({
+            "status": "ready",
+            "utld": "connected"
+        }))),
+        Ok(_) => Ok(Json(serde_json::json!({
+            "status": "ready",
+            "utld": "connected"
+        }))),
+        Err(e) => Err((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            format!("utld not ready: {e:?}"),
+        )),
     }
 }
 
-async fn list_roots(State(state): State<AppState>) -> Result<Json<RootsResponse>, (axum::http::StatusCode, String)> {
+async fn list_roots(
+    State(state): State<AppState>,
+) -> Result<Json<RootsResponse>, (axum::http::StatusCode, String)> {
     let headers = axum::http::HeaderMap::new();
     let _auth_tenant = check_auth(&state, &headers)?;
     let resp = state
@@ -1189,7 +1228,7 @@ async fn list_roots(State(state): State<AppState>) -> Result<Json<RootsResponse>
         NodeResponse::Roots { root_ids } => Ok(Json(RootsResponse { root_ids })),
         other => Err((
             axum::http::StatusCode::BAD_GATEWAY,
-            format!("unexpected response from utld: {:?}", other),
+            format!("unexpected response from utld: {other:?}"),
         )),
     }
 }
@@ -1221,7 +1260,9 @@ async fn register_root(
     // Inject DID from client cert into params for utld (step 7).
     if let Some(Extension(PeerDid(Some(did)))) = peer_did {
         let did_str = did.as_str().to_string();
-        body.params.entry("actor_did".to_string()).or_insert_with(|| did_str.clone());
+        body.params
+            .entry("actor_did".to_string())
+            .or_insert_with(|| did_str.clone());
         body.params.entry("src_did".to_string()).or_insert(did_str);
     }
 
@@ -1238,20 +1279,22 @@ async fn register_root(
 
     match state.client.send(&req).map_err(internal_err)? {
         NodeResponse::Ok => {
-            state.metrics
+            state
+                .metrics
                 .transitions_total
                 .fetch_add(1, Ordering::Relaxed);
             Ok(Json(serde_json::json!({ "status": "ok" })))
         }
         NodeResponse::Error { message } => {
-            state.metrics
+            state
+                .metrics
                 .transition_errors_total
                 .fetch_add(1, Ordering::Relaxed);
             Err((axum::http::StatusCode::BAD_REQUEST, message))
         }
         other => Err((
             axum::http::StatusCode::BAD_GATEWAY,
-            format!("unexpected response from utld: {:?}", other),
+            format!("unexpected response from utld: {other:?}"),
         )),
     }
 }
@@ -1276,8 +1319,14 @@ async fn build_dig(
             merkle_root,
             record_count,
         } => {
-            state.metrics.dig_seals_total.fetch_add(1, Ordering::Relaxed);
-            state.metrics.transitions_total.fetch_add(1, Ordering::Relaxed);
+            state
+                .metrics
+                .dig_seals_total
+                .fetch_add(1, Ordering::Relaxed);
+            state
+                .metrics
+                .transitions_total
+                .fetch_add(1, Ordering::Relaxed);
             Ok(Json(DigSummaryResponse {
                 root_id,
                 file_id,
@@ -1288,7 +1337,7 @@ async fn build_dig(
         NodeResponse::Error { message } => Err((axum::http::StatusCode::BAD_REQUEST, message)),
         other => Err((
             axum::http::StatusCode::BAD_GATEWAY,
-            format!("unexpected response from utld: {:?}", other),
+            format!("unexpected response from utld: {other:?}"),
         )),
     }
 }
@@ -1307,10 +1356,7 @@ async fn build_entropy(
     let raw = state.client.send_raw(&req).map_err(internal_err)?;
     let v: serde_json::Value = serde_json::from_str(&raw).map_err(internal_err)?;
 
-    let status = v
-        .get("status")
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
+    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("");
 
     if status == "error" {
         let msg = v
@@ -1368,7 +1414,9 @@ async fn record_transition(
     // Inject DID from client cert into params for utld (step 7).
     if let Some(Extension(PeerDid(Some(did)))) = peer_did {
         let did_str = did.as_str().to_string();
-        body.params.entry("actor_did".to_string()).or_insert_with(|| did_str.clone());
+        body.params
+            .entry("actor_did".to_string())
+            .or_insert_with(|| did_str.clone());
         body.params.entry("src_did".to_string()).or_insert(did_str);
     }
     let auth_tenant = check_auth(&state, &headers)?;
@@ -1431,13 +1479,13 @@ async fn record_transition(
         NodeResponse::Error { message } => Err((axum::http::StatusCode::BAD_REQUEST, message)),
         other => Err((
             axum::http::StatusCode::BAD_GATEWAY,
-            format!("unexpected response from utld: {:?}", other),
+            format!("unexpected response from utld: {other:?}"),
         )),
     }
 }
 
 fn parse_hash32(hex_str: &str) -> Result<[u8; 32], String> {
-    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex: {}", e))?;
+    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex: {e}"))?;
     if bytes.len() != 32 {
         return Err(format!("expected 32 bytes, got {}", bytes.len()));
     }
@@ -1448,10 +1496,9 @@ fn parse_hash32(hex_str: &str) -> Result<[u8; 32], String> {
 
 async fn metrics_handler(State(state): State<AppState>) -> String {
     // Include both Prometheus metrics and legacy counters
-    let mut output = metrics::encode_metrics().unwrap_or_else(|e| {
-        format!("# Error encoding metrics: {}\n", e)
-    });
-    
+    let mut output =
+        metrics::encode_metrics().unwrap_or_else(|e| format!("# Error encoding metrics: {e}\n"));
+
     // Add legacy metrics for backward compatibility
     output.push_str(&format!(
         "\n# Legacy metrics\nritma_transitions_total {}\nritma_transition_errors_total {}\nritma_dig_seals_total {}\n",
@@ -1459,7 +1506,7 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
         state.metrics.transition_errors_total.load(Ordering::Relaxed),
         state.metrics.dig_seals_total.load(Ordering::Relaxed),
     ));
-    
+
     output
 }
 
@@ -1488,7 +1535,10 @@ fn load_tenant_tokens() -> BTreeMap<String, String> {
 }
 
 fn internal_err(e: impl std::fmt::Debug) -> (axum::http::StatusCode, String) {
-    (axum::http::StatusCode::BAD_GATEWAY, format!("utld error: {:?}", e))
+    (
+        axum::http::StatusCode::BAD_GATEWAY,
+        format!("utld error: {e:?}"),
+    )
 }
 
 fn bad_request(e: impl std::fmt::Display) -> (axum::http::StatusCode, String) {
@@ -1529,10 +1579,7 @@ fn check_auth(
             }
         };
 
-        if let Some(header_tid) = headers
-            .get("x-tenant-id")
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(header_tid) = headers.get("x-tenant-id").and_then(|v| v.to_str().ok()) {
             if header_tid != tenant {
                 return Err((
                     axum::http::StatusCode::FORBIDDEN,
@@ -1545,7 +1592,7 @@ fn check_auth(
     }
 
     if let Some(expected) = &state.auth_token {
-        let expected_header = format!("Bearer {}", expected);
+        let expected_header = format!("Bearer {expected}");
         if auth != expected_header {
             return Err((
                 axum::http::StatusCode::UNAUTHORIZED,
@@ -1578,7 +1625,10 @@ fn run_security_sensors(params: &mut BTreeMap<String, String>, raw_data: &str) {
     }
 
     // Include raw payload for tools that inspect body content.
-    fields.insert("raw_data".to_string(), SecValue::String(raw_data.to_string()));
+    fields.insert(
+        "raw_data".to_string(),
+        SecValue::String(raw_data.to_string()),
+    );
 
     let event = SecurityEvent { kind, fields };
 
@@ -1603,7 +1653,7 @@ fn run_security_sensors(params: &mut BTreeMap<String, String>, raw_data: &str) {
     if max_threat > 0.0 {
         params
             .entry("threat_score".to_string())
-            .or_insert_with(|| format!("{:.3}", max_threat));
+            .or_insert_with(|| format!("{max_threat:.3}"));
 
         if all_labels.iter().any(|l| l == "sql_injection") {
             params
@@ -1642,7 +1692,10 @@ impl SecurityTool for SqlInjectionTool {
                 _ => continue,
             };
             let lower = s.to_ascii_lowercase();
-            if lower.contains("' or 1=1") || lower.contains(" or 1=1") || lower.contains("union select") {
+            if lower.contains("' or 1=1")
+                || lower.contains(" or 1=1")
+                || lower.contains("union select")
+            {
                 verdict.threat_score = verdict.threat_score.max(0.9);
                 if !verdict.labels.iter().any(|l| l == "sql_injection") {
                     verdict.labels.push("sql_injection".to_string());

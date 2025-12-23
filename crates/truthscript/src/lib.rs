@@ -55,11 +55,11 @@ pub struct Policy {
     /// Policy header with compliance metadata
     #[serde(default)]
     pub header: Option<PolicyHeader>,
-    
+
     // Legacy fields for backward compatibility
     pub name: String,
     pub version: String,
-    
+
     pub rules: Vec<Rule>,
 }
 
@@ -138,8 +138,8 @@ pub enum PolicyError {
 impl fmt::Display for PolicyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PolicyError::ParseError(e) => write!(f, "policy parse error: {}", e),
-            PolicyError::SerializeError(e) => write!(f, "policy serialize error: {}", e),
+            PolicyError::ParseError(e) => write!(f, "policy parse error: {e}"),
+            PolicyError::SerializeError(e) => write!(f, "policy serialize error: {e}"),
         }
     }
 }

@@ -7,10 +7,10 @@ fn main() {
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
-    use std::process::{Command, exit};
+    use std::process::{exit, Command};
 
-    use security_os::{Did, DidKind, IsolationScope};
     use security_os::linux::CgroupV2Controller;
+    use security_os::{Did, DidKind, IsolationScope};
 
     let args: Vec<String> = env::args().skip(1).collect();
 
@@ -54,15 +54,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| env::var("RITMA_DID").ok())
         .ok_or("missing --did or RITMA_DID")?;
 
-    let did = Did::parse(&did_str).map_err(|e| format!("invalid DID {}: {}", did_str, e))?;
+    let did = Did::parse(&did_str).map_err(|e| format!("invalid DID {did_str}: {e}"))?;
     let scope = match did.kind() {
         DidKind::Tenant => IsolationScope::Tenant,
         DidKind::Zone => IsolationScope::Zone,
         _ => IsolationScope::Service,
     };
 
-    let cgroup_root = cgroup_root
-        .unwrap_or_else(|| "/sys/fs/cgroup/ritma".to_string());
+    let cgroup_root = cgroup_root.unwrap_or_else(|| "/sys/fs/cgroup/ritma".to_string());
 
     // Optional filesystem namespace configuration from env.
     let chroot_path = env::var("RITMA_FS_CHROOT").ok();
@@ -83,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     controller
         .attach_pid(scope, &did, pid)
-        .map_err(|e| format!("failed to attach pid to cgroup: {}", e))?;
+        .map_err(|e| format!("failed to attach pid to cgroup: {e}"))?;
 
     let status = child.wait()?;
     exit(status.code().unwrap_or(1));
@@ -98,9 +97,9 @@ fn setup_fs_namespace(
     use std::fs;
     use std::path::Path;
 
-    use nix::sched::{unshare, CloneFlags};
     use nix::mount::{mount, MsFlags};
-    use nix::unistd::{chroot, chdir};
+    use nix::sched::{unshare, CloneFlags};
+    use nix::unistd::{chdir, chroot};
 
     // Create a new mount namespace.
     unshare(CloneFlags::CLONE_NEWNS)?;
@@ -108,10 +107,7 @@ fn setup_fs_namespace(
     // Make existing mounts private to avoid propagating changes.
     mount::<str, str, str, str>(None, "/", None, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None)?;
 
-    let ro_paths: Vec<&str> = ro_paths_env
-        .split(':')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let ro_paths: Vec<&str> = ro_paths_env.split(':').filter(|s| !s.is_empty()).collect();
     let mask_paths: Vec<&str> = mask_paths_env
         .split(':')
         .filter(|s| !s.is_empty())
@@ -123,7 +119,13 @@ fn setup_fs_namespace(
             continue;
         }
         mount(Some(p), p, None::<&str>, MsFlags::MS_BIND, None::<&str>)?;
-        mount(Some(p), p, None::<&str>, MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY, None::<&str>)?;
+        mount(
+            Some(p),
+            p,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+            None::<&str>,
+        )?;
     }
 
     // Mask paths by mounting a small tmpfs over them.

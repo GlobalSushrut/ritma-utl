@@ -83,7 +83,7 @@ impl IntentBaselineManager {
             },
             action_sequences: Vec::new(),
         };
-        
+
         self.baselines.insert(namespace_id, baseline.clone());
         baseline
     }
@@ -97,18 +97,21 @@ impl IntentBaselineManager {
 
     /// Update baseline with new event
     pub fn update_baseline(&mut self, namespace_id: &str, event: &DecisionEvent) -> Result<()> {
-        let baseline = self.baselines
+        let baseline = self
+            .baselines
             .get_mut(namespace_id)
             .ok_or_else(|| IntentError::BaselineNotFound(namespace_id.to_string()))?;
 
         // Update event type frequencies
-        *baseline.event_type_frequencies
+        *baseline
+            .event_type_frequencies
             .entry(event.event_type.clone())
             .or_insert(0.0) += 1.0;
 
         // Update actor patterns
         let actor_key = event.actor.id_hash.clone();
-        baseline.actor_patterns
+        baseline
+            .actor_patterns
             .entry(actor_key)
             .or_insert_with(|| ActorPattern {
                 typical_actions: Vec::new(),
@@ -134,11 +137,12 @@ impl IntentBaselineManager {
 
         // Check event type drift
         let total_events: f64 = baseline.event_type_frequencies.values().sum();
-        let event_type_freq = baseline.event_type_frequencies
+        let event_type_freq = baseline
+            .event_type_frequencies
             .get(&event.event_type)
             .copied()
             .unwrap_or(0.0);
-        
+
         let event_type_drift = if total_events > 0.0 && (event_type_freq / total_events) < 0.01 {
             drift_reasons.push(format!("Rare event type: {}", event.event_type));
             drift_score += 0.3;
@@ -182,7 +186,7 @@ impl Default for IntentBaselineManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_models::{Actor, ActorType, Subject, Action, Context, EnvStamp, RedactionInfo};
+    use common_models::{Action, Actor, ActorType, Context, EnvStamp, RedactionInfo, Subject};
 
     fn create_test_event(event_type: &str, actor_id: &str) -> DecisionEvent {
         DecisionEvent {
@@ -228,7 +232,7 @@ mod tests {
     fn baseline_manager_creates_baseline() {
         let mut manager = IntentBaselineManager::new();
         let baseline = manager.create_baseline("ns://test/prod/app/svc".to_string());
-        
+
         assert_eq!(baseline.namespace_id, "ns://test/prod/app/svc");
         assert!(baseline.event_type_frequencies.is_empty());
     }
@@ -237,10 +241,12 @@ mod tests {
     fn baseline_manager_updates_baseline() {
         let mut manager = IntentBaselineManager::new();
         manager.create_baseline("ns://test/prod/app/svc".to_string());
-        
+
         let event = create_test_event("AUTH", "user_1");
-        manager.update_baseline("ns://test/prod/app/svc", &event).expect("update");
-        
+        manager
+            .update_baseline("ns://test/prod/app/svc", &event)
+            .expect("update");
+
         let baseline = manager.get_baseline("ns://test/prod/app/svc").expect("get");
         assert_eq!(baseline.event_type_frequencies.get("AUTH"), Some(&1.0));
     }
@@ -249,15 +255,19 @@ mod tests {
     fn baseline_manager_detects_drift() {
         let mut manager = IntentBaselineManager::new();
         manager.create_baseline("ns://test/prod/app/svc".to_string());
-        
+
         // Add some baseline events
         let event1 = create_test_event("AUTH", "user_1");
-        manager.update_baseline("ns://test/prod/app/svc", &event1).expect("update");
-        
+        manager
+            .update_baseline("ns://test/prod/app/svc", &event1)
+            .expect("update");
+
         // Test with unknown event type AND unknown actor to exceed drift threshold
         let event2 = create_test_event("RARE_EVENT", "unknown_user");
-        let drift = manager.detect_drift("ns://test/prod/app/svc", &event2).expect("detect");
-        
+        let drift = manager
+            .detect_drift("ns://test/prod/app/svc", &event2)
+            .expect("detect");
+
         assert!(drift.has_drift);
         assert!(!drift.drift_reasons.is_empty());
         assert!(drift.drift_score > 0.5); // Should be 0.3 + 0.4 = 0.7

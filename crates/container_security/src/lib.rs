@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -87,8 +87,8 @@ pub enum K8sAbuseType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct K8sApiCall {
     pub timestamp: String,
-    pub verb: String,  // GET, POST, PUT, DELETE, etc.
-    pub resource: String,  // pods, secrets, configmaps, etc.
+    pub verb: String,     // GET, POST, PUT, DELETE, etc.
+    pub resource: String, // pods, secrets, configmaps, etc.
     pub namespace: String,
     pub name: Option<String>,
     pub response_code: u16,
@@ -162,7 +162,7 @@ pub struct PoisoningEvidence {
 pub struct ContainerEscapeDetector {
     /// Tracked containers
     containers: HashMap<String, ContainerInfo>,
-    
+
     /// Escape alerts
     alerts: Vec<ContainerEscapeAlert>,
 }
@@ -185,17 +185,17 @@ impl ContainerEscapeDetector {
             alerts: Vec::new(),
         }
     }
-    
+
     /// Register a container for monitoring
     pub fn register_container(&mut self, info: ContainerInfo) {
         log::info!("Registering container: {}", info.container_id);
         self.containers.insert(info.container_id.clone(), info);
     }
-    
+
     /// Check for container escape attempts
     pub fn check_escape_attempts(&mut self, container_id: &str) -> Vec<ContainerEscapeAlert> {
         let mut new_alerts = Vec::new();
-        
+
         if let Some(info) = self.containers.get(container_id) {
             // Check for privileged container
             if info.privileged {
@@ -207,7 +207,7 @@ impl ContainerEscapeDetector {
                 new_alerts.push(alert.clone());
                 self.alerts.push(alert);
             }
-            
+
             // Check for dangerous host mounts
             for mount in &info.host_mounts {
                 if mount.starts_with("/proc") || mount.starts_with("/sys") || mount == "/" {
@@ -220,13 +220,13 @@ impl ContainerEscapeDetector {
                         } else {
                             EscapeTechnique::HostPathMount
                         },
-                        &format!("Dangerous host mount detected: {}", mount),
+                        &format!("Dangerous host mount detected: {mount}"),
                     );
                     new_alerts.push(alert.clone());
                     self.alerts.push(alert);
                 }
             }
-            
+
             // Check for Docker socket mount
             if info.host_mounts.iter().any(|m| m.contains("docker.sock")) {
                 let alert = self.create_escape_alert(
@@ -237,7 +237,7 @@ impl ContainerEscapeDetector {
                 new_alerts.push(alert.clone());
                 self.alerts.push(alert);
             }
-            
+
             // Check for dangerous capabilities
             let dangerous_caps = ["CAP_SYS_ADMIN", "CAP_SYS_PTRACE", "CAP_SYS_MODULE"];
             for cap in &dangerous_caps {
@@ -245,17 +245,17 @@ impl ContainerEscapeDetector {
                     let alert = self.create_escape_alert(
                         info,
                         EscapeTechnique::CapabilitiesAbuse,
-                        &format!("Dangerous capability detected: {}", cap),
+                        &format!("Dangerous capability detected: {cap}"),
                     );
                     new_alerts.push(alert.clone());
                     self.alerts.push(alert);
                 }
             }
         }
-        
+
         new_alerts
     }
-    
+
     fn create_escape_alert(
         &self,
         info: &ContainerInfo,
@@ -277,10 +277,11 @@ impl ContainerEscapeDetector {
                 namespace_violations: vec![],
                 syscalls_used: vec![],
             },
-            recommended_action: "Terminate container immediately, review security policy".to_string(),
+            recommended_action: "Terminate container immediately, review security policy"
+                .to_string(),
         }
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[ContainerEscapeAlert] {
         &self.alerts
@@ -297,10 +298,10 @@ impl Default for ContainerEscapeDetector {
 pub struct K8sApiAbuseDetector {
     /// API call history by user
     api_calls: HashMap<String, Vec<K8sApiCall>>,
-    
+
     /// Abuse alerts
     alerts: Vec<K8sApiAbuseAlert>,
-    
+
     /// Suspicious patterns
     suspicious_threshold: usize,
 }
@@ -313,22 +314,23 @@ impl K8sApiAbuseDetector {
             suspicious_threshold,
         }
     }
-    
+
     /// Record an API call
     pub fn record_api_call(&mut self, user: String, call: K8sApiCall) {
-        self.api_calls.entry(user).or_insert_with(Vec::new).push(call);
+        self.api_calls.entry(user).or_default().push(call);
     }
-    
+
     /// Analyze API calls for abuse
     pub fn analyze_abuse(&mut self, user: &str) -> Vec<K8sApiAbuseAlert> {
         let mut new_alerts = Vec::new();
-        
+
         if let Some(calls) = self.api_calls.get(user) {
             // Check for secret access
-            let secret_accesses: Vec<_> = calls.iter()
+            let secret_accesses: Vec<_> = calls
+                .iter()
                 .filter(|c| c.resource == "secrets" && c.verb == "GET")
                 .collect();
-            
+
             if secret_accesses.len() > self.suspicious_threshold {
                 let alert = K8sApiAbuseAlert {
                     alert_id: format!("k8s_abuse_{}", uuid::Uuid::new_v4()),
@@ -338,20 +340,21 @@ impl K8sApiAbuseDetector {
                     abuse_type: K8sAbuseType::UnauthorizedSecretAccess,
                     api_calls: secret_accesses.into_iter().cloned().collect(),
                     severity: Severity::Critical,
-                    description: format!("Excessive secret access by user: {}", user),
+                    description: format!("Excessive secret access by user: {user}"),
                 };
                 new_alerts.push(alert.clone());
                 self.alerts.push(alert);
             }
-            
+
             // Check for privilege escalation attempts
-            let priv_esc: Vec<_> = calls.iter()
+            let priv_esc: Vec<_> = calls
+                .iter()
                 .filter(|c| {
-                    (c.resource == "roles" || c.resource == "clusterroles") &&
-                    (c.verb == "CREATE" || c.verb == "UPDATE")
+                    (c.resource == "roles" || c.resource == "clusterroles")
+                        && (c.verb == "CREATE" || c.verb == "UPDATE")
                 })
                 .collect();
-            
+
             if !priv_esc.is_empty() {
                 let alert = K8sApiAbuseAlert {
                     alert_id: format!("k8s_abuse_{}", uuid::Uuid::new_v4()),
@@ -361,16 +364,16 @@ impl K8sApiAbuseDetector {
                     abuse_type: K8sAbuseType::PrivilegeEscalation,
                     api_calls: priv_esc.into_iter().cloned().collect(),
                     severity: Severity::Critical,
-                    description: format!("Privilege escalation attempt by user: {}", user),
+                    description: format!("Privilege escalation attempt by user: {user}"),
                 };
                 new_alerts.push(alert.clone());
                 self.alerts.push(alert);
             }
         }
-        
+
         new_alerts
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[K8sApiAbuseAlert] {
         &self.alerts
@@ -381,7 +384,7 @@ impl K8sApiAbuseDetector {
 pub struct LateralMovementDetector {
     /// Pod network connections
     pod_connections: HashMap<String, Vec<NetworkConnection>>,
-    
+
     /// Lateral movement alerts
     alerts: Vec<LateralMovementAlert>,
 }
@@ -393,12 +396,12 @@ impl LateralMovementDetector {
             alerts: Vec::new(),
         }
     }
-    
+
     /// Record a network connection
     pub fn record_connection(&mut self, pod_id: String, conn: NetworkConnection) {
-        self.pod_connections.entry(pod_id).or_insert_with(Vec::new).push(conn);
+        self.pod_connections.entry(pod_id).or_default().push(conn);
     }
-    
+
     /// Detect lateral movement
     pub fn detect_lateral_movement(
         &mut self,
@@ -408,10 +411,12 @@ impl LateralMovementDetector {
     ) -> Option<LateralMovementAlert> {
         // Cross-namespace communication is suspicious
         if source_namespace != target_namespace {
-            let connections = self.pod_connections.get(source_pod)
-                .map(|c| c.clone())
+            let connections = self
+                .pod_connections
+                .get(source_pod)
+                .cloned()
                 .unwrap_or_default();
-            
+
             let alert = LateralMovementAlert {
                 alert_id: format!("lateral_{}", uuid::Uuid::new_v4()),
                 timestamp: chrono::Utc::now().to_rfc3339(),
@@ -423,15 +428,15 @@ impl LateralMovementDetector {
                 network_connections: connections,
                 severity: Severity::High,
             };
-            
-            log::warn!("Lateral movement detected: {} -> {}", source_namespace, target_namespace);
+
+            log::warn!("Lateral movement detected: {source_namespace} -> {target_namespace}");
             self.alerts.push(alert.clone());
             return Some(alert);
         }
-        
+
         None
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[LateralMovementAlert] {
         &self.alerts
@@ -448,7 +453,7 @@ impl Default for LateralMovementDetector {
 pub struct RegistryPoisoningDetector {
     /// Known good image digests
     trusted_digests: HashMap<String, String>,
-    
+
     /// Poisoning alerts
     alerts: Vec<RegistryPoisoningAlert>,
 }
@@ -460,12 +465,12 @@ impl RegistryPoisoningDetector {
             alerts: Vec::new(),
         }
     }
-    
+
     /// Register a trusted image digest
     pub fn register_trusted_image(&mut self, image: String, digest: String) {
         self.trusted_digests.insert(image, digest);
     }
-    
+
     /// Verify image integrity
     pub fn verify_image(
         &mut self,
@@ -474,8 +479,8 @@ impl RegistryPoisoningDetector {
         image_tag: &str,
         actual_digest: &str,
     ) -> Option<RegistryPoisoningAlert> {
-        let image_key = format!("{}:{}:{}", registry, image_name, image_tag);
-        
+        let image_key = format!("{registry}:{image_name}:{image_tag}");
+
         if let Some(expected_digest) = self.trusted_digests.get(&image_key) {
             if expected_digest != actual_digest {
                 let alert = RegistryPoisoningAlert {
@@ -493,17 +498,18 @@ impl RegistryPoisoningDetector {
                         malicious_files: vec![],
                     },
                 };
-                
-                log::error!("Registry poisoning detected: {} (expected: {}, actual: {})",
-                           image_key, expected_digest, actual_digest);
+
+                log::error!(
+                    "Registry poisoning detected: {image_key} (expected: {expected_digest}, actual: {actual_digest})"
+                );
                 self.alerts.push(alert.clone());
                 return Some(alert);
             }
         }
-        
+
         None
     }
-    
+
     /// Get all alerts
     pub fn get_alerts(&self) -> &[RegistryPoisoningAlert] {
         &self.alerts
@@ -533,27 +539,27 @@ impl ContainerSecurityManager {
             registry_poisoning_detector: RegistryPoisoningDetector::new(),
         }
     }
-    
+
     /// Get escape detector
     pub fn escape_detector(&mut self) -> &mut ContainerEscapeDetector {
         &mut self.escape_detector
     }
-    
+
     /// Get K8s abuse detector
     pub fn k8s_abuse_detector(&mut self) -> &mut K8sApiAbuseDetector {
         &mut self.k8s_abuse_detector
     }
-    
+
     /// Get lateral movement detector
     pub fn lateral_movement_detector(&mut self) -> &mut LateralMovementDetector {
         &mut self.lateral_movement_detector
     }
-    
+
     /// Get registry poisoning detector
     pub fn registry_poisoning_detector(&mut self) -> &mut RegistryPoisoningDetector {
         &mut self.registry_poisoning_detector
     }
-    
+
     /// Get comprehensive security report
     pub fn get_security_report(&self) -> ContainerSecurityReport {
         ContainerSecurityReport {
@@ -576,11 +582,11 @@ pub struct ContainerSecurityReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_container_escape_detection() {
         let mut detector = ContainerEscapeDetector::new();
-        
+
         let info = ContainerInfo {
             container_id: "abc123".to_string(),
             container_name: "malicious".to_string(),
@@ -590,62 +596,58 @@ mod tests {
             pid_namespace: "host".to_string(),
             network_namespace: "host".to_string(),
         };
-        
+
         detector.register_container(info);
         let alerts = detector.check_escape_attempts("abc123");
-        
+
         assert!(!alerts.is_empty());
-        assert!(alerts.iter().any(|a| matches!(a.escape_technique, EscapeTechnique::PrivilegedContainer)));
+        assert!(alerts
+            .iter()
+            .any(|a| matches!(a.escape_technique, EscapeTechnique::PrivilegedContainer)));
     }
-    
+
     #[test]
     fn test_k8s_api_abuse_detection() {
         let mut detector = K8sApiAbuseDetector::new(3);
-        
+
         for i in 0..5 {
-            detector.record_api_call("attacker".to_string(), K8sApiCall {
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                verb: "GET".to_string(),
-                resource: "secrets".to_string(),
-                namespace: "default".to_string(),
-                name: Some(format!("secret{}", i)),
-                response_code: 200,
-            });
+            detector.record_api_call(
+                "attacker".to_string(),
+                K8sApiCall {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    verb: "GET".to_string(),
+                    resource: "secrets".to_string(),
+                    namespace: "default".to_string(),
+                    name: Some(format!("secret{}", i)),
+                    response_code: 200,
+                },
+            );
         }
-        
+
         let alerts = detector.analyze_abuse("attacker");
         assert!(!alerts.is_empty());
     }
-    
+
     #[test]
     fn test_lateral_movement_detection() {
         let mut detector = LateralMovementDetector::new();
-        
-        let alert = detector.detect_lateral_movement(
-            "pod1",
-            "namespace1",
-            "namespace2",
-        );
-        
+
+        let alert = detector.detect_lateral_movement("pod1", "namespace1", "namespace2");
+
         assert!(alert.is_some());
     }
-    
+
     #[test]
     fn test_registry_poisoning_detection() {
         let mut detector = RegistryPoisoningDetector::new();
-        
+
         detector.register_trusted_image(
             "docker.io:nginx:latest".to_string(),
             "sha256:abc123".to_string(),
         );
-        
-        let alert = detector.verify_image(
-            "docker.io",
-            "nginx",
-            "latest",
-            "sha256:malicious",
-        );
-        
+
+        let alert = detector.verify_image("docker.io", "nginx", "latest", "sha256:malicious");
+
         assert!(alert.is_some());
     }
 }

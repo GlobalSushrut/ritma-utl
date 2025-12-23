@@ -2,13 +2,15 @@ pub mod log_camera;
 
 use std::io;
 
-use core_types::{hash_bytes, Hash, ParamBag, UID};
 use clock::TimeTick;
-use serde::{Serialize, Deserialize};
-use serde_json;
+use core_types::{hash_bytes, Hash, ParamBag, UID};
+use serde::{Deserialize, Serialize};
 use tata::TataFrame;
 
-pub use log_camera::{LogCamera, LogCameraRecorder, LogFrame, StateSnapshot, Transition, TransitionType, TransitionEvent, SystemMetrics};
+pub use log_camera::{
+    LogCamera, LogCameraRecorder, LogFrame, StateSnapshot, SystemMetrics, Transition,
+    TransitionEvent, TransitionType,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DigRecord {
@@ -17,20 +19,20 @@ pub struct DigRecord {
     pub timeclock: TimeTick,
     pub data_container: TataFrame<Vec<u8>>,
     pub hook_hash: Hash,
-    
+
     // Enhanced metadata
     /// SVC commit ID that was active when this record was created
     #[serde(default)]
     pub svc_commit_id: Option<String>,
-    
+
     /// Infrastructure version ID at record time
     #[serde(default)]
     pub infra_version_id: Option<String>,
-    
+
     /// CCTV frame ID this record belongs to
     #[serde(default)]
     pub camera_frame_id: Option<String>,
-    
+
     /// Actor DID who triggered this record
     #[serde(default)]
     pub actor_did: Option<String>,
@@ -42,40 +44,40 @@ pub struct DigFile {
     pub time_range: (u64, u64),
     pub dig_records: Vec<DigRecord>,
     pub merkle_root: Hash,
-    
+
     // Enhanced metadata
     /// Schema version for forward compatibility
     #[serde(default)]
     pub schema_version: u32,
-    
+
     /// SVC commit IDs referenced in this file
     #[serde(default)]
     pub svc_commits: Vec<String>,
-    
+
     /// CCTV frame IDs referenced in this file
     #[serde(default)]
     pub camera_frames: Vec<String>,
-    
+
     /// Tenant ID for multi-tenancy
     #[serde(default)]
     pub tenant_id: Option<String>,
-    
+
     /// Compression algorithm used (none, gzip, zstd)
     #[serde(default)]
     pub compression: Option<String>,
-    
+
     /// Encryption algorithm used (none, aes256)
     #[serde(default)]
     pub encryption: Option<String>,
-    
+
     /// File signature for non-repudiation
     #[serde(default)]
     pub signature: Option<String>,
-    
+
     /// Hash of previous DigFile (chain)
     #[serde(default)]
     pub prev_file_hash: Option<Hash>,
-    
+
     /// Hash of this DigFile
     #[serde(default = "default_hash")]
     pub file_hash: Hash,
@@ -112,17 +114,13 @@ impl DigRecord {
 }
 
 impl DigFile {
-    pub fn from_records(
-        file_id: UID,
-        time_range: (u64, u64),
-        records: Vec<DigRecord>,
-    ) -> Self {
+    pub fn from_records(file_id: UID, time_range: (u64, u64), records: Vec<DigRecord>) -> Self {
         let merkle_root = Self::compute_merkle_root(&records);
-        
+
         // Extract SVC commits and camera frames
         let mut svc_commits = Vec::new();
         let mut camera_frames = Vec::new();
-        
+
         for record in &records {
             if let Some(ref svc) = record.svc_commit_id {
                 if !svc_commits.contains(svc) {
@@ -135,7 +133,7 @@ impl DigFile {
                 }
             }
         }
-        
+
         let mut file = Self {
             file_id,
             time_range,
@@ -151,10 +149,10 @@ impl DigFile {
             prev_file_hash: None,
             file_hash: Hash([0u8; 32]),
         };
-        
+
         // Compute file hash
         file.file_hash = file.compute_file_hash();
-        
+
         file
     }
 
@@ -173,28 +171,27 @@ impl DigFile {
 
     /// Serialize this DigFile to a JSON string suitable for persistence.
     pub fn to_json_string(&self) -> io::Result<String> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        serde_json::to_string_pretty(self).map_err(io::Error::other)
     }
 
     /// Compute hash of this DigFile
     pub fn compute_file_hash(&self) -> Hash {
         let mut buffer = Vec::new();
-        
+
         buffer.extend_from_slice(&self.file_id.0.to_le_bytes());
         buffer.extend_from_slice(&self.time_range.0.to_le_bytes());
         buffer.extend_from_slice(&self.time_range.1.to_le_bytes());
         buffer.extend_from_slice(&self.merkle_root.0);
-        
+
         if let Some(ref prev) = self.prev_file_hash {
             buffer.extend_from_slice(&prev.0);
         }
-        
+
         // Include SVC commits
         for svc in &self.svc_commits {
             buffer.extend_from_slice(svc.as_bytes());
         }
-        
+
         hash_bytes(&buffer)
     }
 
@@ -205,51 +202,44 @@ impl DigFile {
         if computed_root.0 != self.merkle_root.0 {
             return Err("Merkle root mismatch".to_string());
         }
-        
+
         // Verify file hash
         let computed_hash = self.compute_file_hash();
         if computed_hash.0 != self.file_hash.0 {
             return Err("File hash mismatch".to_string());
         }
-        
+
         Ok(())
     }
 
     /// Generate Merkle proof for a specific record
     pub fn generate_proof(&self, record_index: usize) -> Result<Vec<Hash>, String> {
         use rs_merkle::{algorithms::Sha256, MerkleTree};
-        
+
         if record_index >= self.dig_records.len() {
             return Err("Record index out of bounds".to_string());
         }
-        
-        let leaves: Vec<[u8; 32]> = self.dig_records
-            .iter()
-            .map(|r| r.leaf_hash().0)
-            .collect();
-        
+
+        let leaves: Vec<[u8; 32]> = self.dig_records.iter().map(|r| r.leaf_hash().0).collect();
+
         let tree = MerkleTree::<Sha256>::from_leaves(&leaves);
         let indices = vec![record_index];
         let proof = tree.proof(&indices);
-        
+
         Ok(proof.proof_hashes().iter().map(|h| Hash(*h)).collect())
     }
 
     /// Verify Merkle proof for a record
-    pub fn verify_proof(
-        &self,
-        record: &DigRecord,
-        proof_hashes: &[Hash],
-    ) -> bool {
+    pub fn verify_proof(&self, record: &DigRecord, proof_hashes: &[Hash]) -> bool {
         use rs_merkle::{algorithms::Sha256, MerkleProof};
-        
+
         let leaf = record.leaf_hash();
         let proof_bytes: Vec<[u8; 32]> = proof_hashes.iter().map(|h| h.0).collect();
         let proof = MerkleProof::<Sha256>::new(proof_bytes);
-        
+
         let indices = vec![0];
         let leaves = vec![leaf.0];
-        
+
         proof.verify(
             self.merkle_root.0,
             &indices,
@@ -289,10 +279,7 @@ impl DigFile {
             return hash_bytes(&[]);
         }
 
-        let leaves: Vec<[u8; 32]> = records
-            .iter()
-            .map(|r| r.leaf_hash().0)
-            .collect();
+        let leaves: Vec<[u8; 32]> = records.iter().map(|r| r.leaf_hash().0).collect();
 
         let tree = MerkleTree::<Sha256>::from_leaves(&leaves);
         let root = tree.root().unwrap_or([0u8; 32]);
@@ -305,27 +292,29 @@ pub fn verify_digfile_chain(files: &[DigFile]) -> Result<(), String> {
     if files.is_empty() {
         return Ok(());
     }
-    
+
     // First file should have no prev_file_hash
     if files[0].prev_file_hash.is_some() {
         return Err("First file should not have prev_file_hash".to_string());
     }
-    
+
     // Verify each file
     for file in files {
         file.verify()?;
     }
-    
+
     // Verify chain linkage
     for i in 1..files.len() {
         let prev_hash = files[i - 1].file_hash.clone();
-        let current_prev = files[i].prev_file_hash.clone()
-            .ok_or_else(|| format!("File {} missing prev_file_hash", i))?;
-        
+        let current_prev = files[i]
+            .prev_file_hash
+            .clone()
+            .ok_or_else(|| format!("File {i} missing prev_file_hash"))?;
+
         if prev_hash.0 != current_prev.0 {
-            return Err(format!("Chain broken at file {}", i));
+            return Err(format!("Chain broken at file {i}"));
         }
     }
-    
+
     Ok(())
 }

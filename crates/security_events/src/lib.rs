@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
-use std::io::{Write, BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
-use sha2::{Sha256, Digest};
 
 /// Structured decision event emitted whenever a policy evaluation produces actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +34,7 @@ pub struct DecisionEvent {
     /// Hash of this record (hex)
     #[serde(default)]
     pub record_hash: Option<String>,
-    
+
     // Consensus metadata
     /// Consensus decision if multi-validator consensus was used
     #[serde(default)]
@@ -54,7 +54,7 @@ pub struct DecisionEvent {
     /// Number of validators that participated
     #[serde(default)]
     pub consensus_validator_count: Option<u32>,
-    
+
     // SVC (Security Version Control) metadata
     /// SVC policy commit ID
     #[serde(default)]
@@ -72,10 +72,7 @@ pub fn append_decision_event(event: &DecisionEvent) -> std::io::Result<()> {
     let path = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     let mut enriched = event.clone();
     if enriched.ts == 0 {
@@ -96,8 +93,7 @@ pub fn append_decision_event(event: &DecisionEvent) -> std::io::Result<()> {
     let record_hash = compute_record_hash(&enriched)?;
     enriched.record_hash = Some(record_hash);
 
-    let line = serde_json::to_string(&enriched)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let line = serde_json::to_string(&enriched).map_err(std::io::Error::other)?;
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
     file.flush()?;
@@ -136,8 +132,7 @@ fn compute_record_hash(event: &DecisionEvent) -> std::io::Result<String> {
     let mut hashable = event.clone();
     hashable.record_hash = None;
 
-    let json = serde_json::to_string(&hashable)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string(&hashable).map_err(std::io::Error::other)?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());

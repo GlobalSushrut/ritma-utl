@@ -9,16 +9,16 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::hash_map::DefaultHasher;
     use std::env;
+    use std::hash::{Hash, Hasher};
     use std::io::{BufRead, BufReader};
     use std::process::Command;
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
 
     tracing_subscriber::fmt::init();
 
-    let map_path = env::var("RITMA_IP_DID_MAP_PATH")
-        .unwrap_or_else(|_| "/sys/fs/bpf/ip_to_did".to_string());
+    let map_path =
+        env::var("RITMA_IP_DID_MAP_PATH").unwrap_or_else(|_| "/sys/fs/bpf/ip_to_did".to_string());
 
     tracing::info!("ritma-ip-registry starting, map_path={}", map_path);
 
@@ -72,29 +72,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Convert IP to hex (network byte order)
         let ip_bytes = ip_addr.octets();
-        let ip_hex = format!("{:02x}{:02x}{:02x}{:02x}",
-            ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+        let ip_hex = format!(
+            "{:02x}{:02x}{:02x}{:02x}",
+            ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+        );
 
         // Convert DID ID to hex (little-endian u32)
-        let did_id_hex = format!("{:02x}{:02x}{:02x}{:02x}",
+        let did_id_hex = format!(
+            "{:02x}{:02x}{:02x}{:02x}",
             (did_id & 0xFF) as u8,
             ((did_id >> 8) & 0xFF) as u8,
             ((did_id >> 16) & 0xFF) as u8,
-            ((did_id >> 24) & 0xFF) as u8);
+            ((did_id >> 24) & 0xFF) as u8
+        );
 
         tracing::info!(
             "registering ip={} did={} did_id={} key_hex={} value_hex={}",
-            ip_str, did_str, did_id, ip_hex, did_id_hex
+            ip_str,
+            did_str,
+            did_id,
+            ip_hex,
+            did_id_hex
         );
 
         // Update BPF map via bpftool
         let status = Command::new("bpftool")
-            .args(["map", "update", "pinned", &map_path, "key", "hex", &ip_hex, "value", "hex", &did_id_hex])
+            .args([
+                "map",
+                "update",
+                "pinned",
+                &map_path,
+                "key",
+                "hex",
+                &ip_hex,
+                "value",
+                "hex",
+                &did_id_hex,
+            ])
             .status()?;
 
         if !status.success() {
-            tracing::error!("bpftool map update failed for ip={} did={}: {:?}",
-                ip_str, did_str, status.code());
+            tracing::error!(
+                "bpftool map update failed for ip={} did={}: {:?}",
+                ip_str,
+                did_str,
+                status.code()
+            );
         }
     }
 

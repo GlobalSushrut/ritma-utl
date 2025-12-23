@@ -104,11 +104,15 @@ mod tests {
         assert_eq!(rid.0, "r_1");
         assert!(client.verify_chain(&rid).unwrap());
         let ns = NamespaceId::parse("ns://acme/prod/payments/api").unwrap();
+        let _ = client.query_receipts(&ns, None).expect("query_receipts");
         let _ = client
-            .query_receipts(&ns, None)
-            .expect("query_receipts");
-        let _ = client
-            .export_bundle(&ns, TimeRange { not_before: 0, not_after: 0 })
+            .export_bundle(
+                &ns,
+                TimeRange {
+                    not_before: 0,
+                    not_after: 0,
+                },
+            )
             .expect("export_bundle");
     }
 }

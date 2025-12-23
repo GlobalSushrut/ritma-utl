@@ -1,13 +1,13 @@
-pub mod containers;
+pub mod compliance;
 pub mod connectors;
+pub mod containers;
+pub mod env;
+pub mod helpers;
+pub mod observability;
 pub mod pipelines;
 pub mod rbac;
-pub mod env;
 pub mod reporting;
 pub mod truthscript_bridge;
-pub mod helpers;
-pub mod compliance;
-pub mod observability;
 
 use thiserror::Error;
 

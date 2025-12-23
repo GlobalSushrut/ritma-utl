@@ -1,30 +1,32 @@
+#![allow(clippy::uninlined_format_args)]
+
 mod evidence_package_commands;
 
 use std::collections::BTreeMap;
-use std::io::BufRead;
 use std::fs::File;
+use std::io::BufRead;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use reqwest::blocking::Client as HttpClient;
+use compliance_engine::{evaluate_controls_with, ComplianceEvent};
+use compliance_index::{append_records as append_compliance_records, ControlEvalRecord};
+use compliance_model::load_controls_from_file;
+use compliance_rulepacks::{ai_safety_controls, hipaa_controls, soc2_controls};
 use core_types::{hash_bytes, Hash, UID};
-use dig_mem::DigFile;
 use dig_index::DigIndexEntry;
+use dig_mem::DigFile;
 use hmac::{Hmac, Mac};
 use policy_engine::{EngineEvent, PolicyEngine};
-use sha2::Sha256;
-use tenant_policy::{Lawbook, validate_lawbook};
-use truthscript::Policy as TsPolicy;
-use utl_client::UtlClient;
-use utld::{NodeRequest, NodeResponse, PolicyBurnRequest};
-use compliance_model::load_controls_from_file;
-use compliance_engine::{ComplianceEvent, evaluate_controls_with};
-use compliance_index::{ControlEvalRecord, append_records as append_compliance_records};
 use policy_store::read_tags;
-use compliance_rulepacks::{soc2_controls, hipaa_controls, ai_safety_controls};
+use reqwest::blocking::Client as HttpClient;
 use security_events::DecisionEvent;
 use serde_json::Value as JsonValue;
 use serde_json::Value as EngineValue;
+use sha2::Sha256;
+use tenant_policy::{validate_lawbook, Lawbook};
+use truthscript::Policy as TsPolicy;
+use utl_client::UtlClient;
+use utld::{NodeRequest, NodeResponse, PolicyBurnRequest};
 
 #[derive(Parser)]
 #[command(name = "utl", about = "Universal Truth Layer CLI", version)]
@@ -486,9 +488,9 @@ enum Commands {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let socket = cli
-        .socket
-        .unwrap_or_else(|| std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".to_string()));
+    let socket = cli.socket.unwrap_or_else(|| {
+        std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".to_string())
+    });
 
     let client = UtlClient::new(socket);
 
@@ -561,7 +563,13 @@ fn main() -> ExitCode {
             severity.as_deref(),
         ),
         Commands::LawbookValidate { file } => cmd_lawbook_validate(&file),
-        Commands::PolicyBurn { policy_id, version, policy_file, cue_hash, issuer } => cmd_policy_burn(
+        Commands::PolicyBurn {
+            policy_id,
+            version,
+            policy_file,
+            cue_hash,
+            issuer,
+        } => cmd_policy_burn(
             &client,
             &policy_id,
             version,
@@ -569,57 +577,69 @@ fn main() -> ExitCode {
             cue_hash.as_deref(),
             issuer.as_deref(),
         ),
-        Commands::PolicyLedgerList { policy_id, limit } => cmd_policy_ledger_list(
-            policy_id.as_deref(),
+        Commands::PolicyLedgerList { policy_id, limit } => {
+            cmd_policy_ledger_list(policy_id.as_deref(), limit)
+        }
+        Commands::CisoSummary {
+            tenant,
+            policy_commit_id,
+            framework,
             limit,
-        ),
-        Commands::CisoSummary { tenant, policy_commit_id, framework, limit } => cmd_ciso_summary(
+        } => cmd_ciso_summary(
             tenant.as_deref(),
             policy_commit_id.as_deref(),
             framework.as_deref(),
             limit,
         ),
-        Commands::SocIncidents { tenant, limit } => cmd_soc_incidents(
-            tenant.as_deref(),
+        Commands::SocIncidents { tenant, limit } => cmd_soc_incidents(tenant.as_deref(), limit),
+        Commands::AuditorEvidence {
+            tenant,
+            policy_commit_id,
+            control_id,
             limit,
-        ),
-        Commands::AuditorEvidence { tenant, policy_commit_id, control_id, limit } => cmd_auditor_evidence(
-            &tenant,
-            &policy_commit_id,
-            control_id.as_deref(),
-            limit,
-        ),
+        } => cmd_auditor_evidence(&tenant, &policy_commit_id, control_id.as_deref(), limit),
         Commands::LawbookLedgerCheck { file } => cmd_lawbook_ledger_check(&file),
-        Commands::TruthSnapshot { entity_id, root_id } => cmd_truth_snapshot(
-            &client,
-            entity_id,
-            root_id,
-        ),
+        Commands::TruthSnapshot { entity_id, root_id } => {
+            cmd_truth_snapshot(&client, entity_id, root_id)
+        }
         Commands::TruthSnapshotList { limit } => cmd_truth_snapshot_list(limit),
         Commands::TruthSnapshotVerify => cmd_truth_snapshot_verify(),
         Commands::TruthSnapshotExport => cmd_truth_snapshot_export(),
-        Commands::EvidencePackageExport { tenant, scope_type, scope_id, framework, out, requester_did } => {
-            evidence_package_commands::cmd_evidence_package_export(&tenant, &scope_type, &scope_id, framework.as_deref(), out.as_deref(), requester_did.as_deref())
-        }
-        Commands::EvidencePackageVerify { manifest, skip_artifacts } => {
-            evidence_package_commands::cmd_evidence_package_verify(&manifest, skip_artifacts)
-        }
-        Commands::DigSnarkInclusion { file_id, root_id, index } => cmd_dig_snark_inclusion(
-            &file_id,
-            root_id.as_deref(),
-            index,
+        Commands::EvidencePackageExport {
+            tenant,
+            scope_type,
+            scope_id,
+            framework,
+            out,
+            requester_did,
+        } => evidence_package_commands::cmd_evidence_package_export(
+            &tenant,
+            &scope_type,
+            &scope_id,
+            framework.as_deref(),
+            out.as_deref(),
+            requester_did.as_deref(),
         ),
-        Commands::DigsList { tenant, root_id, limit, show_path } => cmd_digs_list(
-            tenant.as_deref(),
-            root_id.as_deref(),
+        Commands::EvidencePackageVerify {
+            manifest,
+            skip_artifacts,
+        } => evidence_package_commands::cmd_evidence_package_verify(&manifest, skip_artifacts),
+        Commands::DigSnarkInclusion {
+            file_id,
+            root_id,
+            index,
+        } => cmd_dig_snark_inclusion(&file_id, root_id.as_deref(), index),
+        Commands::DigsList {
+            tenant,
+            root_id,
             limit,
             show_path,
-        ),
+        } => cmd_digs_list(tenant.as_deref(), root_id.as_deref(), limit, show_path),
         Commands::RootSnarkStatus { root_id } => cmd_root_snark_status(&root_id),
-        Commands::DecisionEventsList { snark_status, limit } => cmd_decision_events_list(
-            snark_status.as_deref(),
+        Commands::DecisionEventsList {
+            snark_status,
             limit,
-        ),
+        } => cmd_decision_events_list(snark_status.as_deref(), limit),
         Commands::SearchDecisions {
             tenant,
             event_kind,
@@ -674,31 +694,34 @@ fn main() -> ExitCode {
             tenant.as_deref(),
             limit,
         ),
-        Commands::ComplianceDrift { baseline_tag, current_commit, framework } => cmd_compliance_drift(
-            &baseline_tag,
-            &current_commit,
-            framework.as_deref(),
-        ),
-        Commands::PolicySimulate { commit_id, controls, events, limit } => cmd_policy_simulate(
-            &commit_id,
-            &controls,
-            events.as_deref(),
+        Commands::ComplianceDrift {
+            baseline_tag,
+            current_commit,
+            framework,
+        } => cmd_compliance_drift(&baseline_tag, &current_commit, framework.as_deref()),
+        Commands::PolicySimulate {
+            commit_id,
+            controls,
+            events,
             limit,
-        ),
-        Commands::CloudKeysList { org_id, status, node_id } => cmd_cloud_keys_list(
-            org_id.as_deref(),
-            status.as_deref(),
-            node_id.as_deref(),
-        ),
+        } => cmd_policy_simulate(&commit_id, &controls, events.as_deref(), limit),
+        Commands::CloudKeysList {
+            org_id,
+            status,
+            node_id,
+        } => cmd_cloud_keys_list(org_id.as_deref(), status.as_deref(), node_id.as_deref()),
         Commands::CloudKeyGet { key_id } => cmd_cloud_key_get(&key_id),
-        Commands::CloudKeySetStatus { key_id, status, replaced_by_key_id, note } => {
-            cmd_cloud_key_set_status(
-                &key_id,
-                &status,
-                replaced_by_key_id.as_deref(),
-                note.as_deref(),
-            )
-        }
+        Commands::CloudKeySetStatus {
+            key_id,
+            status,
+            replaced_by_key_id,
+            note,
+        } => cmd_cloud_key_set_status(
+            &key_id,
+            &status,
+            replaced_by_key_id.as_deref(),
+            note.as_deref(),
+        ),
         Commands::CloudKeysSummary { org_id } => cmd_cloud_keys_summary(org_id.as_deref()),
     };
 
@@ -713,15 +736,16 @@ fn main() -> ExitCode {
 
 fn cmd_root_snark_status(root_id: &str) -> Result<(), String> {
     // Latest dig index entry for this root_id.
-    let index_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let index_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
     let file = std::fs::File::open(&index_path)
         .map_err(|e| format!("failed to open dig index {}: {}", index_path, e))?;
     let reader = std::io::BufReader::new(file);
 
     let mut latest_dig: Option<DigIndexEntry> = None;
     for line_result in reader.lines() {
-        let line = line_result
-            .map_err(|e| format!("error reading dig index {}: {}", index_path, e))?;
+        let line =
+            line_result.map_err(|e| format!("error reading dig index {}: {}", index_path, e))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -795,18 +819,12 @@ fn cmd_root_snark_status(root_id: &str) -> Result<(), String> {
             }
         };
 
-        let ev_root = ev
-            .get("root_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let ev_root = ev.get("root_id").and_then(|v| v.as_str()).unwrap_or("");
         if ev_root != root_id {
             continue;
         }
 
-        let ts = ev
-            .get("ts")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let ts = ev.get("ts").and_then(|v| v.as_u64()).unwrap_or(0);
         if ts >= latest_ts {
             latest_ts = ts;
             latest_event = Some(ev);
@@ -849,6 +867,9 @@ fn cmd_ciso_summary(
     framework_filter: Option<&str>,
     limit: usize,
 ) -> Result<(), String> {
+    type CisoSummaryKey = (String, String, Option<String>, Option<String>);
+    type CisoSummaryValue = (u64, u64);
+
     let idx_path = std::env::var("UTLD_COMPLIANCE_INDEX")
         .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
 
@@ -857,8 +878,7 @@ fn cmd_ciso_summary(
     let reader = std::io::BufReader::new(file);
 
     // (framework, control_id, commit_id, tenant_id) -> (passed, total)
-    let mut stats: BTreeMap<(String, String, Option<String>, Option<String>), (u64, u64)> =
-        BTreeMap::new();
+    let mut stats: BTreeMap<CisoSummaryKey, CisoSummaryValue> = BTreeMap::new();
 
     for line_res in reader.lines() {
         let line = match line_res {
@@ -935,8 +955,8 @@ fn cmd_soc_incidents(tenant_filter: Option<&str>, limit: usize) -> Result<(), St
     let path = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
 
-    let file = File::open(&path)
-        .map_err(|e| format!("failed to open decision events {}: {}", path, e))?;
+    let file =
+        File::open(&path).map_err(|e| format!("failed to open decision events {}: {}", path, e))?;
     let reader = std::io::BufReader::new(file);
 
     let mut incidents: Vec<DecisionEvent> = Vec::new();
@@ -981,7 +1001,9 @@ fn cmd_soc_incidents(tenant_filter: Option<&str>, limit: usize) -> Result<(), St
     incidents.sort_by_key(|e| e.ts);
     incidents.reverse();
 
-    println!("ts,tenant_id,root_id,entity_id,event_kind,policy_decision,snark_status,policy_commit_id");
+    println!(
+        "ts,tenant_id,root_id,entity_id,event_kind,policy_decision,snark_status,policy_commit_id"
+    );
     for ev in incidents.into_iter().take(limit) {
         println!(
             "{},{},{},{},{},{},{},{}",
@@ -1074,8 +1096,7 @@ fn cmd_rulepack_export(kind: &str, out: &str) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&controls)
         .map_err(|e| format!("failed to serialize controls: {}", e))?;
 
-    std::fs::write(out, json)
-        .map_err(|e| format!("failed to write {}: {}", out, e))?;
+    std::fs::write(out, json).map_err(|e| format!("failed to write {}: {}", out, e))?;
 
     println!("wrote {} controls to {}", controls.len(), out);
     Ok(())
@@ -1089,6 +1110,7 @@ fn cloud_http_base() -> String {
     std::env::var("RITMA_CLOUD_URL").unwrap_or_else(|_| "http://127.0.0.1:8088".to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_search_decisions_http(
     tenant: Option<&str>,
     event_kind: Option<&str>,
@@ -1104,14 +1126,30 @@ fn cmd_search_decisions_http(
     let url = format!("{}/search/decisions", base.trim_end_matches('/'));
     let client = HttpClient::new();
     let mut params: Vec<(&str, String)> = Vec::new();
-    if let Some(v) = tenant { params.push(("tenant_id", v.to_string())); }
-    if let Some(v) = event_kind { params.push(("event_kind", v.to_string())); }
-    if let Some(v) = policy_commit_id { params.push(("policy_commit_id", v.to_string())); }
-    if let Some(v) = policy_name { params.push(("policy_name", v.to_string())); }
-    if let Some(v) = policy_decision { params.push(("policy_decision", v.to_string())); }
-    if let Some(v) = text { params.push(("text", v.to_string())); }
-    if let Some(v) = ts_start { params.push(("ts_start", v.to_string())); }
-    if let Some(v) = ts_end { params.push(("ts_end", v.to_string())); }
+    if let Some(v) = tenant {
+        params.push(("tenant_id", v.to_string()));
+    }
+    if let Some(v) = event_kind {
+        params.push(("event_kind", v.to_string()));
+    }
+    if let Some(v) = policy_commit_id {
+        params.push(("policy_commit_id", v.to_string()));
+    }
+    if let Some(v) = policy_name {
+        params.push(("policy_name", v.to_string()));
+    }
+    if let Some(v) = policy_decision {
+        params.push(("policy_decision", v.to_string()));
+    }
+    if let Some(v) = text {
+        params.push(("text", v.to_string()));
+    }
+    if let Some(v) = ts_start {
+        params.push(("ts_start", v.to_string()));
+    }
+    if let Some(v) = ts_end {
+        params.push(("ts_end", v.to_string()));
+    }
     params.push(("limit", limit.to_string()));
 
     let resp = client
@@ -1267,11 +1305,7 @@ fn cmd_cloud_keys_summary(org_id: Option<&str>) -> Result<(), String> {
     };
 
     let base = cloud_http_base();
-    let url = format!(
-        "{}/orgs/{}/keys/summary",
-        base.trim_end_matches('/'),
-        org,
-    );
+    let url = format!("{}/orgs/{}/keys/summary", base.trim_end_matches('/'), org,);
     let client = HttpClient::new();
     let mut req = client.get(&url);
 
@@ -1310,12 +1344,24 @@ fn cmd_search_digs_http(
     let url = format!("{}/search/digs", base.trim_end_matches('/'));
     let client = HttpClient::new();
     let mut params: Vec<(&str, String)> = Vec::new();
-    if let Some(v) = tenant { params.push(("tenant_id", v.to_string())); }
-    if let Some(v) = root_id { params.push(("root_id", v.to_string())); }
-    if let Some(v) = policy_commit_id { params.push(("policy_commit_id", v.to_string())); }
-    if let Some(v) = policy_decision { params.push(("policy_decision", v.to_string())); }
-    if let Some(v) = time_start { params.push(("time_start", v.to_string())); }
-    if let Some(v) = time_end { params.push(("time_end", v.to_string())); }
+    if let Some(v) = tenant {
+        params.push(("tenant_id", v.to_string()));
+    }
+    if let Some(v) = root_id {
+        params.push(("root_id", v.to_string()));
+    }
+    if let Some(v) = policy_commit_id {
+        params.push(("policy_commit_id", v.to_string()));
+    }
+    if let Some(v) = policy_decision {
+        params.push(("policy_decision", v.to_string()));
+    }
+    if let Some(v) = time_start {
+        params.push(("time_start", v.to_string()));
+    }
+    if let Some(v) = time_end {
+        params.push(("time_end", v.to_string()));
+    }
     params.push(("limit", limit.to_string()));
 
     let resp = client
@@ -1348,10 +1394,18 @@ fn cmd_search_compliance_http(
     let url = format!("{}/search/compliance", base.trim_end_matches('/'));
     let client = HttpClient::new();
     let mut params: Vec<(&str, String)> = Vec::new();
-    if let Some(v) = control_id { params.push(("control_id", v.to_string())); }
-    if let Some(v) = framework { params.push(("framework", v.to_string())); }
-    if let Some(v) = policy_commit_id { params.push(("policy_commit_id", v.to_string())); }
-    if let Some(v) = tenant { params.push(("tenant_id", v.to_string())); }
+    if let Some(v) = control_id {
+        params.push(("control_id", v.to_string()));
+    }
+    if let Some(v) = framework {
+        params.push(("framework", v.to_string()));
+    }
+    if let Some(v) = policy_commit_id {
+        params.push(("policy_commit_id", v.to_string()));
+    }
+    if let Some(v) = tenant {
+        params.push(("tenant_id", v.to_string()));
+    }
     params.push(("limit", limit.to_string()));
 
     let resp = client
@@ -1435,13 +1489,23 @@ fn cmd_policy_simulate(
         if !ev.policy_rules.is_empty() {
             fields.insert(
                 "policy_rules".to_string(),
-                JsonValue::Array(ev.policy_rules.iter().map(|r| JsonValue::String(r.clone())).collect()),
+                JsonValue::Array(
+                    ev.policy_rules
+                        .iter()
+                        .map(|r| JsonValue::String(r.clone()))
+                        .collect(),
+                ),
             );
         }
         if !ev.policy_actions.is_empty() {
             fields.insert(
                 "policy_actions".to_string(),
-                JsonValue::Array(ev.policy_actions.iter().map(|r| JsonValue::String(r.clone())).collect()),
+                JsonValue::Array(
+                    ev.policy_actions
+                        .iter()
+                        .map(|r| JsonValue::String(r.clone()))
+                        .collect(),
+                ),
             );
         }
         if let Some(s) = ev.src_did.clone() {
@@ -1488,10 +1552,7 @@ fn cmd_policy_simulate(
 
         let mut records: Vec<ControlEvalRecord> = Vec::new();
         for ev_res in &evals {
-            let key = (
-                ev_res.control_id.clone(),
-                ev_res.framework.clone(),
-            );
+            let key = (ev_res.control_id.clone(), ev_res.framework.clone());
             let entry = stats.entry(key).or_insert((0u64, 0u64));
             entry.1 += 1;
             if ev_res.passed {
@@ -1646,8 +1707,8 @@ fn cmd_compliance_drift(
 }
 
 fn cmd_usage_events_report(filter_tenant: Option<&str>) -> Result<(), String> {
-    let path = std::env::var("UTLD_USAGE_EVENTS")
-        .unwrap_or_else(|_| "./usage_events.jsonl".to_string());
+    let path =
+        std::env::var("UTLD_USAGE_EVENTS").unwrap_or_else(|_| "./usage_events.jsonl".to_string());
 
     let file = match File::open(&path) {
         Ok(f) => f,
@@ -1704,10 +1765,7 @@ fn cmd_usage_events_report(filter_tenant: Option<&str>) -> Result<(), String> {
             .unwrap_or("<none>")
             .to_string();
 
-        let quantity = ev
-            .get("quantity")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
+        let quantity = ev.get("quantity").and_then(|v| v.as_u64()).unwrap_or(1);
 
         let key = (tenant, product, metric);
         *totals.entry(key).or_insert(0) += quantity;
@@ -1779,13 +1837,23 @@ fn cmd_compliance_check(controls_path: &str, limit: usize) -> Result<(), String>
         if !ev.policy_rules.is_empty() {
             fields.insert(
                 "policy_rules".to_string(),
-                JsonValue::Array(ev.policy_rules.iter().map(|r| JsonValue::String(r.clone())).collect()),
+                JsonValue::Array(
+                    ev.policy_rules
+                        .iter()
+                        .map(|r| JsonValue::String(r.clone()))
+                        .collect(),
+                ),
             );
         }
         if !ev.policy_actions.is_empty() {
             fields.insert(
                 "policy_actions".to_string(),
-                JsonValue::Array(ev.policy_actions.iter().map(|r| JsonValue::String(r.clone())).collect()),
+                JsonValue::Array(
+                    ev.policy_actions
+                        .iter()
+                        .map(|r| JsonValue::String(r.clone()))
+                        .collect(),
+                ),
             );
         }
         if let Some(s) = ev.src_did.clone() {
@@ -1896,7 +1964,8 @@ fn cmd_usage_report(filter_tenant: Option<&str>) -> Result<(), String> {
     let dec_path = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
 
-    let mut decisions_per_tenant: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let mut decisions_per_tenant: std::collections::BTreeMap<String, u64> =
+        std::collections::BTreeMap::new();
 
     if let Ok(file) = File::open(&dec_path) {
         let reader = std::io::BufReader::new(file);
@@ -1940,8 +2009,10 @@ fn cmd_usage_report(filter_tenant: Option<&str>) -> Result<(), String> {
     }
 
     // Aggregate DigFiles per tenant from dig_index.jsonl.
-    let idx_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
-    let mut digs_per_tenant: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let idx_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let mut digs_per_tenant: std::collections::BTreeMap<String, u64> =
+        std::collections::BTreeMap::new();
 
     if let Ok(file) = File::open(&idx_path) {
         let reader = std::io::BufReader::new(file);
@@ -2011,8 +2082,8 @@ fn cmd_decision_events_list(snark_status: Option<&str>, limit: usize) -> Result<
     let path = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
 
-    let file = File::open(&path)
-        .map_err(|e| format!("failed to open decision events {}: {}", path, e))?;
+    let file =
+        File::open(&path).map_err(|e| format!("failed to open decision events {}: {}", path, e))?;
     let reader = std::io::BufReader::new(file);
 
     let mut printed = 0usize;
@@ -2058,7 +2129,9 @@ fn cmd_decision_events_list(snark_status: Option<&str>, limit: usize) -> Result<
 }
 
 fn cmd_roots_list(client: &UtlClient) -> Result<(), String> {
-    let resp = client.send(&NodeRequest::ListRoots).map_err(err_to_string)?;
+    let resp = client
+        .send(&NodeRequest::ListRoots)
+        .map_err(err_to_string)?;
     match resp {
         NodeResponse::Roots { root_ids } => {
             for id in root_ids {
@@ -2101,6 +2174,7 @@ fn cmd_root_register(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_tx_record(
     client: &UtlClient,
     entity_id: u128,
@@ -2113,9 +2187,11 @@ fn cmd_tx_record(
     wall: &str,
     params: Vec<(String, String)>,
 ) -> Result<(), String> {
-    let signature = hex::decode(signature_hex).map_err(|e| format!("invalid signature hex: {}", e))?;
+    let signature =
+        hex::decode(signature_hex).map_err(|e| format!("invalid signature hex: {}", e))?;
     let data = data_str.as_bytes().to_vec();
-    let addr_heap_hash = parse_hash32(addr_heap_hash_hex).map_err(|e| format!("invalid addr_heap_hash: {}", e))?;
+    let addr_heap_hash =
+        parse_hash32(addr_heap_hash_hex).map_err(|e| format!("invalid addr_heap_hash: {}", e))?;
     let hook_hash = parse_hash32(hook_hash_hex).map_err(|e| format!("invalid hook_hash: {}", e))?;
 
     let mut p_container = BTreeMap::new();
@@ -2169,10 +2245,10 @@ fn cmd_dig_build(
             println!("file_id: {}", file_id);
             println!("merkle_root: {}", hex::encode(merkle_root));
             println!("record_count: {}", record_count);
-            
+
             // Emit truth snapshot after successful dig build
             emit_truth_snapshot_cli(None, "dig_build");
-            
+
             Ok(())
         }
         other => Err(format!("unexpected response: {:?}", other)),
@@ -2305,12 +2381,9 @@ fn cmd_dig_inspect(
     Ok(())
 }
 
-fn cmd_truth_snapshot(
-    client: &UtlClient,
-    entity_id: u128,
-    root_id: u128,
-) -> Result<(), String> {
-    let index_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+fn cmd_truth_snapshot(client: &UtlClient, entity_id: u128, root_id: u128) -> Result<(), String> {
+    let index_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
     let index_head_path = format!("{}.head", index_path);
     let dig_index_head = std::fs::read_to_string(&index_head_path)
         .ok()
@@ -2338,8 +2411,8 @@ fn cmd_truth_snapshot(
 
     let mut signature: Vec<u8> = Vec::new();
     if let Ok(key_hex) = std::env::var("UTLD_SIG_KEY") {
-        let key_bytes = hex::decode(&key_hex)
-            .map_err(|e| format!("invalid UTLD_SIG_KEY hex: {}", e))?;
+        let key_bytes =
+            hex::decode(&key_hex).map_err(|e| format!("invalid UTLD_SIG_KEY hex: {}", e))?;
 
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(&key_bytes)
@@ -2418,10 +2491,7 @@ fn cmd_truth_snapshot_list(limit: usize) -> Result<(), String> {
             }
         };
 
-        let kind = ev
-            .get("event_kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let kind = ev.get("event_kind").and_then(|v| v.as_str()).unwrap_or("");
         if kind != "truth_snapshot" {
             continue;
         }
@@ -2494,7 +2564,7 @@ fn cmd_truth_snapshot_verify() -> Result<(), String> {
     } else {
         "jsonl"
     };
-    
+
     let idx_status = if idx_computed != "unknown" && !idx_computed.is_empty() {
         "ok"
     } else {
@@ -2503,9 +2573,7 @@ fn cmd_truth_snapshot_verify() -> Result<(), String> {
 
     println!(
         "dig_index_head: computed={} mode={} status={}",
-        idx_computed,
-        idx_mode,
-        idx_status,
+        idx_computed, idx_mode, idx_status,
     );
 
     // Verify policy ledger chain head.
@@ -2526,9 +2594,7 @@ fn cmd_truth_snapshot_verify() -> Result<(), String> {
 
     println!(
         "policy_ledger_head: computed={} head_file={} status={}",
-        ledger_computed,
-        ledger_head_file,
-        ledger_status,
+        ledger_computed, ledger_head_file, ledger_status,
     );
 
     Ok(())
@@ -2536,7 +2602,8 @@ fn cmd_truth_snapshot_verify() -> Result<(), String> {
 
 fn cmd_truth_snapshot_export() -> Result<(), String> {
     // Reuse the same head computation used by verify.
-    let idx_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let idx_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
     let idx_head = compute_chain_head_from_file(&idx_path)?;
 
     let ledger_path = policy_ledger_path();
@@ -2654,10 +2721,7 @@ fn cmd_lawbook_ledger_check(path: &str) -> Result<(), String> {
     if let Some(ts) = found_exact {
         println!(
             "lawbook ledger check ok: tenant_id={} policy_id={} version={} ts={}",
-            lb.tenant_id,
-            lb.policy_id,
-            lb.version,
-            ts,
+            lb.tenant_id, lb.policy_id, lb.version, ts,
         );
         return Ok(());
     }
@@ -2665,9 +2729,7 @@ fn cmd_lawbook_ledger_check(path: &str) -> Result<(), String> {
     if !any_for_policy {
         return Err(format!(
             "no policy ledger entries found for policy_id={} (lawbook tenant_id={} version={})",
-            lb.policy_id,
-            lb.tenant_id,
-            lb.version,
+            lb.policy_id, lb.tenant_id, lb.version,
         ));
     }
 
@@ -2676,10 +2738,7 @@ fn cmd_lawbook_ledger_check(path: &str) -> Result<(), String> {
 
     Err(format!(
         "no policy ledger entry for policy_id={} version={} (latest in ledger is version={} ts={})",
-        lb.policy_id,
-        lb.version,
-        latest_v,
-        latest_ts,
+        lb.policy_id, lb.version, latest_v, latest_ts,
     ))
 }
 
@@ -2719,8 +2778,8 @@ fn cmd_policy_ledger_list(policy_id: Option<&str>, limit: usize) -> Result<(), S
     let mut printed = 0usize;
 
     for line_result in reader.lines() {
-        let line = line_result
-            .map_err(|e| format!("error reading policy ledger {}: {}", path, e))?;
+        let line =
+            line_result.map_err(|e| format!("error reading policy ledger {}: {}", path, e))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -2745,13 +2804,7 @@ fn cmd_policy_ledger_list(policy_id: Option<&str>, limit: usize) -> Result<(), S
 
         println!(
             "ts={} policy_id={} version={} hash={} cue_hash={} issuer={} prev={}",
-            entry.ts,
-            entry.policy_id,
-            entry.version,
-            entry.policy_hash_hex,
-            cue,
-            issuer,
-            prev,
+            entry.ts, entry.policy_id, entry.version, entry.policy_hash_hex, cue, issuer, prev,
         );
 
         printed += 1;
@@ -2801,10 +2854,7 @@ fn cmd_policy_burn(
             .map_err(|_| "failed to create HMAC from UTLD_POLICY_BURN_KEY".to_string())?;
 
         let cue = cue_hash_hex.clone().unwrap_or_default();
-        let canonical = format!(
-            "{}:{}:{}:{}",
-            policy_id, version, policy_hash_hex, cue
-        );
+        let canonical = format!("{}:{}:{}:{}", policy_id, version, policy_hash_hex, cue);
         mac.update(canonical.as_bytes());
         let sig = mac.finalize().into_bytes();
         signature_hex = Some(hex::encode(sig));
@@ -2828,10 +2878,10 @@ fn cmd_policy_burn(
     match client.send(&node_req).map_err(err_to_string)? {
         NodeResponse::Ok => {
             println!("policy burn recorded: {} v{}", policy_id, version);
-            
+
             // Emit truth snapshot after successful policy burn
             emit_truth_snapshot_cli(None, "policy_burn");
-            
+
             Ok(())
         }
         other => Err(format!("unexpected response: {:?}", other)),
@@ -2846,7 +2896,8 @@ fn cmd_dig_inspect_id(
     event_kind: Option<&str>,
     severity: Option<&str>,
 ) -> Result<(), String> {
-    let index_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let index_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
     let file = std::fs::File::open(&index_path)
         .map_err(|e| format!("failed to open dig index {}: {}", index_path, e))?;
 
@@ -2854,8 +2905,8 @@ fn cmd_dig_inspect_id(
     let mut matched: Option<DigIndexEntry> = None;
 
     for line_result in reader.lines() {
-        let line = line_result
-            .map_err(|e| format!("error reading dig index {}: {}", index_path, e))?;
+        let line =
+            line_result.map_err(|e| format!("error reading dig index {}: {}", index_path, e))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -2883,7 +2934,10 @@ fn cmd_dig_inspect_id(
     }
 
     let entry = matched.ok_or_else(|| {
-        format!("no dig index entry found for file_id={} root_id={:?}", file_id, root_id)
+        format!(
+            "no dig index entry found for file_id={} root_id={:?}",
+            file_id, root_id
+        )
     })?;
 
     let base_dir = std::env::var("UTLD_DIG_DIR").unwrap_or_else(|_| "./dig".to_string());
@@ -2916,11 +2970,14 @@ fn cmd_dig_snark_inclusion(
     root_id: Option<&str>,
     index: usize,
 ) -> Result<(), String> {
-    use zk_snark::{self, build_snark_merkle_path_from_hashes, fr_to_hex,
-        setup_merkle_inclusion, prove_merkle_inclusion, verify_merkle_inclusion};
+    use zk_snark::{
+        self, build_snark_merkle_path_from_hashes, fr_to_hex, prove_merkle_inclusion,
+        setup_merkle_inclusion, verify_merkle_inclusion,
+    };
 
     // Locate the dig index entry.
-    let index_path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    let index_path =
+        std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
     let file = std::fs::File::open(&index_path)
         .map_err(|e| format!("failed to open dig index {}: {}", index_path, e))?;
 
@@ -2928,8 +2985,8 @@ fn cmd_dig_snark_inclusion(
     let mut matched: Option<DigIndexEntry> = None;
 
     for line_result in reader.lines() {
-        let line = line_result
-            .map_err(|e| format!("error reading dig index {}: {}", index_path, e))?;
+        let line =
+            line_result.map_err(|e| format!("error reading dig index {}: {}", index_path, e))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -2957,7 +3014,10 @@ fn cmd_dig_snark_inclusion(
     }
 
     let entry = matched.ok_or_else(|| {
-        format!("no dig index entry found for file_id={} root_id={:?}", file_id, root_id)
+        format!(
+            "no dig index entry found for file_id={} root_id={:?}",
+            file_id, root_id
+        )
     })?;
 
     let snark_root_hex = entry.snark_root.as_deref().ok_or_else(|| {
@@ -3005,17 +3065,15 @@ fn cmd_dig_snark_inclusion(
 
     // Rebuild leaves and Merkle path.
     let leaves: Vec<Hash> = dig.dig_records.iter().map(|r| r.leaf_hash()).collect();
-    let (root_fr, leaf_fr, siblings, is_left) =
-        build_snark_merkle_path_from_hashes(&leaves, index)
-            .ok_or_else(|| "failed to build Merkle path".to_string())?;
+    let (root_fr, leaf_fr, siblings, is_left) = build_snark_merkle_path_from_hashes(&leaves, index)
+        .ok_or_else(|| "failed to build Merkle path".to_string())?;
 
     // Optional consistency check against stored snark_root.
     let computed_root_hex = fr_to_hex(&root_fr);
     if computed_root_hex != snark_root_hex {
         return Err(format!(
             "snark_root mismatch: index has {} but computed {}",
-            snark_root_hex,
-            computed_root_hex,
+            snark_root_hex, computed_root_hex,
         ));
     }
 
@@ -3040,10 +3098,7 @@ fn cmd_dig_snark_inclusion(
 
     println!(
         "dig_snark_inclusion_ok: file_id={} root_id={} index={} snark_root={}",
-        entry.file_id,
-        entry.root_id,
-        index,
-        snark_root_hex,
+        entry.file_id, entry.root_id, index, snark_root_hex,
     );
 
     Ok(())
@@ -3187,8 +3242,8 @@ fn cmd_policy_test(path: &str, kind: &str, fields: Vec<(String, String)>) -> Res
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read policy file {}: {}", path, e))?;
 
-    let policy = TsPolicy::from_json_str(&content)
-        .map_err(|e| format!("policy parse error: {}", e))?;
+    let policy =
+        TsPolicy::from_json_str(&content).map_err(|e| format!("policy parse error: {}", e))?;
 
     let mut engine = PolicyEngine::new(policy);
     let mut map = BTreeMap::new();
@@ -3225,12 +3280,11 @@ fn cmd_policy_test(path: &str, kind: &str, fields: Vec<(String, String)>) -> Res
 
 /// Emit a truth snapshot event from CLI context
 fn emit_truth_snapshot_cli(tenant_id: Option<String>, trigger: &str) {
-    use security_events::{DecisionEvent, append_decision_event};
-    use sha2::{Sha256, Digest};
-    
+    use security_events::{append_decision_event, DecisionEvent};
+
     let dig_index_head = compute_dig_index_head_cli();
     let policy_ledger_head = compute_policy_ledger_head_cli();
-    
+
     let snapshot_event = DecisionEvent {
         ts: 0, // Will be set by append_decision_event
         tenant_id,
@@ -3261,7 +3315,7 @@ fn emit_truth_snapshot_cli(tenant_id: Option<String>, trigger: &str) {
         svc_policy_id: None,
         svc_infra_id: None,
     };
-    
+
     if let Err(e) = append_decision_event(&snapshot_event) {
         eprintln!("Warning: failed to emit truth snapshot: {}", e);
     } else {
@@ -3273,14 +3327,16 @@ fn compute_dig_index_head_cli() -> String {
     // Try SQLite first
     if let Ok(db_path) = std::env::var("UTLD_DIG_INDEX_DB") {
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT file_id FROM digs ORDER BY time_start DESC LIMIT 1") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT file_id FROM digs ORDER BY time_start DESC LIMIT 1")
+            {
                 if let Ok(row) = stmt.query_row([], |row| row.get::<_, String>(0)) {
                     return format!("sqlite:{}", row);
                 }
             }
         }
     }
-    
+
     // Fall back to JSONL head file
     if let Ok(path) = std::env::var("UTLD_DIG_INDEX") {
         let head_path = format!("{}.head", path);
@@ -3288,7 +3344,7 @@ fn compute_dig_index_head_cli() -> String {
             return content.trim().to_string();
         }
     }
-    
+
     "unknown".to_string()
 }
 
@@ -3299,11 +3355,11 @@ fn compute_policy_ledger_head_cli() -> String {
             return content.trim().to_string();
         }
     }
-    
+
     // Compute from policy commit ID env if available
     if let Ok(commit) = std::env::var("UTLD_POLICY_COMMIT_ID") {
         return commit;
     }
-    
+
     "unknown".to_string()
 }

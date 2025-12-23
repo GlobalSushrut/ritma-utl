@@ -1,7 +1,7 @@
 // Advanced query functions for dig_index database
 
-use rusqlite::{params, Connection, Result, Error as RusqliteError};
 use crate::DigIndexEntry;
+use rusqlite::{params, Connection, Error as RusqliteError, Result};
 
 /// Query builder for dig_index
 pub struct DigIndexQuery {
@@ -89,7 +89,7 @@ impl DigIndexQuery {
     /// Execute query against database
     pub fn execute(&self, db_path: &str) -> Result<Vec<DigIndexEntry>> {
         let conn = Connection::open(db_path)?;
-        
+
         let mut sql = String::from("SELECT DISTINCT d.* FROM digs d");
         let mut joins = Vec::new();
         let mut wheres = Vec::new();
@@ -150,7 +150,7 @@ impl DigIndexQuery {
 
         // Assemble query
         if !joins.is_empty() {
-            sql.push_str(" ");
+            sql.push(' ');
             sql.push_str(&joins.join(" "));
         }
         if !wheres.is_empty() {
@@ -159,7 +159,7 @@ impl DigIndexQuery {
         }
         sql.push_str(" ORDER BY d.time_start DESC");
         if let Some(limit) = self.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         // Prepare statement; if the digs table does not exist yet (fresh DB),
@@ -176,10 +176,11 @@ impl DigIndexQuery {
                 return Err(e);
             }
         };
-        
+
         // Convert params_vec to references
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
-        
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(DigIndexEntry {
                 file_id: row.get(0)?,
@@ -194,12 +195,12 @@ impl DigIndexQuery {
                 policy_version: row.get(8)?,
                 policy_decision: row.get(9)?,
                 storage_path: row.get(10)?,
-                policy_commit_id: None, // Legacy field
-                prev_index_hash: None, // Not in DB
+                policy_commit_id: None,  // Legacy field
+                prev_index_hash: None,   // Not in DB
                 svc_commits: Vec::new(), // Loaded separately if needed
                 infra_version_id: row.get(11)?,
                 camera_frames: Vec::new(), // Loaded separately if needed
-                actor_dids: Vec::new(), // Loaded separately if needed
+                actor_dids: Vec::new(),    // Loaded separately if needed
                 compliance_framework: row.get(12)?,
                 compliance_burn_id: row.get(13)?,
                 file_hash: row.get(14)?,
@@ -256,16 +257,16 @@ pub fn files_by_compliance_burn(db_path: &str, burn_id: &str) -> Result<Vec<DigI
 /// Get statistics for a tenant
 pub fn tenant_statistics(db_path: &str, tenant_id: &str) -> Result<TenantStats> {
     let conn = Connection::open(db_path)?;
-    
+
     let mut stmt = conn.prepare(
         "SELECT 
             COUNT(*) as file_count,
             SUM(record_count) as total_records,
             MIN(time_start) as earliest,
             MAX(time_end) as latest
-        FROM digs WHERE tenant_id = ?"
+        FROM digs WHERE tenant_id = ?",
     )?;
-    
+
     let stats = stmt.query_row(params![tenant_id], |row| {
         Ok(TenantStats {
             file_count: row.get::<_, i64>(0)? as usize,
@@ -274,7 +275,7 @@ pub fn tenant_statistics(db_path: &str, tenant_id: &str) -> Result<TenantStats> 
             latest_timestamp: row.get::<_, i64>(3)? as u64,
         })
     })?;
-    
+
     Ok(stats)
 }
 

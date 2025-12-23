@@ -10,13 +10,15 @@ use axum::{
     Json, Router,
 };
 use compliance_index::{BurnConfig, BurnProcess, ComplianceBurn, ControlEvalRecord};
-use compliance_model::{Control, load_controls_from_file};
-use compliance_rulepacks::{Rulepack, RulepackMetadata, soc2_rulepack, hipaa_rulepack, ai_safety_controls};
+use compliance_model::{load_controls_from_file, Control};
+use compliance_rulepacks::{
+    ai_safety_controls, hipaa_rulepack, soc2_rulepack, Rulepack, RulepackMetadata,
+};
 use core_types::UID;
 use dig_index::{DigIndexEntry, DigIndexQuery};
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
-use serde::{Deserialize, Serialize};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Serialize)]
@@ -318,7 +320,7 @@ async fn list_burns(
         Err(e) => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to load burns: {}", e),
+                format!("failed to load burns: {e}"),
             ))
         }
     };
@@ -332,11 +334,15 @@ async fn list_controls(
     _ctx: AuthContext,
     Query(q): Query<ControlsQuery>,
 ) -> Result<Json<Vec<Control>>, (StatusCode, String)> {
-    let path = std::env::var("COMPLIANCE_CONTROLS_FILE")
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "COMPLIANCE_CONTROLS_FILE not set".to_string()))?;
+    let path = std::env::var("COMPLIANCE_CONTROLS_FILE").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "COMPLIANCE_CONTROLS_FILE not set".to_string(),
+        )
+    })?;
 
-    let controls = load_controls_from_file(&path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let controls =
+        load_controls_from_file(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let filtered: Vec<Control> = match q.framework {
         Some(ref fw) => controls
@@ -362,9 +368,12 @@ async fn compliance_summary(
 
     let process = BurnProcess::new(config);
 
-    let burns = process
-        .get_burns(&q.tenant_id, &q.framework)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to load burns: {}", e)))?;
+    let burns = process.get_burns(&q.tenant_id, &q.framework).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load burns: {e}"),
+        )
+    })?;
 
     if burns.is_empty() {
         let summary = ComplianceSummary {
@@ -414,7 +423,7 @@ async fn list_control_evals(
         Err(e) => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open compliance index {}: {}", path, e),
+                format!("failed to open compliance index {path}: {e}"),
             ))
         }
     };
@@ -429,7 +438,7 @@ async fn list_control_evals(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read compliance index: {}", e),
+                    format!("failed to read compliance index: {e}"),
                 ))
             }
         };
@@ -482,8 +491,8 @@ async fn search_evidence(
     _ctx: AuthContext,
     Query(q): Query<EvidenceSearchQuery>,
 ) -> Result<Json<Vec<EvidenceSearchResult>>, (StatusCode, String)> {
-    let db_path = std::env::var("UTLD_DIG_INDEX_DB")
-        .unwrap_or_else(|_| "./dig_index.sqlite".to_string());
+    let db_path =
+        std::env::var("UTLD_DIG_INDEX_DB").unwrap_or_else(|_| "./dig_index.sqlite".to_string());
 
     let mut query = DigIndexQuery::new();
 
@@ -506,9 +515,12 @@ async fn search_evidence(
     let limit = q.limit.unwrap_or(100).min(1000);
     query = query.limit(limit);
 
-    let entries = query
-        .execute(&db_path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to query dig index {}: {}", db_path, e)))?;
+    let entries = query.execute(&db_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to query dig index {db_path}: {e}"),
+        )
+    })?;
 
     let results = entries
         .into_iter()
@@ -522,13 +534,13 @@ async fn list_slo_events(
     _ctx: AuthContext,
     Query(q): Query<SloEventsQuery>,
 ) -> Result<Json<Vec<SloEventRecord>>, (StatusCode, String)> {
-    let path = std::env::var("UTLD_SLO_EVENTS")
-        .unwrap_or_else(|_| "./slo_events.jsonl".to_string());
+    let path =
+        std::env::var("UTLD_SLO_EVENTS").unwrap_or_else(|_| "./slo_events.jsonl".to_string());
 
     let file = File::open(&path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open SLO events {}: {}", path, e),
+            format!("failed to open SLO events {path}: {e}"),
         )
     })?;
 
@@ -542,7 +554,7 @@ async fn list_slo_events(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read SLO events: {}", e),
+                    format!("failed to read SLO events: {e}"),
                 ))
             }
         };
@@ -596,7 +608,7 @@ fn load_auditor_token(token_str: &str) -> Result<AuditorToken, (StatusCode, Stri
     let file = File::open(&path).map_err(|e| {
         (
             StatusCode::NOT_FOUND,
-            format!("auditor token not found (storage {}): {}", path, e),
+            format!("auditor token not found (storage {path}): {e}"),
         )
     })?;
 
@@ -624,7 +636,8 @@ fn load_auditor_token(token_str: &str) -> Result<AuditorToken, (StatusCode, Stri
         }
     }
 
-    let token = found.ok_or_else(|| (StatusCode::NOT_FOUND, "auditor token not found".to_string()))?;
+    let token =
+        found.ok_or_else(|| (StatusCode::NOT_FOUND, "auditor token not found".to_string()))?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -632,7 +645,10 @@ fn load_auditor_token(token_str: &str) -> Result<AuditorToken, (StatusCode, Stri
         .as_secs();
 
     if now < token.valid_from || now > token.valid_until {
-        return Err((StatusCode::FORBIDDEN, "auditor token expired or not yet valid".to_string()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "auditor token expired or not yet valid".to_string(),
+        ));
     }
 
     Ok(token)
@@ -647,7 +663,10 @@ async fn create_auditor_token(
         .iter()
         .any(|r| r == "org_owner" || r == "org_admin" || r == "auditor");
     if !is_auditor {
-        return Err((StatusCode::FORBIDDEN, "insufficient role for auditor token".to_string()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "insufficient role for auditor token".to_string(),
+        ));
     }
 
     let now = std::time::SystemTime::now()
@@ -676,7 +695,11 @@ async fn create_auditor_token(
         if let Err(e) = std::fs::create_dir_all(parent) {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to create auditor token dir {}: {}", parent.display(), e),
+                format!(
+                    "failed to create auditor token dir {}: {}",
+                    parent.display(),
+                    e
+                ),
             ));
         }
     }
@@ -688,21 +711,21 @@ async fn create_auditor_token(
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open auditor token file {}: {}", path, e),
+                format!("failed to open auditor token file {path}: {e}"),
             )
         })?;
 
     let line = serde_json::to_string(&tok).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize auditor token: {}", e),
+            format!("failed to serialize auditor token: {e}"),
         )
     })?;
 
-    if let Err(e) = writeln!(file, "{}", line) {
+    if let Err(e) = writeln!(file, "{line}") {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to write auditor token: {}", e),
+            format!("failed to write auditor token: {e}"),
         ));
     }
 
@@ -721,7 +744,7 @@ async fn auditor_control_evals_export(
     let file = File::open(&path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open compliance index {}: {}", path, e),
+            format!("failed to open compliance index {path}: {e}"),
         )
     })?;
     let reader = BufReader::new(file);
@@ -735,7 +758,7 @@ async fn auditor_control_evals_export(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read compliance index: {}", e),
+                    format!("failed to read compliance index: {e}"),
                 ))
             }
         };
@@ -774,13 +797,13 @@ async fn auditor_slo_events_export(
 ) -> Result<Json<Vec<SloEventRecord>>, (StatusCode, String)> {
     let tok = load_auditor_token(&q.token)?;
 
-    let path = std::env::var("UTLD_SLO_EVENTS")
-        .unwrap_or_else(|_| "./slo_events.jsonl".to_string());
+    let path =
+        std::env::var("UTLD_SLO_EVENTS").unwrap_or_else(|_| "./slo_events.jsonl".to_string());
 
     let file = File::open(&path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open SLO events {}: {}", path, e),
+            format!("failed to open SLO events {path}: {e}"),
         )
     })?;
 
@@ -794,7 +817,7 @@ async fn auditor_slo_events_export(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read SLO events: {}", e),
+                    format!("failed to read SLO events: {e}"),
                 ))
             }
         };
@@ -838,7 +861,7 @@ fn all_rulepacks() -> Vec<Rulepack> {
 fn rulepack_to_summary(rp: &Rulepack) -> PolicySummary {
     let framework = rp
         .controls
-        .get(0)
+        .first()
         .map(|c| c.framework.clone())
         .unwrap_or_else(|| "UNKNOWN".to_string());
 
@@ -897,17 +920,30 @@ async fn policy_diff(
 ) -> Result<Json<PolicyDiff>, (StatusCode, String)> {
     use std::collections::HashMap;
 
+    let base = &q.base;
+    let head = &q.head;
+
     let packs = all_rulepacks();
 
     let base_rp = packs
         .iter()
         .find(|p| p.metadata.id == q.base)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("base policy {} not found", q.base)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("base policy {base} not found"),
+            )
+        })?;
 
     let head_rp = packs
         .iter()
         .find(|p| p.metadata.id == q.head)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("head policy {} not found", q.head)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("head policy {head} not found"),
+            )
+        })?;
 
     let mut base_map: HashMap<String, Control> = HashMap::new();
     for c in &base_rp.controls {
@@ -991,33 +1027,35 @@ async fn review_policy(
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to create reviews dir {}: {}", dir, e),
+            format!("failed to create reviews dir {dir}: {e}"),
         ));
     }
 
-    let path = std::path::Path::new(&dir).join(format!("{}.jsonl", policy_id));
+    let path = std::path::Path::new(&dir).join(format!("{policy_id}.jsonl"));
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
         .map_err(|e| {
+            let path_display = path.display().to_string();
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to open reviews file {}: {}", path.display(), e),
+                format!("failed to open reviews file {path_display}: {e}"),
             )
         })?;
 
     let line = serde_json::to_string(&response).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize review: {}", e),
+            format!("failed to serialize review: {e}"),
         )
     })?;
 
-    if let Err(e) = writeln!(file, "{}", line) {
+    if let Err(e) = writeln!(file, "{line}") {
+        let path_display = path.display().to_string();
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to write review to {}: {}", path.display(), e),
+            format!("failed to write review to {path_display}: {e}"),
         ));
     }
 
@@ -1040,12 +1078,7 @@ async fn get_burn(
 
     let burn = match process.load_burn(&burn_id) {
         Ok(b) => b,
-        Err(e) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                format!("burn not found: {}", e),
-            ))
-        }
+        Err(e) => return Err((StatusCode::NOT_FOUND, format!("burn not found: {e}"))),
     };
 
     if let Some(ref tenant) = q.tenant_id {
@@ -1117,7 +1150,10 @@ async fn main() {
         .route("/api/evidence/search", get(search_evidence))
         .route("/api/slo/events", get(list_slo_events))
         .route("/api/auditor/tokens", post(create_auditor_token))
-        .route("/api/auditor/control-evals", get(auditor_control_evals_export))
+        .route(
+            "/api/auditor/control-evals",
+            get(auditor_control_evals_export),
+        )
         .route("/api/auditor/slo-events", get(auditor_slo_events_export))
         .with_state(state)
         .layer(cors);
@@ -1133,9 +1169,7 @@ async fn main() {
         .await
         .expect("failed to bind listener");
 
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await.expect("server error");
 }
 
 fn load_burn_dir_from_env() -> String {

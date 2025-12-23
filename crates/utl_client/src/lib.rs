@@ -2,9 +2,12 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
-use utld::{NodeRequest, NodeResponse};
-use utl_core::{UtlClient as UtlClientTrait, ReceiptId, TimeRange, UtlClientError as UtlCoreError, Result as UtlCoreResult};
 use common_models::{NamespaceId, Receipt};
+use utl_core::{
+    ReceiptId, Result as UtlCoreResult, TimeRange, UtlClient as UtlClientTrait,
+    UtlClientError as UtlCoreError,
+};
+use utld::{NodeRequest, NodeResponse};
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -98,9 +101,10 @@ impl UtlClientTrait for UtlClient {
         // For now, map to a generic NodeRequest that utld can handle
         // In a full implementation, utld would have an AppendReceipt request type
         let req = NodeRequest::ListRoots;
-        let _resp = self.send(&req)
-            .map_err(|e| UtlCoreError::Io(format!("{:?}", e)))?;
-        
+        let _resp = self
+            .send(&req)
+            .map_err(|e| UtlCoreError::Io(format!("{e:?}")))?;
+
         Ok(ReceiptId(receipt.receipt_id.clone()))
     }
 

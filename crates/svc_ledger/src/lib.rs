@@ -5,12 +5,14 @@ pub mod infra_snapshot;
 pub mod search_events;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
-use std::io::{Write, BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 
-pub use infra_snapshot::{InfraSnapshot, InfraSnapshotBuilder, InfraVersionId, InfraLayer, InfraComponent};
-pub use search_events::{SearchEvent, SecureSearchQuery, SearchResult, SecureSearchGateway};
+pub use infra_snapshot::{
+    InfraComponent, InfraLayer, InfraSnapshot, InfraSnapshotBuilder, InfraVersionId,
+};
+pub use search_events::{SearchEvent, SearchResult, SecureSearchGateway, SecureSearchQuery};
 
 /// Types of security objects tracked in SVC
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -86,31 +88,31 @@ impl SVCObjectId {
 pub struct SVCCommit {
     /// Unique commit ID (hash of entire commit)
     pub commit_id: String,
-    
+
     /// Parent commit IDs (for DAG)
     pub parent_ids: Vec<String>,
-    
+
     /// Object being versioned
     pub object_id: SVCObjectId,
-    
+
     /// Object content hash (for verification)
     pub object_hash: String,
-    
+
     /// Author DID
     pub author: String,
-    
+
     /// Timestamp (Unix seconds)
     pub timestamp: u64,
-    
+
     /// Purpose/description
     pub purpose: String,
-    
+
     /// Tenant ID (for multi-tenancy)
     pub tenant_id: Option<String>,
-    
+
     /// Cryptographic signature (optional)
     pub signature: Option<String>,
-    
+
     /// Schema version
     #[serde(default)]
     pub schema_version: u32,
@@ -140,13 +142,13 @@ impl SVCCommit {
 pub struct SVCRecord {
     /// The commit
     pub commit: SVCCommit,
-    
+
     /// Hash of previous record in chain
     pub prev_hash: Option<String>,
-    
+
     /// Hash of this record
     pub record_hash: String,
-    
+
     /// Schema version
     #[serde(default)]
     pub schema_version: u32,
@@ -192,8 +194,7 @@ impl SVCLedger {
             .append(true)
             .open(&self.ledger_path)?;
 
-        let line = serde_json::to_string(&record)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let line = serde_json::to_string(&record).map_err(std::io::Error::other)?;
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
         file.flush()?;
@@ -218,8 +219,7 @@ impl SVCLedger {
                 continue;
             }
 
-            let record: SVCRecord = serde_json::from_str(&line)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let record: SVCRecord = serde_json::from_str(&line).map_err(std::io::Error::other)?;
             records.push(record);
         }
 
@@ -228,8 +228,9 @@ impl SVCLedger {
 
     /// Verify ledger integrity
     pub fn verify_chain(&self) -> Result<(), String> {
-        let records = self.read_all()
-            .map_err(|e| format!("Failed to read ledger: {}", e))?;
+        let records = self
+            .read_all()
+            .map_err(|e| format!("Failed to read ledger: {e}"))?;
 
         if records.is_empty() {
             return Ok(());
@@ -242,26 +243,34 @@ impl SVCLedger {
 
         // Verify each record's hash
         for record in &records {
-            let computed = compute_record_hash(record)
-                .map_err(|e| format!("Failed to compute hash: {}", e))?;
+            let computed =
+                compute_record_hash(record).map_err(|e| format!("Failed to compute hash: {e}"))?;
             if computed != record.record_hash {
-                return Err(format!("Record hash mismatch for commit {}", record.commit.commit_id));
+                return Err(format!(
+                    "Record hash mismatch for commit {}",
+                    record.commit.commit_id
+                ));
             }
 
             // Verify commit ID
             if !record.commit.verify() {
-                return Err(format!("Commit ID mismatch for {}", record.commit.commit_id));
+                return Err(format!(
+                    "Commit ID mismatch for {}",
+                    record.commit.commit_id
+                ));
             }
         }
 
         // Verify chain linkage
         for i in 1..records.len() {
             let prev_hash = &records[i - 1].record_hash;
-            let current_prev = records[i].prev_hash.as_ref()
-                .ok_or_else(|| format!("Record {} missing prev_hash", i))?;
-            
+            let current_prev = records[i]
+                .prev_hash
+                .as_ref()
+                .ok_or_else(|| format!("Record {i} missing prev_hash"))?;
+
             if prev_hash != current_prev {
-                return Err(format!("Chain broken at record {}", i));
+                return Err(format!("Chain broken at record {i}"));
             }
         }
 
@@ -284,7 +293,7 @@ impl SVCLedger {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             if let Ok(record) = serde_json::from_str::<SVCRecord>(&line) {
                 last_hash = Some(record.record_hash);
             }
@@ -318,8 +327,7 @@ fn compute_record_hash(record: &SVCRecord) -> std::io::Result<String> {
     let mut hashable = record.clone();
     hashable.record_hash = String::new();
 
-    let json = serde_json::to_string(&hashable)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string(&hashable).map_err(std::io::Error::other)?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
@@ -328,8 +336,7 @@ fn compute_record_hash(record: &SVCRecord) -> std::io::Result<String> {
 
 /// Compute hash of arbitrary object for SVC
 pub fn compute_object_hash(object: &impl Serialize) -> Result<String, String> {
-    let json = serde_json::to_string(object)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let json = serde_json::to_string(object).map_err(|e| format!("Failed to serialize: {e}"))?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
@@ -342,10 +349,7 @@ mod tests {
 
     #[test]
     fn svc_object_id_uri_roundtrip() {
-        let id = SVCObjectId::new(
-            SVCObjectKind::TruthScriptV2,
-            "abc123".to_string(),
-        );
+        let id = SVCObjectId::new(SVCObjectKind::TruthScriptV2, "abc123".to_string());
 
         let uri = id.to_uri();
         assert!(uri.starts_with("svc://"));

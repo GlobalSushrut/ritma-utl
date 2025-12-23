@@ -13,11 +13,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let src_did = args.next().ok_or("missing src_did")?;
     let dst_did = args.next().ok_or("missing dst_did")?;
-    let decision = args.next().ok_or("missing decision (allow|deny|throttle|isolate)")?;
+    let decision = args
+        .next()
+        .ok_or("missing decision (allow|deny|throttle|isolate)")?;
 
     // Basic validation of DIDs; errors here mean upstream misconfiguration.
-    let _ = Did::parse(&src_did).map_err(|e| format!("invalid src_did {}: {}", src_did, e))?;
-    let _ = Did::parse(&dst_did).map_err(|e| format!("invalid dst_did {}: {}", dst_did, e))?;
+    let _ = Did::parse(&src_did).map_err(|e| format!("invalid src_did {src_did}: {e}"))?;
+    let _ = Did::parse(&dst_did).map_err(|e| format!("invalid dst_did {dst_did}: {e}"))?;
 
     let map_path = env::var("RITMA_EBPF_MAP_PATH")
         .unwrap_or_else(|_| "/sys/fs/bpf/ritma_fw_pairs".to_string());
@@ -27,10 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "log" => backend_log(&map_path, &src_did, &dst_did, &decision),
         "bpf" => backend_bpf(&map_path, &src_did, &dst_did, &decision),
         other => {
-            eprintln!(
-                "[ebpf-helper] unknown RITMA_EBPF_MODE={}, falling back to log",
-                other
-            );
+            eprintln!("[ebpf-helper] unknown RITMA_EBPF_MODE={other}, falling back to log");
             backend_log(&map_path, &src_did, &dst_did, &decision)
         }
     }
@@ -51,13 +50,7 @@ fn backend_log(
     };
 
     println!(
-        "[ebpf-helper] mode=log map_path={} src_did={} dst_did={} decision={} action={} note={}",
-        map_path,
-        src_did,
-        dst_did,
-        decision,
-        action,
-        note,
+        "[ebpf-helper] mode=log map_path={map_path} src_did={src_did} dst_did={dst_did} decision={decision} action={action} note={note}"
     );
 
     Ok(())
@@ -86,15 +79,14 @@ fn backend_bpf(
 
     // BPF map key: struct { u32 src_id; u32 dst_id; }
     // BPF map value: u8 (0=allow, 1=deny, 2=throttle, 3=isolate)
-    let key_hex = format!("{:08x}{:08x}", src_id, dst_id);
+    let key_hex = format!("{src_id:08x}{dst_id:08x}");
 
     match decision {
         "deny" => {
             // Update map: key → value=1 (deny)
             let value_hex = "01"; // deny
             println!(
-                "[ebpf-helper] mode=bpf map={} key={} value={} action=update (deny)",
-                map_path, key_hex, value_hex
+                "[ebpf-helper] mode=bpf map={map_path} key={key_hex} value={value_hex} action=update (deny)"
             );
             bpftool_map_update(map_path, &key_hex, value_hex)?;
         }
@@ -102,30 +94,25 @@ fn backend_bpf(
             // Update map: key → value=3 (isolate)
             let value_hex = "03"; // isolate
             println!(
-                "[ebpf-helper] mode=bpf map={} key={} value={} action=update (isolate)",
-                map_path, key_hex, value_hex
+                "[ebpf-helper] mode=bpf map={map_path} key={key_hex} value={value_hex} action=update (isolate)"
             );
             bpftool_map_update(map_path, &key_hex, value_hex)?;
         }
         "allow" => {
             // Delete map entry to allow traffic (deny-list model)
-            println!(
-                "[ebpf-helper] mode=bpf map={} key={} action=delete (allow)",
-                map_path, key_hex
-            );
+            println!("[ebpf-helper] mode=bpf map={map_path} key={key_hex} action=delete (allow)");
             bpftool_map_delete(map_path, &key_hex)?;
         }
         "throttle" => {
             // Update map: key → value=2 (throttle)
             let value_hex = "02"; // throttle
             println!(
-                "[ebpf-helper] mode=bpf map={} key={} value={} action=update (throttle)",
-                map_path, key_hex, value_hex
+                "[ebpf-helper] mode=bpf map={map_path} key={key_hex} value={value_hex} action=update (throttle)"
             );
             bpftool_map_update(map_path, &key_hex, value_hex)?;
         }
         other => {
-            eprintln!("[ebpf-helper] unknown decision: {}", other);
+            eprintln!("[ebpf-helper] unknown decision: {other}");
         }
     }
 
@@ -133,11 +120,17 @@ fn backend_bpf(
 }
 
 #[cfg(target_os = "linux")]
-fn bpftool_map_update(map_path: &str, key_hex: &str, value_hex: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn bpftool_map_update(
+    map_path: &str,
+    key_hex: &str,
+    value_hex: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
 
     let status = Command::new("bpftool")
-        .args(["map", "update", "pinned", map_path, "key", "hex", key_hex, "value", "hex", value_hex])
+        .args([
+            "map", "update", "pinned", map_path, "key", "hex", key_hex, "value", "hex", value_hex,
+        ])
         .status()?;
 
     if !status.success() {
@@ -157,7 +150,10 @@ fn bpftool_map_delete(map_path: &str, key_hex: &str) -> Result<(), Box<dyn std::
 
     // Ignore errors if key doesn't exist (idempotent delete)
     if !status.success() {
-        eprintln!("[ebpf-helper] bpftool map delete warning: {:?} (key may not exist)", status.code());
+        eprintln!(
+            "[ebpf-helper] bpftool map delete warning: {:?} (key may not exist)",
+            status.code()
+        );
     }
 
     Ok(())

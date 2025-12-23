@@ -272,7 +272,7 @@ async fn register_node(
     let uid = if let Some(id_str) = req.node_id {
         // If a caller supplies a node_id, hash it into a u128 for UID.
         let hash = xxhash_rust::xxh3::xxh3_128(id_str.as_bytes());
-        format!("{:032x}", hash)
+        format!("{hash:032x}")
     } else {
         format!("{:032x}", UID::new().0)
     };
@@ -306,12 +306,9 @@ async fn node_heartbeat(
     Json(req): Json<HeartbeatRequest>,
 ) -> Result<Json<NodeInfo>, (StatusCode, String)> {
     let mut guard = state.nodes.write().await;
-    let node = guard.get_mut(&id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("node {} not found", id),
-        )
-    })?;
+    let node = guard
+        .get_mut(&id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("node {id} not found")))?;
 
     if let Some(status) = req.status {
         node.status = status;
@@ -358,12 +355,9 @@ async fn get_node(
     Path(id): Path<String>,
 ) -> Result<Json<NodeInfo>, (StatusCode, String)> {
     let guard = state.nodes.read().await;
-    let node = guard.get(&id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("node {} not found", id),
-        )
-    })?;
+    let node = guard
+        .get(&id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("node {id} not found")))?;
 
     Ok(Json(node.clone()))
 }
@@ -423,7 +417,10 @@ async fn list_tenants(
 
     let mut out = Vec::new();
     for (id, count) in counts {
-        out.push(TenantSummary { id, node_count: count });
+        out.push(TenantSummary {
+            id,
+            node_count: count,
+        });
     }
 
     Json(out)
@@ -459,18 +456,18 @@ async fn create_enrollment_token(
 }
 
 async fn get_config() -> Json<ConfigInfo> {
-    let addr = std::env::var("NODE_CONTROLLER_LISTEN_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8093".to_string());
+    let addr =
+        std::env::var("NODE_CONTROLLER_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8093".to_string());
     let compliance_index = std::env::var("UTLD_COMPLIANCE_INDEX")
         .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
-    let slo_events = std::env::var("UTLD_SLO_EVENTS")
-        .unwrap_or_else(|_| "./slo_events.jsonl".to_string());
+    let slo_events =
+        std::env::var("UTLD_SLO_EVENTS").unwrap_or_else(|_| "./slo_events.jsonl".to_string());
     let decision_events = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
-    let dig_index_db = std::env::var("UTLD_DIG_INDEX_DB")
-        .unwrap_or_else(|_| "./dig_index.sqlite".to_string());
-    let log_paths_raw = std::env::var("NODE_LOG_PATHS")
-        .unwrap_or_else(|_| "./utld.log".to_string());
+    let dig_index_db =
+        std::env::var("UTLD_DIG_INDEX_DB").unwrap_or_else(|_| "./dig_index.sqlite".to_string());
+    let log_paths_raw =
+        std::env::var("NODE_LOG_PATHS").unwrap_or_else(|_| "./utld.log".to_string());
     let node_log_paths: Vec<String> = log_paths_raw
         .split(',')
         .map(|s| s.trim().to_string())
@@ -488,8 +485,12 @@ async fn get_config() -> Json<ConfigInfo> {
 }
 
 async fn get_wallet() -> Result<Json<WalletInfo>, (StatusCode, String)> {
-    let key_id = std::env::var("RITMA_KEY_ID")
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "RITMA_KEY_ID not set".to_string()))?;
+    let key_id = std::env::var("RITMA_KEY_ID").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "RITMA_KEY_ID not set".to_string(),
+        )
+    })?;
 
     // Prefer keystore metadata if available.
     let (key_hash, label) = if let Ok(ks) = NodeKeystore::from_env() {
@@ -502,15 +503,23 @@ async fn get_wallet() -> Result<Json<WalletInfo>, (StatusCode, String)> {
                     key_id,
                     e,
                 );
-                let key_hash = std::env::var("RITMA_KEY_HASH")
-                    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "RITMA_KEY_HASH not set".to_string()))?;
+                let key_hash = std::env::var("RITMA_KEY_HASH").map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "RITMA_KEY_HASH not set".to_string(),
+                    )
+                })?;
                 let label = std::env::var("RITMA_KEY_LABEL").ok();
                 (key_hash, label)
             }
         }
     } else {
-        let key_hash = std::env::var("RITMA_KEY_HASH")
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "RITMA_KEY_HASH not set".to_string()))?;
+        let key_hash = std::env::var("RITMA_KEY_HASH").map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RITMA_KEY_HASH not set".to_string(),
+            )
+        })?;
         let label = std::env::var("RITMA_KEY_LABEL").ok();
         (key_hash, label)
     };
@@ -522,14 +531,11 @@ async fn get_wallet() -> Result<Json<WalletInfo>, (StatusCode, String)> {
     }))
 }
 
-async fn get_logs(
-    Query(q): Query<LogsQuery>,
-) -> Result<Json<Vec<LogChunk>>, (StatusCode, String)> {
+async fn get_logs(Query(q): Query<LogsQuery>) -> Result<Json<Vec<LogChunk>>, (StatusCode, String)> {
     let paths_raw = if let Some(p) = q.paths {
         p
     } else {
-        std::env::var("NODE_LOG_PATHS")
-            .unwrap_or_else(|_| "./utld.log".to_string())
+        std::env::var("NODE_LOG_PATHS").unwrap_or_else(|_| "./utld.log".to_string())
     };
 
     let paths: Vec<String> = paths_raw
@@ -572,13 +578,13 @@ async fn list_slo_events(
     _ctx: AuthContext,
     Query(q): Query<SloEventsQuery>,
 ) -> Result<Json<Vec<SloEventRecord>>, (StatusCode, String)> {
-    let path = std::env::var("UTLD_SLO_EVENTS")
-        .unwrap_or_else(|_| "./slo_events.jsonl".to_string());
+    let path =
+        std::env::var("UTLD_SLO_EVENTS").unwrap_or_else(|_| "./slo_events.jsonl".to_string());
 
     let file = File::open(&path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open SLO events {}: {}", path, e),
+            format!("failed to open SLO events {path}: {e}"),
         )
     })?;
 
@@ -592,7 +598,7 @@ async fn list_slo_events(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read SLO events: {}", e),
+                    format!("failed to read SLO events: {e}"),
                 ))
             }
         };
@@ -646,7 +652,7 @@ async fn list_incidents(
     let file = File::open(&path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open decision events {}: {}", path, e),
+            format!("failed to open decision events {path}: {e}"),
         )
     })?;
 
@@ -660,7 +666,7 @@ async fn list_incidents(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("failed to read decision events: {}", e),
+                    format!("failed to read decision events: {e}"),
                 ))
             }
         };
@@ -702,8 +708,8 @@ async fn search_evidence(
     _ctx: AuthContext,
     Query(q): Query<EvidenceSearchQuery>,
 ) -> Result<Json<Vec<EvidenceSearchResult>>, (StatusCode, String)> {
-    let db_path = std::env::var("UTLD_DIG_INDEX_DB")
-        .unwrap_or_else(|_| "./dig_index.sqlite".to_string());
+    let db_path =
+        std::env::var("UTLD_DIG_INDEX_DB").unwrap_or_else(|_| "./dig_index.sqlite".to_string());
 
     let mut query = DigIndexQuery::new();
 
@@ -720,14 +726,12 @@ async fn search_evidence(
     let limit = q.limit.unwrap_or(100).min(1000);
     query = query.limit(limit);
 
-    let entries = query
-        .execute(&db_path)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to query dig index {}: {}", db_path, e),
-            )
-        })?;
+    let entries = query.execute(&db_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to query dig index {db_path}: {e}"),
+        )
+    })?;
 
     let results = entries
         .into_iter()
@@ -776,7 +780,10 @@ async fn main() {
         .route("/api/nodes", get(list_nodes).post(register_node))
         .route("/api/nodes/:id", get(get_node))
         .route("/api/nodes/:id/heartbeat", post(node_heartbeat))
-        .route("/api/enrollment/tokens", get(list_enrollment_tokens).post(create_enrollment_token))
+        .route(
+            "/api/enrollment/tokens",
+            get(list_enrollment_tokens).post(create_enrollment_token),
+        )
         .route("/api/config", get(get_config))
         .route("/api/wallet", get(get_wallet))
         .route("/api/logs", get(get_logs))
@@ -797,7 +804,5 @@ async fn main() {
         .await
         .expect("failed to bind listener");
 
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await.expect("server error");
 }

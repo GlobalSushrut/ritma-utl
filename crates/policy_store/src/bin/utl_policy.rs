@@ -79,18 +79,24 @@ fn main() {
             framework,
             created_by,
             notes,
-        } => cmd_tag(&tag, &commit, framework.as_deref(), &created_by, notes.as_deref()),
+        } => cmd_tag(
+            &tag,
+            &commit,
+            framework.as_deref(),
+            &created_by,
+            notes.as_deref(),
+        ),
         Commands::Tags { limit } => cmd_tags(limit),
     };
 
     if let Err(e) = result {
-        eprintln!("error: {}", e);
+        eprintln!("error: {e}");
         std::process::exit(1);
     }
 }
 
 fn cmd_commit(author: &str, message: &str, file: &str, parent: Option<&str>) -> Result<(), String> {
-    let bytes = fs::read(file).map_err(|e| format!("failed to read policy file {}: {}", file, e))?;
+    let bytes = fs::read(file).map_err(|e| format!("failed to read policy file {file}: {e}"))?;
     let policy_tree_hash = compute_policy_tree_hash(&bytes);
     let ts = now_ts();
     let commit_id = compute_commit_id(parent, author, message, &policy_tree_hash, ts);
@@ -144,7 +150,12 @@ fn cmd_tags(limit: usize) -> Result<(), String> {
     let mut tags = read_tags()?;
     tags.reverse();
     for t in tags.into_iter().take(limit) {
-        println!("{} {} {}", t.tag, t.commit_id, t.framework.unwrap_or_default());
+        println!(
+            "{} {} {}",
+            t.tag,
+            t.commit_id,
+            t.framework.unwrap_or_default()
+        );
     }
     Ok(())
 }

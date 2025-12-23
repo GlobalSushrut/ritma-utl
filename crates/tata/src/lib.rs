@@ -1,6 +1,6 @@
-use core_types::{hash_bytes, BoundaryTag, Hash, LogicRef, ParamBag};
 use clock::TimeTick;
-use serde::{Serialize, Deserialize};
+use core_types::{hash_bytes, BoundaryTag, Hash, LogicRef, ParamBag};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TataFrame<D> {

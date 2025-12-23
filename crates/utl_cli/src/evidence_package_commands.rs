@@ -1,10 +1,10 @@
 // Evidence package CLI command implementations
 
 use evidence_package::{
-    PackageBuilder, PackageSigner, PackageVerifier, SigningKey,
-    PackageScope, EvidencePackageManifest,
+    EvidencePackageManifest, PackageBuilder, PackageScope, PackageSigner, PackageVerifier,
+    SigningKey,
 };
-use node_keystore::{NodeKeystore, KeystoreKey};
+use node_keystore::{KeystoreKey, NodeKeystore};
 
 pub fn cmd_evidence_package_export(
     tenant: &str,
@@ -32,9 +32,11 @@ pub fn cmd_evidence_package_export(
             if parts.len() != 2 {
                 return Err("time_range scope_id must be start:end".to_string());
             }
-            let start = parts[0].parse::<u64>()
+            let start = parts[0]
+                .parse::<u64>()
                 .map_err(|e| format!("invalid start time: {}", e))?;
-            let end = parts[1].parse::<u64>()
+            let end = parts[1]
+                .parse::<u64>()
                 .map_err(|e| format!("invalid end time: {}", e))?;
             PackageScope::TimeRange {
                 time_start: start,
@@ -44,43 +46,40 @@ pub fn cmd_evidence_package_export(
         }
         _ => return Err(format!("unsupported scope_type: {}", scope_type)),
     };
-    
+
     // Build package
-    let dig_index_db = std::env::var("UTLD_DIG_INDEX_DB")
-        .unwrap_or_else(|_| "./dig_index.sqlite".to_string());
-    let dig_storage = std::env::var("UTLD_DIG_STORAGE")
-        .unwrap_or_else(|_| "./digs".to_string());
-    let burn_storage = std::env::var("UTLD_BURN_STORAGE")
-        .unwrap_or_else(|_| "./burns".to_string());
-    
+    let dig_index_db =
+        std::env::var("UTLD_DIG_INDEX_DB").unwrap_or_else(|_| "./dig_index.sqlite".to_string());
+    let dig_storage = std::env::var("UTLD_DIG_STORAGE").unwrap_or_else(|_| "./digs".to_string());
+    let burn_storage = std::env::var("UTLD_BURN_STORAGE").unwrap_or_else(|_| "./burns".to_string());
+
     let mut builder = PackageBuilder::new(tenant.to_string(), scope)
         .dig_index_db(dig_index_db)
         .dig_storage_root(dig_storage)
         .burn_storage_root(burn_storage);
-    
+
     if let Some(did) = requester_did {
         builder = builder.created_by(did.to_string());
     }
-    
-    let mut manifest = builder.build()
+
+    let mut manifest = builder
+        .build()
         .map_err(|e| format!("failed to build package: {}", e))?;
 
     // Prefer node keystore for signing if configured.
     let mut signed = false;
 
     if let Ok(key_id) = std::env::var("RITMA_KEY_ID") {
-        match NodeKeystore::from_env()
-            .and_then(|ks| ks.key_for_signing(&key_id))
-        {
+        match NodeKeystore::from_env().and_then(|ks| ks.key_for_signing(&key_id)) {
             Ok(keystore_key) => {
                 let signing_key = match keystore_key {
                     KeystoreKey::HmacSha256(bytes) => SigningKey::HmacSha256(bytes),
                     KeystoreKey::Ed25519(sk) => SigningKey::Ed25519(sk),
                 };
                 let signer = PackageSigner::new(signing_key, "utl_cli".to_string());
-                signer
-                    .sign(&mut manifest)
-                    .map_err(|e| format!("failed to sign package with keystore key {}: {}", key_id, e))?;
+                signer.sign(&mut manifest).map_err(|e| {
+                    format!("failed to sign package with keystore key {}: {}", key_id, e)
+                })?;
                 eprintln!(
                     "Package signed with keystore key_id={} signer_id={}",
                     key_id,
@@ -119,33 +118,33 @@ pub fn cmd_evidence_package_export(
             );
         } else {
             // No signing key configured - compute hash anyway for unsigned packages
-            let package_hash = manifest.compute_hash()
+            let package_hash = manifest
+                .compute_hash()
                 .map_err(|e| format!("failed to compute package hash: {}", e))?;
             manifest.security.package_hash = package_hash;
-            
+
             eprintln!(
                 "Warning: neither node keystore (RITMA_KEY_ID/RITMA_KEYSTORE_PATH) nor \
 UTLD_PACKAGE_SIG_KEY are configured; package will be unsigned",
             );
         }
     }
-    
+
     // Output
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("failed to serialize manifest: {}", e))?;
-    
+
     if let Some(path) = out {
-        std::fs::write(path, json)
-            .map_err(|e| format!("failed to write {}: {}", path, e))?;
+        std::fs::write(path, json).map_err(|e| format!("failed to write {}: {}", path, e))?;
         eprintln!("Evidence package written to: {}", path);
     } else {
         println!("{}", json);
     }
-    
+
     eprintln!("Package ID: {}", manifest.package_id);
     eprintln!("Artifacts: {}", manifest.artifacts.len());
     eprintln!("Package hash: {}", manifest.security.package_hash);
-    
+
     Ok(())
 }
 
@@ -155,30 +154,30 @@ pub fn cmd_evidence_package_verify(
 ) -> Result<(), String> {
     let content = std::fs::read_to_string(manifest_path)
         .map_err(|e| format!("failed to read manifest {}: {}", manifest_path, e))?;
-    
-    let manifest: EvidencePackageManifest = serde_json::from_str(&content)
-        .map_err(|e| format!("failed to parse manifest: {}", e))?;
-    
+
+    let manifest: EvidencePackageManifest =
+        serde_json::from_str(&content).map_err(|e| format!("failed to parse manifest: {}", e))?;
+
     let mut verifier = PackageVerifier::new();
     if skip_artifacts {
         verifier = verifier.skip_artifacts();
     }
-    
+
     let result = verifier.verify(&manifest);
-    
+
     println!("Package ID: {}", result.package_id);
     println!("Hash valid: {}", result.hash_valid);
     println!("Signature valid: {}", result.signature_valid);
     println!("Artifacts verified: {}", result.artifacts_verified);
     println!("Artifacts failed: {}", result.artifacts_failed);
-    
+
     if !result.errors.is_empty() {
         println!("\nErrors:");
         for err in &result.errors {
             println!("  - {}", err);
         }
     }
-    
+
     let demo_allow_unsigned = std::env::var("RITMA_DEMO_ALLOW_UNSIGNED")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
         .unwrap_or(false);
@@ -186,11 +185,21 @@ pub fn cmd_evidence_package_verify(
     if result.is_valid() {
         println!("\n	Package verification PASSED");
         Ok(())
-    } else if demo_allow_unsigned && result.hash_valid && !result.signature_valid && result.artifacts_failed == 0 {
-        println!("\n[demo-note] Package verification is in DEMO MODE (RITMA_DEMO_ALLOW_UNSIGNED=1).");
+    } else if demo_allow_unsigned
+        && result.hash_valid
+        && !result.signature_valid
+        && result.artifacts_failed == 0
+    {
+        println!(
+            "\n[demo-note] Package verification is in DEMO MODE (RITMA_DEMO_ALLOW_UNSIGNED=1)."
+        );
         println!("[demo-note] Hash is cryptographically valid, but no signing key is configured.");
-        println!("[demo-note] For this demo, *unsigned but hash-valid* packages are treated as SUCCESS.");
-        println!("[demo-note] In pilot/production, configure a signing key to require valid signatures.");
+        println!(
+            "[demo-note] For this demo, *unsigned but hash-valid* packages are treated as SUCCESS."
+        );
+        println!(
+            "[demo-note] In pilot/production, configure a signing key to require valid signatures."
+        );
         println!("\n	Package verification PASSED (demo mode: unsigned, hash-valid)");
         Ok(())
     } else {

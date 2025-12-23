@@ -2,8 +2,14 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::{extract::State, routing::{get, post}, Json, Router};
-use biz_api::{compute_invoice_draft_for_month, MetricKind, PricingRule, ProductId, TenantConfig, UsageEvent};
+use axum::{
+    extract::State,
+    routing::{get, post},
+    Json, Router,
+};
+use biz_api::{
+    compute_invoice_draft_for_month, MetricKind, PricingRule, ProductId, TenantConfig, UsageEvent,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -55,12 +61,7 @@ async fn ingest_usage(
 
     let period_idx = ev.ts / BILLING_PERIOD_SECS;
 
-    let key = (
-        ev.tenant_id.clone(),
-        plan_id,
-        period_idx,
-        ev.metric,
-    );
+    let key = (ev.tenant_id.clone(), plan_id, period_idx, ev.metric);
 
     let mut totals = state.usage_totals.lock().await;
     *totals.entry(key).or_insert(0) += ev.quantity;
@@ -123,7 +124,7 @@ async fn invoice_draft(
     Ok(Json(serde_json::to_value(draft).map_err(|e| {
         (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize invoice draft: {}", e),
+            format!("failed to serialize invoice draft: {e}"),
         )
     })?))
 }
@@ -142,12 +143,12 @@ fn load_pricing_rules_from_env() -> Vec<PricingRule> {
         Ok(content) => match serde_json::from_str::<Vec<PricingRule>>(&content) {
             Ok(rules) => rules,
             Err(e) => {
-                eprintln!("failed to parse pricing rules {}: {}", path, e);
+                eprintln!("failed to parse pricing rules {path}: {e}");
                 Vec::new()
             }
         },
         Err(e) => {
-            eprintln!("failed to read pricing rules {}: {}", path, e);
+            eprintln!("failed to read pricing rules {path}: {e}");
             Vec::new()
         }
     }
@@ -162,7 +163,7 @@ fn load_tenant_plans_from_env() -> HashMap<String, String> {
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("failed to read tenants file {}: {}", path, e);
+            eprintln!("failed to read tenants file {path}: {e}");
             return HashMap::new();
         }
     };
@@ -170,7 +171,7 @@ fn load_tenant_plans_from_env() -> HashMap<String, String> {
     let tenants: Vec<TenantConfig> = match serde_json::from_str(&content) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("failed to parse tenants file {}: {}", path, e);
+            eprintln!("failed to parse tenants file {path}: {e}");
             return HashMap::new();
         }
     };
@@ -199,8 +200,8 @@ async fn main() {
     let pricing_rules = load_pricing_rules_from_env();
     let tenant_plans = load_tenant_plans_from_env();
 
-    let default_plan_id = std::env::var("BILLING_DEFAULT_PLAN_ID")
-        .unwrap_or_else(|_| "pilot_free".to_string());
+    let default_plan_id =
+        std::env::var("BILLING_DEFAULT_PLAN_ID").unwrap_or_else(|_| "pilot_free".to_string());
 
     let state = AppState {
         pricing_rules: Arc::new(pricing_rules),
