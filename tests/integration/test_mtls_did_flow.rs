@@ -38,7 +38,7 @@ mod tests {
 
         let helper_path = "target/release/ritma_firewall_helper";
         if !Path::new(helper_path).exists() {
-            println!("Skipping test: {} not found", helper_path);
+            println!("Skipping test: {helper_path} not found");
             let _ = fs::remove_dir_all(test_dir);
             return;
         }
@@ -70,22 +70,22 @@ mod tests {
         let test_dir = "/tmp/ritma_test_cgroup";
         fs::create_dir_all(test_dir).expect("failed to create test dir");
 
-        let cgroup_root = format!("{}/cgroup", test_dir);
+        let cgroup_root = format!("{test_dir}/cgroup");
         fs::create_dir_all(&cgroup_root).expect("failed to create cgroup root");
 
         // Create test cgroup structure
-        let tenant_path = format!("{}/tenants/did_ritma_tenant_acme", cgroup_root);
+        let tenant_path = format!("{cgroup_root}/tenants/did_ritma_tenant_acme");
         fs::create_dir_all(&tenant_path).expect("failed to create tenant cgroup");
 
         // Write test limits
-        fs::write(format!("{}/cpu.max", tenant_path), "50000 100000")
+        fs::write(format!("{tenant_path}/cpu.max"), "50000 100000")
             .expect("failed to write cpu.max");
-        fs::write(format!("{}/memory.max", tenant_path), "536870912")
+        fs::write(format!("{tenant_path}/memory.max"), "536870912")
             .expect("failed to write memory.max");
 
         // Verify
         let cpu_max =
-            fs::read_to_string(format!("{}/cpu.max", tenant_path)).expect("failed to read cpu.max");
+            fs::read_to_string(format!("{tenant_path}/cpu.max")).expect("failed to read cpu.max");
         assert!(cpu_max.contains("50000"), "cpu limit not set correctly");
 
         let _ = fs::remove_dir_all(test_dir);
@@ -93,54 +93,55 @@ mod tests {
 
     // Helper functions (stubs - implement as needed)
 
+    #[allow(dead_code)]
     fn generate_test_certs(test_dir: &str) {
         // Generate self-signed CA
         // Generate server cert
         // Generate client cert with SAN URI: did:ritma:tenant:test
-        println!("TODO: implement test cert generation in {}", test_dir);
+        println!("TODO: implement test cert generation in {test_dir}");
     }
 
+    #[allow(dead_code)]
     fn start_utld_test_instance(test_dir: &str) -> std::process::Child {
         let bin_path = "target/release/utld";
         if !Path::new(bin_path).exists() {
-            panic!(
-                "utld binary not found at {}. Run: cargo build --release -p utld",
-                bin_path
-            );
+            panic!("utld binary not found at {bin_path}. Run: cargo build --release -p utld");
         }
         Command::new(bin_path)
-            .env("UTLD_SOCKET", format!("{}/utld.sock", test_dir))
+            .env("UTLD_SOCKET", format!("{test_dir}/utld.sock"))
             .env("UTLD_POLICY", "tests/fixtures/test_policy.json")
             .spawn()
             .expect("failed to start utld")
     }
 
+    #[allow(dead_code)]
     fn start_utl_http_with_mtls(test_dir: &str) -> std::process::Child {
         let bin_path = "target/release/utl_http";
         if !Path::new(bin_path).exists() {
             panic!(
-                "utl_http binary not found at {}. Run: cargo build --release -p utl_http",
-                bin_path
+                "utl_http binary not found at {bin_path}. Run: cargo build --release -p utl_http"
             );
         }
         Command::new(bin_path)
             .env("UTL_HTTP_TLS_ADDR", "127.0.0.1:18443")
-            .env("UTL_HTTP_TLS_CA", format!("{}/ca.pem", test_dir))
-            .env("UTL_HTTP_TLS_CERT", format!("{}/server-cert.pem", test_dir))
-            .env("UTL_HTTP_TLS_KEY", format!("{}/server-key.pem", test_dir))
+            .env("UTL_HTTP_TLS_CA", format!("{test_dir}/ca.pem"))
+            .env("UTL_HTTP_TLS_CERT", format!("{test_dir}/server-cert.pem"))
+            .env("UTL_HTTP_TLS_KEY", format!("{test_dir}/server-key.pem"))
             .env("UTL_HTTP_TLS_REQUIRE_CLIENT_AUTH", "true")
             .spawn()
             .expect("failed to start utl_http")
     }
 
+    #[allow(dead_code)]
     fn make_mtls_request(test_dir: &str, _did: &str) -> String {
         // Use curl or reqwest with client cert
-        println!("TODO: implement mTLS request from {}", test_dir);
+        println!("TODO: implement mTLS request from {test_dir}");
         String::new()
     }
 
+    #[allow(dead_code)]
     fn read_decision_events(test_dir: &str) -> Vec<serde_json::Value> {
-        let path = format!("{}/decision_events.jsonl", test_dir);
+        let path = format!("{test_dir}/decision_events.jsonl");
         if !Path::new(&path).exists() {
             return vec![];
         }
@@ -152,12 +153,12 @@ mod tests {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn start_security_host_test(_test_dir: &str) -> std::process::Child {
         let bin_path = "target/release/security_host";
         if !Path::new(bin_path).exists() {
             panic!(
-                "security_host binary not found at {}. Run: cargo build --release -p security_host",
-                bin_path
+                "security_host binary not found at {bin_path}. Run: cargo build --release -p security_host"
             );
         }
         Command::new(bin_path)
@@ -171,10 +172,12 @@ mod tests {
             .expect("failed to start security_host")
     }
 
+    #[allow(dead_code)]
     fn emit_test_decision_event(test_dir: &str, decision: &str, src_did: &str, dst_did: &str) {
         emit_test_decision_event_with_actions(test_dir, decision, src_did, dst_did, vec![]);
     }
 
+    #[allow(dead_code)]
     fn emit_test_decision_event_with_actions(
         test_dir: &str,
         decision: &str,
@@ -197,7 +200,7 @@ mod tests {
             "dst_did": dst_did,
         });
 
-        let path = format!("{}/decision_events.jsonl", test_dir);
+        let path = format!("{test_dir}/decision_events.jsonl");
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -205,9 +208,10 @@ mod tests {
             .expect("failed to open decision events file");
 
         use std::io::Write;
-        writeln!(file, "{}", event).expect("failed to write decision event");
+        writeln!(file, "{event}").expect("failed to write decision event");
     }
 
+    #[allow(dead_code)]
     fn cleanup_test_instance(
         mut utld: std::process::Child,
         mut http: std::process::Child,
@@ -218,6 +222,7 @@ mod tests {
         let _ = fs::remove_dir_all(test_dir);
     }
 
+    #[allow(dead_code)]
     fn cleanup_security_host(mut security_host: std::process::Child, test_dir: &str) {
         let _ = security_host.kill();
         let _ = fs::remove_dir_all(test_dir);

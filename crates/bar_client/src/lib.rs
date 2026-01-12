@@ -34,10 +34,10 @@ impl BarClient {
     }
 
     /// Construct a client using the same default/env logic as bar_daemon.
-    /// BAR_SOCKET env var is honored, falling back to /tmp/bar_daemon.sock.
+    /// BAR_SOCKET env var is honored, falling back to /run/ritma/bar_daemon.sock.
     pub fn from_env() -> Self {
         let socket_path =
-            std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/tmp/bar_daemon.sock".to_string());
+            std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/run/ritma/bar_daemon.sock".to_string());
         Self { socket_path }
     }
 

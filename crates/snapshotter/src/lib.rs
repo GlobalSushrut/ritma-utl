@@ -399,6 +399,7 @@ impl Snapshotter {
     }
 
     fn capture_process_tree(&self) -> Result<Vec<ProcessSnapshot>, String> {
+        // Use static args only - no user input
         let output = Command::new("ps")
             .args(["aux", "--no-headers"])
             .output()
@@ -547,8 +548,16 @@ impl Snapshotter {
             chrono::Utc::now().timestamp()
         );
 
+        // Validate PID is numeric only to prevent injection
+        if !pid.to_string().chars().all(|c| c.is_ascii_digit()) {
+            return Err("Invalid PID format".to_string());
+        }
+        
+        // Sanitize dump_path - no shell metacharacters
+        let safe_dump_path = dump_path.replace(['$', '`', '\\', '"', '\'', ';', '&', '|', '<', '>', '(', ')', '{', '}', '\n', '\r'], "");
+        
         let output = Command::new("gcore")
-            .args(["-o", &dump_path, &pid.to_string()])
+            .args(["-o", &safe_dump_path, &pid.to_string()])
             .output();
 
         match output {
@@ -1105,13 +1114,18 @@ impl Snapshotter {
         server_ip: &str,
     ) -> Result<(String, String, String, Vec<CertificateInfo>), String> {
         // Use openssl s_client to get TLS info (simplified - in production use eBPF)
+        // Validate server_ip format to prevent injection
+        if !server_ip.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':') {
+            return Err("Invalid server IP format".to_string());
+        }
+        
         let output = Command::new("timeout")
             .args([
                 "1",
                 "openssl",
                 "s_client",
                 "-connect",
-                &format!("{server_ip}:443"),
+                &format!("{}:443", server_ip),
                 "-servername",
                 server_ip,
             ])
@@ -1382,8 +1396,7 @@ mod tests {
 
     #[test]
     fn test_snapshotter_creation() {
-        let snapshotter = Snapshotter::new("ns://test");
-        assert!(true); // Basic instantiation test
+        let _snapshotter = Snapshotter::new("ns://test");
     }
 
     #[test]

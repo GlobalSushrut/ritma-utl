@@ -3,6 +3,9 @@ name = "utld"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 core_types = { path = "../core_types" }
 sot_root = { path = "../sot_root" }
@@ -19,6 +22,7 @@ truthscript = { path = "../truthscript" }
 distillium = { path = "../distillium" }
 sha2 = "0.10"
 hmac = "0.12"
+zeroize = "1.8"
 zk_snark = { path = "../zk_snark" }
 hex = "0.4"
 dig_index = { path = "../dig_index" }

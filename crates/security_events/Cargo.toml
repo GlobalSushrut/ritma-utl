@@ -3,6 +3,9 @@ name = "security_events"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [[bin]]
 name = "ritma_evidence_verify"
 path = "src/bin/ritma_evidence_verify.rs"

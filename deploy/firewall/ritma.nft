@@ -1,0 +1,13 @@
+table inet ritma {
+  chain input {
+    type filter hook input priority 0;
+
+    policy accept;
+
+    iifname "lo" accept
+    ct state established,related accept
+
+    tcp dport { 8080, 8088, 8090, 8092, 8093 } iifname != "lo" drop
+    udp dport { 8080, 8088, 8090, 8092, 8093 } iifname != "lo" drop
+  }
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Ritma Retention Policy Timer (daily)
+Documentation=https://github.com/GlobalSushrut/ritma-utl
+
+[Timer]
+# Run daily at 03:00 UTC
+OnCalendar=*-*-* 03:00:00
+# Randomize start within 30 minutes to avoid thundering herd
+RandomizedDelaySec=1800
+# Persist timer across reboots
+Persistent=true
+
+[Install]
+WantedBy=timers.target

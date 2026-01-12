@@ -1,8 +1,21 @@
 // CUE integration for consensus and compliance configuration
 // Provides type-safe policy configuration via CUE schemas
+//
+// ⚠️  EXPERIMENTAL: CUE loading is currently stubbed.
+// These functions return hardcoded defaults until utl_cue integration is complete.
+// Do NOT use in production compliance workflows without real CUE file loading.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Feature flag for experimental CUE integration.
+/// When false, CUE loading functions will return Err indicating the feature is not ready.
+pub const CUE_INTEGRATION_ENABLED: bool = true; // Set to false to hard-gate
+
+/// Returns true if CUE integration is using stubbed/experimental implementations.
+pub fn is_cue_experimental() -> bool {
+    true // Will be false when real CUE loading is implemented
+}
 
 /// CUE-based consensus configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,19 +99,22 @@ impl CueConfigLoader {
 
     /// Load consensus configuration from CUE for a tenant/policy
     ///
+    /// ⚠️  EXPERIMENTAL: Returns hardcoded defaults (not loaded from CUE files).
+    ///
     /// In production, this would:
     /// 1. Load CUE file from disk/config store
     /// 2. Validate against CUE schema
     /// 3. Parse into CueConsensusConfig
-    ///
-    /// For now, returns a default configuration.
     pub fn load_consensus_config(
         &self,
         tenant: &str,
         policy_name: &str,
     ) -> Result<CueConsensusConfig, String> {
-        // Stub: return default config
-        // TODO: Integrate with utl_cue to load actual CUE files
+        if !CUE_INTEGRATION_ENABLED {
+            return Err("CUE integration is disabled (experimental feature)".to_string());
+        }
+        // EXPERIMENTAL: return default config until real CUE loading is implemented
+        eprintln!("[WARN] CUE config for {}:{} is using experimental defaults", tenant, policy_name);
 
         let _key = format!("{tenant}:{policy_name}");
 

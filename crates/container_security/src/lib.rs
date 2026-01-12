@@ -618,7 +618,7 @@ mod tests {
                     verb: "GET".to_string(),
                     resource: "secrets".to_string(),
                     namespace: "default".to_string(),
-                    name: Some(format!("secret{}", i)),
+                    name: Some(format!("secret{i}")),
                     response_code: 200,
                 },
             );

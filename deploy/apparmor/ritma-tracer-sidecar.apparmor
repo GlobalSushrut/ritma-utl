@@ -1,0 +1,23 @@
+#include <tunables/global>
+
+profile ritma-tracer-sidecar /usr/local/bin/tracer_sidecar flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  capability,
+
+  /usr/local/bin/tracer_sidecar mr,
+
+  /run/ritma/** rw,
+  /run/ritma/locks/** rw,
+  /tmp/** rw,
+
+  /var/lib/ritma/** rw,
+  /var/log/audit/** r,
+
+  /proc/** r,
+  /sys/fs/bpf/** rw,
+  /sys/kernel/tracing/** r,
+
+  deny /etc/shadow r,
+}

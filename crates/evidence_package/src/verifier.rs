@@ -4,6 +4,7 @@ use crate::manifest::{EvidencePackageManifest, SignatureType};
 use crate::{PackageError, PackageResult};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -112,7 +113,7 @@ impl PackageVerifier {
             SignatureType::HmacSha256 => {
                 // For HMAC, we need the key from environment
                 if let Ok(key_hex) = std::env::var("UTLD_PACKAGE_VERIFY_KEY") {
-                    let key_bytes = hex::decode(&key_hex).map_err(|e| {
+                    let mut key_bytes = hex::decode(&key_hex).map_err(|e| {
                         PackageError::InvalidSigningKey(format!("invalid hex: {e}"))
                     })?;
 
@@ -120,12 +121,15 @@ impl PackageVerifier {
                         .map_err(|e| PackageError::InvalidSigningKey(format!("HMAC error: {e}")))?;
                     mac.update(package_hash.as_bytes());
 
-                    let expected = hex::decode(&sig.signature_hex).map_err(|e| {
+                    let mut expected = hex::decode(&sig.signature_hex).map_err(|e| {
                         PackageError::SignatureInvalid(format!("invalid sig hex: {e}"))
                     })?;
 
                     mac.verify_slice(&expected)
                         .map_err(|_| PackageError::SignatureInvalid("HMAC mismatch".to_string()))?;
+
+                    expected.zeroize();
+                    key_bytes.zeroize();
 
                     Ok(())
                 } else {
@@ -141,11 +145,12 @@ impl PackageVerifier {
                     PackageError::SignatureInvalid("missing public key".to_string())
                 })?;
 
-                let public_key_bytes = hex::decode(public_key_hex).map_err(|e| {
+                let mut public_key_bytes = hex::decode(public_key_hex).map_err(|e| {
                     PackageError::SignatureInvalid(format!("invalid pubkey hex: {e}"))
                 })?;
 
                 if public_key_bytes.len() != 32 {
+                    public_key_bytes.zeroize();
                     return Err(PackageError::SignatureInvalid(
                         "invalid pubkey length".to_string(),
                     ));
@@ -153,14 +158,17 @@ impl PackageVerifier {
 
                 let mut key_array = [0u8; 32];
                 key_array.copy_from_slice(&public_key_bytes);
+                public_key_bytes.zeroize();
 
                 let verifying_key = VerifyingKey::from_bytes(&key_array)
                     .map_err(|e| PackageError::SignatureInvalid(format!("invalid pubkey: {e}")))?;
 
-                let sig_bytes = hex::decode(&sig.signature_hex)
+                let mut sig_bytes = hex::decode(&sig.signature_hex)
                     .map_err(|e| PackageError::SignatureInvalid(format!("invalid sig hex: {e}")))?;
 
                 if sig_bytes.len() != 64 {
+                    sig_bytes.zeroize();
+                    key_array.zeroize();
                     return Err(PackageError::SignatureInvalid(
                         "invalid sig length".to_string(),
                     ));
@@ -168,6 +176,7 @@ impl PackageVerifier {
 
                 let mut sig_array = [0u8; 64];
                 sig_array.copy_from_slice(&sig_bytes);
+                sig_bytes.zeroize();
 
                 let signature = Signature::from_bytes(&sig_array);
 
@@ -176,6 +185,9 @@ impl PackageVerifier {
                     .map_err(|e| {
                         PackageError::SignatureInvalid(format!("ed25519 verify failed: {e}"))
                     })?;
+
+                sig_array.zeroize();
+                key_array.zeroize();
 
                 Ok(())
             }

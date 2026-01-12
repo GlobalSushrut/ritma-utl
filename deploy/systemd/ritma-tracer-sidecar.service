@@ -1,0 +1,56 @@
+[Unit]
+Description=Ritma Tracer Sidecar (CCTV Agent)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tracer_sidecar
+Restart=always
+RestartSec=2
+
+AppArmorProfile=ritma-tracer-sidecar
+
+Environment=RITMA_NODE_ID=%m
+Environment=NAMESPACE_ID=ns://host/default
+Environment=PRIVACY_MODE=hash-only
+Environment=PROC_ROOT=/proc
+Environment=AUDIT_LOG_PATH=/var/log/audit/audit.log
+Environment=RITMA_BASE_DIR=/var/lib/ritma
+Environment=INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+Environment=RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+Environment=RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+Environment=RITMA_EBPF_OBJECT_PATH=/var/lib/ritma/ebpf/ritma_trace.o
+
+RuntimeDirectory=ritma
+RuntimeDirectoryMode=0700
+RuntimeDirectory=ritma/locks
+StateDirectory=ritma
+StateDirectoryMode=0700
+
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+SystemCallFilter=@system-service bpf perf_event_open
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+
+IPAddressDeny=any
+
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON
+AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON
+
+[Install]
+WantedBy=multi-user.target

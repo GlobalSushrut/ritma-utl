@@ -27,11 +27,12 @@ use tenant_policy::{validate_lawbook, Lawbook};
 use truthscript::Policy as TsPolicy;
 use utl_client::UtlClient;
 use utld::{NodeRequest, NodeResponse, PolicyBurnRequest};
+use zeroize::Zeroize;
 
 #[derive(Parser)]
 #[command(name = "utl", about = "Universal Truth Layer CLI", version)]
 struct Cli {
-    /// Path to the utld Unix socket (defaults to UTLD_SOCKET or /tmp/utld.sock).
+    /// Path to the utld Unix socket (defaults to UTLD_SOCKET or /run/ritma/utld.sock).
     #[arg(short, long)]
     socket: Option<String>,
 
@@ -489,7 +490,7 @@ enum Commands {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let socket = cli.socket.unwrap_or_else(|| {
-        std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".to_string())
+        std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/run/ritma/utld.sock".to_string())
     });
 
     let client = UtlClient::new(socket);
@@ -2411,7 +2412,7 @@ fn cmd_truth_snapshot(client: &UtlClient, entity_id: u128, root_id: u128) -> Res
 
     let mut signature: Vec<u8> = Vec::new();
     if let Ok(key_hex) = std::env::var("UTLD_SIG_KEY") {
-        let key_bytes =
+        let mut key_bytes =
             hex::decode(&key_hex).map_err(|e| format!("invalid UTLD_SIG_KEY hex: {}", e))?;
 
         type HmacSha256 = Hmac<Sha256>;
@@ -2428,6 +2429,9 @@ fn cmd_truth_snapshot(client: &UtlClient, entity_id: u128, root_id: u128) -> Res
         mac.update(&buf);
         let sig = mac.finalize().into_bytes();
         signature = sig.to_vec();
+
+        buf.zeroize();
+        key_bytes.zeroize();
     }
 
     let mut p_container = BTreeMap::new();
@@ -2638,13 +2642,14 @@ fn cmd_truth_snapshot_export() -> Result<(), String> {
 
     // Optional witness signing using UTLD_WITNESS_SIG_KEY (hex HMAC-SHA256 over JSON body).
     if let Ok(key_hex) = std::env::var("UTLD_WITNESS_SIG_KEY") {
-        if let Ok(key_bytes) = hex::decode(&key_hex) {
+        if let Ok(mut key_bytes) = hex::decode(&key_hex) {
             if let Ok(body) = serde_json::to_vec(&snapshot) {
                 type HmacSha256 = Hmac<Sha256>;
                 if let Ok(mut mac) = HmacSha256::new_from_slice(&key_bytes) {
                     mac.update(&body);
                     let sig = mac.finalize().into_bytes();
                     snapshot.witness_sig_hex = Some(hex::encode(sig));
+                    key_bytes.zeroize();
                 } else {
                     eprintln!("failed to create HMAC from UTLD_WITNESS_SIG_KEY; skipping witness signature");
                 }
@@ -2846,7 +2851,7 @@ fn cmd_policy_burn(
 
     let mut signature_hex: Option<String> = None;
     if let Ok(key_hex) = std::env::var("UTLD_POLICY_BURN_KEY") {
-        let key_bytes = hex::decode(&key_hex)
+        let mut key_bytes = hex::decode(&key_hex)
             .map_err(|e| format!("invalid UTLD_POLICY_BURN_KEY hex: {}", e))?;
 
         type HmacSha256 = Hmac<Sha256>;
@@ -2858,6 +2863,8 @@ fn cmd_policy_burn(
         mac.update(canonical.as_bytes());
         let sig = mac.finalize().into_bytes();
         signature_hex = Some(hex::encode(sig));
+
+        key_bytes.zeroize();
     }
 
     let mut meta = BTreeMap::new();

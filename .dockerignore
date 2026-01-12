@@ -1,0 +1,43 @@
+# Rust build outputs
+/target
+**/target
+
+# Cargo/git
+.git
+.gitignore
+
+# Build/deploy outputs
+/deploy-out
+**/deploy-out
+
+# Demo outputs / local runs
+/demo/enterprise-data
+/demo/enterprise-audit
+/demo/enterprise-proofpack
+/ritma-demo-out
+
+# Editor/OS junk
+.DS_Store
+*.swp
+*.swo
+*.tmp
+
+# Logs and large local artifacts
+*.log
+*.sqlite
+*.sqlite3
+
+# Node (if present)
+node_modules
+**/node_modules
+
+# Python (if present)
+__pycache__
+**/__pycache__
+*.pyc
+
+# Archives
+*.tar
+*.tar.gz
+*.tgz
+*.zip

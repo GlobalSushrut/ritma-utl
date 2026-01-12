@@ -22,8 +22,8 @@ mod tests {
         apply_isolation_profile(cgroup_root, tenant_b, 75, 1024);
 
         // Verify separate cgroup directories
-        let acme_path = format!("{}/tenants/did_ritma_tenant_acme", cgroup_root);
-        let globex_path = format!("{}/tenants/did_ritma_tenant_globex", cgroup_root);
+        let acme_path = format!("{cgroup_root}/tenants/did_ritma_tenant_acme");
+        let globex_path = format!("{cgroup_root}/tenants/did_ritma_tenant_globex");
 
         assert!(Path::new(&acme_path).exists(), "acme cgroup not created");
         assert!(
@@ -32,8 +32,8 @@ mod tests {
         );
 
         // Verify different limits
-        let acme_cpu = fs::read_to_string(format!("{}/cpu.max", acme_path)).unwrap_or_default();
-        let globex_cpu = fs::read_to_string(format!("{}/cpu.max", globex_path)).unwrap_or_default();
+        let acme_cpu = fs::read_to_string(format!("{acme_path}/cpu.max")).unwrap_or_default();
+        let globex_cpu = fs::read_to_string(format!("{globex_path}/cpu.max")).unwrap_or_default();
 
         assert!(acme_cpu.contains("50000"), "acme cpu limit incorrect");
         assert!(globex_cpu.contains("75000"), "globex cpu limit incorrect");
@@ -73,7 +73,7 @@ mod tests {
         let test_dir = "/tmp/ritma_test_evidence_isolation";
         fs::create_dir_all(test_dir).expect("failed to create test dir");
 
-        let events_path = format!("{}/decision_events.jsonl", test_dir);
+        let events_path = format!("{test_dir}/decision_events.jsonl");
 
         // Emit events for two tenants
         emit_decision_for_tenant(&events_path, "acme", "deny");
@@ -125,21 +125,18 @@ mod tests {
 
     fn apply_isolation_profile(cgroup_root: &str, did: &str, cpu_pct: u8, memory_mb: u64) {
         let slug = did.replace(':', "_");
-        let path = format!("{}/tenants/{}", cgroup_root, slug);
+        let path = format!("{cgroup_root}/tenants/{slug}");
         fs::create_dir_all(&path).expect("failed to create cgroup dir");
 
         // Write cpu.max
         let period_us = 100_000u64;
         let quota = (period_us * cpu_pct as u64) / 100;
-        fs::write(
-            format!("{}/cpu.max", path),
-            format!("{} {}", quota, period_us),
-        )
-        .expect("failed to write cpu.max");
+        fs::write(format!("{path}/cpu.max"), format!("{quota} {period_us}"))
+            .expect("failed to write cpu.max");
 
         // Write memory.max
         let bytes = memory_mb * 1024 * 1024;
-        fs::write(format!("{}/memory.max", path), format!("{}", bytes))
+        fs::write(format!("{path}/memory.max"), format!("{bytes}"))
             .expect("failed to write memory.max");
     }
 
@@ -154,6 +151,7 @@ mod tests {
             .output();
     }
 
+    #[allow(dead_code)]
     fn list_firewall_rules() -> String {
         use std::process::Command;
 
@@ -192,7 +190,7 @@ mod tests {
             .expect("failed to open events file");
 
         use std::io::Write;
-        writeln!(file, "{}", event).expect("failed to write event");
+        writeln!(file, "{event}").expect("failed to write event");
     }
 
     fn read_all_decision_events(path: &str) -> Vec<serde_json::Value> {

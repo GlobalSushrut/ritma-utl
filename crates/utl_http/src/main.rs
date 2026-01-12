@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::tls_transport::PeerDid;
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{DefaultBodyLimit, Extension, Query, State},
     routing::{get, post},
     Json, Router,
 };
@@ -18,7 +18,7 @@ use biz_api::UsageEvent;
 use compliance_index::ControlEvalRecord;
 use dig_index::DigIndexEntry;
 use evidence_package::{EvidencePackageManifest, PackageScope, PackageSigner, SigningKey};
-use node_keystore::{KeystoreKey, NodeKeystore};
+use node_keystore::NodeKeystore;
 use opentelemetry::global;
 use opentelemetry_sdk::trace as sdktrace;
 use security_events::DecisionEvent;
@@ -38,7 +38,10 @@ use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Registry;
 use utl_client::UtlClient;
+use zeroize::Zeroize;
 use utld::{NodeRequest, NodeResponse};
+
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
 type UsageTotals = BTreeMap<(String, String, String), u64>;
 
@@ -47,14 +50,237 @@ struct AppState {
     client: Arc<UtlClient>,
     auth_token: Option<String>,
     auth_tenants: BTreeMap<String, String>,
+    jwt_decoding_key: Option<DecodingKey>,
+    jwt_validation: Option<Validation>,
+    jwt_allow_legacy: bool,
     metrics: Arc<Metrics>,
     usage_totals: Arc<Mutex<UsageTotals>>,
 }
 
-fn load_http_mtls_config_from_env() -> Option<MtlsConfig> {
-    let ca_bundle_path = std::env::var("UTL_HTTP_TLS_CA").ok()?;
-    let cert_path = std::env::var("UTL_HTTP_TLS_CERT").ok()?;
-    let key_path = std::env::var("UTL_HTTP_TLS_KEY").ok()?;
+#[derive(Deserialize)]
+struct JwtClaims {
+    #[serde(default)]
+    tenant_id: Option<String>,
+    #[serde(default)]
+    all: Option<bool>,
+    exp: usize,
+    #[serde(default)]
+    nbf: Option<usize>,
+    #[serde(default)]
+    iat: Option<usize>,
+    #[serde(default)]
+    iss: Option<String>,
+    #[serde(default)]
+    aud: Option<String>,
+}
+
+fn validate_tenant_id_str(tenant: &str) -> Result<(), String> {
+    if tenant.is_empty() {
+        return Err("tenant ID cannot be empty".to_string());
+    }
+    if tenant.len() > 128 {
+        return Err("tenant ID too long (max 128)".to_string());
+    }
+    for ch in tenant.chars() {
+        if !ch.is_alphanumeric() && !matches!(ch, '-' | '_' | '.') {
+            return Err(format!("invalid character '{ch}' in tenant ID"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_local_file_path(name: &str, path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err(format!("{name} cannot be empty"));
+    }
+    if path.len() > 1024 {
+        return Err(format!("{name} too long"));
+    }
+    if path.contains("..") {
+        return Err(format!("{name} traversal not allowed"));
+    }
+    if path.contains('\0') {
+        return Err(format!("{name} must not contain NUL"));
+    }
+    if path.contains('\n') || path.contains('\r') {
+        return Err(format!("{name} must not contain newlines"));
+    }
+    Ok(())
+}
+
+fn validate_optional_ascii(name: &str, v: &str, max_len: usize) -> Result<(), String> {
+    if v.trim().is_empty() {
+        return Ok(());
+    }
+    validate_ascii_nonempty(name, v, max_len)
+}
+
+fn env_max_body_bytes() -> usize {
+    match std::env::var("UTLD_HTTP_MAX_BODY_BYTES") {
+        Ok(v) => v
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (1_024..=10_485_760).contains(n))
+            .unwrap_or(1_048_576),
+        Err(_) => 1_048_576,
+    }
+}
+
+fn env_truthy(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
+            let v = v.trim().to_lowercase();
+            !(v.is_empty() || v == "0" || v == "false" || v == "no")
+        }
+        Err(_) => false,
+    }
+}
+
+fn validate_limit_usize(limit: usize) -> Result<(), String> {
+    if limit == 0 {
+        return Err("limit cannot be 0".to_string());
+    }
+    if limit > 10_000 {
+        return Err("limit too large (max 10000)".to_string());
+    }
+    Ok(())
+}
+
+fn validate_ts_u64(ts: u64) -> Result<(), String> {
+    const MAX_TS: u64 = 4_102_444_800;
+    if ts > MAX_TS {
+        return Err("timestamp too far in the future".to_string());
+    }
+    Ok(())
+}
+
+fn validate_ts_window(ts_start: Option<u64>, ts_end: Option<u64>) -> Result<(), String> {
+    if let Some(ts) = ts_start {
+        validate_ts_u64(ts)?;
+    }
+    if let Some(ts) = ts_end {
+        validate_ts_u64(ts)?;
+    }
+    if let (Some(a), Some(b)) = (ts_start, ts_end) {
+        if a > b {
+            return Err("ts_start must be <= ts_end".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_socket_path(path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("socket path cannot be empty".to_string());
+    }
+    if path.len() > 1024 {
+        return Err("socket path too long".to_string());
+    }
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err("socket path must be absolute".to_string());
+    }
+    if path.contains("..") {
+        return Err("socket path traversal not allowed".to_string());
+    }
+    Ok(())
+}
+
+fn validate_ascii_nonempty(name: &str, s: &str, max_len: usize) -> Result<(), String> {
+    if s.trim().is_empty() {
+        return Err(format!("{name} cannot be empty"));
+    }
+    if s.len() > max_len {
+        return Err(format!("{name} too long"));
+    }
+    if !s.is_ascii() {
+        return Err(format!("{name} must be ASCII"));
+    }
+    Ok(())
+}
+
+fn validate_param_map(params: &BTreeMap<String, String>) -> Result<(), String> {
+    if params.len() > 256 {
+        return Err("params has too many entries (max 256)".to_string());
+    }
+    for (k, v) in params.iter() {
+        validate_ascii_nonempty("param key", k, 128)?;
+        if k.contains("..") {
+            return Err("param key traversal not allowed".to_string());
+        }
+        if k.contains('\n') || k.contains('\r') {
+            return Err("param key must not contain newlines".to_string());
+        }
+        if v.len() > 4096 {
+            return Err("param value too long".to_string());
+        }
+        if v.contains('\0') {
+            return Err("param value must not contain NUL".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn load_jwt_auth_from_env() -> Result<Option<(DecodingKey, Validation, bool)>, String> {
+    let path = std::env::var("UTL_HTTP_AUTH_JWT_PUBKEY_PATH").ok();
+    let pem = std::env::var("UTL_HTTP_AUTH_JWT_PUBKEY_PEM").ok();
+
+    let key_pem = match (path, pem) {
+        (Some(p), _) if !p.trim().is_empty() => std::fs::read_to_string(&p)
+            .map_err(|e| format!("failed to read UTL_HTTP_AUTH_JWT_PUBKEY_PATH {p}: {e}"))?,
+        (_, Some(pem)) if !pem.trim().is_empty() => pem,
+        _ => return Ok(None),
+    };
+
+    let key = DecodingKey::from_ed_pem(key_pem.as_bytes())
+        .map_err(|_| "invalid Ed25519 public key PEM".to_string())?;
+
+    let mut validation = Validation::new(Algorithm::EdDSA);
+    validation.validate_exp = true;
+    validation.validate_nbf = true;
+    if let Ok(iss) = std::env::var("UTL_HTTP_AUTH_JWT_ISS") {
+        if !iss.trim().is_empty() {
+            validation.set_issuer(&[iss]);
+        }
+    }
+    if let Ok(aud) = std::env::var("UTL_HTTP_AUTH_JWT_AUD") {
+        if !aud.trim().is_empty() {
+            validation.set_audience(&[aud]);
+        }
+    }
+
+    let allow_legacy = match std::env::var("UTL_HTTP_AUTH_ALLOW_LEGACY") {
+        Ok(v) => {
+            let v = v.to_lowercase();
+            !(v == "0" || v == "false" || v == "no")
+        }
+        Err(_) => false,
+    };
+
+    Ok(Some((key, validation, allow_legacy)))
+}
+
+fn load_http_mtls_config_from_env() -> Result<MtlsConfig, String> {
+    let ca_bundle_path = std::env::var("UTL_HTTP_TLS_CA")
+        .map_err(|_| "missing UTL_HTTP_TLS_CA".to_string())?;
+    let cert_path = std::env::var("UTL_HTTP_TLS_CERT")
+        .map_err(|_| "missing UTL_HTTP_TLS_CERT".to_string())?;
+    let key_path = std::env::var("UTL_HTTP_TLS_KEY")
+        .map_err(|_| "missing UTL_HTTP_TLS_KEY".to_string())?;
+
+    if ca_bundle_path.trim().is_empty() || cert_path.trim().is_empty() || key_path.trim().is_empty() {
+        return Err("TLS CA/cert/key paths must be non-empty".to_string());
+    }
+    if !std::path::Path::new(&ca_bundle_path).is_file() {
+        return Err(format!("UTL_HTTP_TLS_CA not found: {ca_bundle_path}"));
+    }
+    if !std::path::Path::new(&cert_path).is_file() {
+        return Err(format!("UTL_HTTP_TLS_CERT not found: {cert_path}"));
+    }
+    if !std::path::Path::new(&key_path).is_file() {
+        return Err(format!("UTL_HTTP_TLS_KEY not found: {key_path}"));
+    }
 
     let require_client_auth = std::env::var("UTL_HTTP_TLS_REQUIRE_CLIENT_AUTH")
         .ok()
@@ -64,7 +290,7 @@ fn load_http_mtls_config_from_env() -> Option<MtlsConfig> {
         })
         .unwrap_or(true);
 
-    Some(MtlsConfig {
+    Ok(MtlsConfig {
         ca_bundle_path,
         cert_path,
         key_path,
@@ -100,8 +326,27 @@ struct DecisionSearchResult {
 async fn search_decisions(
     Query(q): Query<DecisionSearchQuery>,
 ) -> Result<Json<Vec<DecisionSearchResult>>, (axum::http::StatusCode, String)> {
+    validate_limit_usize(q.limit).map_err(bad_request)?;
+    if let Some(ref tid) = q.tenant_id {
+        validate_tenant_id_str(tid).map_err(bad_request)?;
+    }
+    if let Some(ref kind) = q.event_kind {
+        validate_optional_ascii("event_kind", kind, 64).map_err(bad_request)?;
+    }
+    if let Some(ref cid) = q.policy_commit_id {
+        validate_optional_ascii("policy_commit_id", cid, 128).map_err(bad_request)?;
+    }
+    if let Some(ref name) = q.policy_name {
+        validate_optional_ascii("policy_name", name, 256).map_err(bad_request)?;
+    }
+    if let Some(ref dec) = q.policy_decision {
+        validate_optional_ascii("policy_decision", dec, 64).map_err(bad_request)?;
+    }
+    validate_ts_window(q.ts_start, q.ts_end).map_err(bad_request)?;
+
     let path = std::env::var("UTLD_DECISION_EVENTS")
         .unwrap_or_else(|_| "./decision_events.jsonl".to_string());
+    validate_local_file_path("UTLD_DECISION_EVENTS", &path).map_err(bad_request)?;
     let file = File::open(&path)
         .map_err(|e| bad_request(format!("failed to open decision events {path}: {e}")))?;
     let reader = std::io::BufReader::new(file);
@@ -162,6 +407,9 @@ async fn search_decisions(
             }
         }
         if let Some(ref txt) = q.text {
+            if txt.len() > 1024 {
+                return Err(bad_request("text too long"));
+            }
             let haystacks = [
                 ev.policy_name.as_deref().unwrap_or(""),
                 ev.policy_decision.as_str(),
@@ -192,6 +440,16 @@ async fn securitykit_connectors_dry_run(
             axum::http::StatusCode::BAD_REQUEST,
             "connectors array must not be empty".to_string(),
         ));
+    }
+
+    if req.connectors.len() > 32 {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "too many connectors".to_string(),
+        ));
+    }
+    for name in &req.connectors {
+        validate_ascii_nonempty("connector", name, 64).map_err(bad_request)?;
     }
 
     let mut builder = SecurityKit::builder();
@@ -230,6 +488,10 @@ async fn securitykit_connectors_dry_run(
 async fn securitykit_evidence_package(
     Json(req): Json<EvidencePackageRequest>,
 ) -> Result<Json<EvidencePackageManifest>, (axum::http::StatusCode, String)> {
+    validate_tenant_id_str(&req.tenant).map_err(bad_request)?;
+    validate_ascii_nonempty("scope_type", &req.scope_type, 64).map_err(bad_request)?;
+    validate_ascii_nonempty("scope_id", &req.scope_id, 256).map_err(bad_request)?;
+
     // Parse scope similar to utl_cli evidence_package_commands.
     let scope = match req.scope_type.to_lowercase().as_str() {
         "policy_commit" | "commit" => PackageScope::PolicyCommit {
@@ -302,9 +564,33 @@ async fn securitykit_evidence_package(
 
             match NodeKeystore::from_env().and_then(|ks| ks.key_for_signing(&key_id)) {
                 Ok(keystore_key) => {
-                    let signing_key = match keystore_key {
-                        KeystoreKey::HmacSha256(bytes) => SigningKey::HmacSha256(bytes),
-                        KeystoreKey::Ed25519(sk) => SigningKey::Ed25519(sk),
+                    let signing_key = if keystore_key.key_type == "hmac"
+                        || keystore_key.key_type == "hmac_sha256"
+                    {
+                        let bytes = hex::decode(&keystore_key.key_material)
+                            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                        SigningKey::HmacSha256(bytes)
+                    } else if keystore_key.key_type == "ed25519" {
+                        let mut bytes = hex::decode(&keystore_key.key_material)
+                            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                        if bytes.len() != 32 {
+                            bytes.zeroize();
+                            return Err((
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "ed25519 key must be 32 bytes".to_string(),
+                            ));
+                        }
+                        let mut kb = [0u8; 32];
+                        kb.copy_from_slice(&bytes);
+                        bytes.zeroize();
+                        let sk = ed25519_dalek::SigningKey::from_bytes(&kb);
+                        kb.zeroize();
+                        SigningKey::Ed25519(sk)
+                    } else {
+                        return Err((
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("unsupported key type: {}", keystore_key.key_type),
+                        ));
                     };
                     let signer = PackageSigner::new(signing_key, "utl_http".to_string());
                     signer.sign(&mut manifest).map_err(|e| {
@@ -680,6 +966,9 @@ async fn send_key_metadata_to_ritma_cloud() -> Result<(), reqwest::Error> {
 async fn securitykit_report(
     Query(q): Query<SecurityKitReportQuery>,
 ) -> Result<Json<SecurityReport>, (axum::http::StatusCode, String)> {
+    if let Some(ref tid) = q.tenant_id {
+        validate_tenant_id_str(tid).map_err(bad_request)?;
+    }
     SecurityReport::generate_for_tenant(q.tenant_id.as_deref())
         .map(Json)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
@@ -707,7 +996,23 @@ struct DigSearchResult {
 async fn search_digs(
     Query(q): Query<DigSearchQuery>,
 ) -> Result<Json<Vec<DigSearchResult>>, (axum::http::StatusCode, String)> {
+    validate_limit_usize(q.limit).map_err(bad_request)?;
+    if let Some(ref tid) = q.tenant_id {
+        validate_tenant_id_str(tid).map_err(bad_request)?;
+    }
+    if let Some(ref rid) = q.root_id {
+        validate_optional_ascii("root_id", rid, 256).map_err(bad_request)?;
+    }
+    if let Some(ref cid) = q.policy_commit_id {
+        validate_optional_ascii("policy_commit_id", cid, 128).map_err(bad_request)?;
+    }
+    if let Some(ref dec) = q.policy_decision {
+        validate_optional_ascii("policy_decision", dec, 64).map_err(bad_request)?;
+    }
+    validate_ts_window(q.time_start, q.time_end).map_err(bad_request)?;
+
     let path = std::env::var("UTLD_DIG_INDEX").unwrap_or_else(|_| "./dig_index.jsonl".to_string());
+    validate_local_file_path("UTLD_DIG_INDEX", &path).map_err(bad_request)?;
     let file = File::open(&path)
         .map_err(|e| bad_request(format!("failed to open dig index {path}: {e}")))?;
     let reader = std::io::BufReader::new(file);
@@ -887,8 +1192,14 @@ where
 async fn search_compliance(
     Query(q): Query<ComplianceSearchQuery>,
 ) -> Result<Json<Vec<ComplianceSearchResult>>, (axum::http::StatusCode, String)> {
+    validate_limit_usize(q.limit).map_err(bad_request)?;
+    if let Some(ref tid) = q.tenant_id {
+        validate_tenant_id_str(tid).map_err(bad_request)?;
+    }
+
     let path = std::env::var("UTLD_COMPLIANCE_INDEX")
         .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
+    validate_local_file_path("UTLD_COMPLIANCE_INDEX", &path).map_err(bad_request)?;
     let file = File::open(&path)
         .map_err(|e| bad_request(format!("failed to open compliance index {path}: {e}")))?;
     let reader = std::io::BufReader::new(file);
@@ -965,6 +1276,8 @@ async fn ingest_usage_event(
     State(state): State<AppState>,
     Json(ev): Json<UsageEvent>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    validate_tenant_id_str(&ev.tenant_id).map_err(bad_request)?;
+
     // Derive string keys for product and metric using serde's snake_case
     // representation, matching what utld and biz_api already emit.
     let product_val = serde_json::to_value(ev.product)
@@ -1106,19 +1419,29 @@ fn init_tracing() {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
-    let socket = std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".to_string());
+    let socket = std::env::var("UTLD_SOCKET")
+        .unwrap_or_else(|_| "/run/ritma/utld.sock".to_string());
+    validate_socket_path(&socket).map_err(|e| std::io::Error::other(e))?;
     let client = Arc::new(UtlClient::new(socket));
 
+    let (jwt_decoding_key, jwt_validation, jwt_allow_legacy) =
+        match load_jwt_auth_from_env().map_err(|e| std::io::Error::other(e))? {
+            Some((k, v, allow)) => (Some(k), Some(v), allow),
+            None => (None, None, false),
+        };
     let auth_token = std::env::var("UTLD_API_TOKEN").ok();
-    let auth_tenants = load_tenant_tokens();
+    let auth_tenants = load_tenant_tokens().map_err(|e| std::io::Error::other(e))?;
     let metrics = Arc::new(Metrics::new());
     let usage_totals = Arc::new(Mutex::new(BTreeMap::new()));
     let state = AppState {
         client,
         auth_token,
         auth_tenants,
+        jwt_decoding_key,
+        jwt_validation,
+        jwt_allow_legacy,
         metrics,
         usage_totals,
     };
@@ -1156,38 +1479,54 @@ async fn main() {
             post(securitykit_evidence_package),
         )
         .route("/securitykit/report", get(securitykit_report))
+        .layer(DefaultBodyLimit::max(env_max_body_bytes()))
         .with_state(state);
 
     let addr: SocketAddr = std::env::var("UTLD_HTTP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8080".to_string())
         .parse()
-        .expect("invalid UTLD_HTTP_ADDR");
+        .map_err(|e| std::io::Error::other(format!("invalid UTLD_HTTP_ADDR: {e}")))?;
+    if addr.port() == 0 {
+        return Err(std::io::Error::other("UTLD_HTTP_ADDR port cannot be 0").into());
+    }
+
+    let strict_tls = env_truthy("UTL_HTTP_STRICT_TLS");
+    if strict_tls && !addr.ip().is_loopback() {
+        return Err(std::io::Error::other("UTLD_HTTP_ADDR must be loopback when UTL_HTTP_STRICT_TLS=1").into());
+    }
 
     // Optional HTTPS listener using tokio-rustls + security_os helpers.
-    if let Ok(tls_addr_str) = std::env::var("UTL_HTTP_TLS_ADDR") {
-        if let Some(cfg) = load_http_mtls_config_from_env() {
-            match tls_addr_str.parse::<SocketAddr>() {
-                Ok(tls_addr) => {
-                    let app_clone = app.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            tls_transport::serve_https_tokio_rustls(tls_addr, cfg, app_clone).await
-                        {
-                            tracing::error!("HTTPS server error: {}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    tracing::error!("invalid UTL_HTTP_TLS_ADDR {}: {}", tls_addr_str, e);
-                }
+    let tls_addr_var = std::env::var("UTL_HTTP_TLS_ADDR").ok().map(|s| s.trim().to_string());
+    if strict_tls && tls_addr_var.as_deref().unwrap_or("").is_empty() {
+        return Err(std::io::Error::other("UTL_HTTP_TLS_ADDR required when UTL_HTTP_STRICT_TLS=1").into());
+    }
+
+    if let Some(tls_addr_str) = tls_addr_var {
+        if !tls_addr_str.is_empty() {
+            let cfg = load_http_mtls_config_from_env().map_err(|e| std::io::Error::other(e))?;
+            if strict_tls && !cfg.require_client_auth {
+                return Err(std::io::Error::other("mTLS client auth required when UTL_HTTP_STRICT_TLS=1").into());
             }
+            let tls_addr: SocketAddr = tls_addr_str
+                .parse()
+                .map_err(|e| std::io::Error::other(format!("invalid UTL_HTTP_TLS_ADDR: {e}")))?;
+            if tls_addr.port() == 0 {
+                return Err(std::io::Error::other("UTL_HTTP_TLS_ADDR port cannot be 0").into());
+            }
+            let app_clone = app.clone();
+            tokio::spawn(async move {
+                if let Err(e) = tls_transport::serve_https_tokio_rustls(tls_addr, cfg, app_clone).await {
+                    tracing::error!("HTTPS server error: {}", e);
+                }
+            });
         }
     }
 
     tracing::info!("utl_http listening on {}", addr);
-    axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app)
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -1216,8 +1555,8 @@ async fn readiness(
 
 async fn list_roots(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<RootsResponse>, (axum::http::StatusCode, String)> {
-    let headers = axum::http::HeaderMap::new();
     let _auth_tenant = check_auth(&state, &headers)?;
     let resp = state
         .client
@@ -1266,6 +1605,11 @@ async fn register_root(
         body.params.entry("src_did".to_string()).or_insert(did_str);
     }
 
+    if let Some(tid) = body.params.get("tenant_id") {
+        validate_tenant_id_str(tid).map_err(bad_request)?;
+    }
+    validate_param_map(&body.params).map_err(bad_request)?;
+
     let root_hash = parse_hash32(&body.root_hash).map_err(bad_request)?;
     let tx_hook = body.tx_hook.unwrap_or(body.root_id);
 
@@ -1305,6 +1649,7 @@ async fn build_dig(
     Json(body): Json<DigBuildRequest>,
 ) -> Result<Json<DigSummaryResponse>, (axum::http::StatusCode, String)> {
     let _auth_tenant = check_auth(&state, &headers)?;
+    validate_ts_window(Some(body.time_start), Some(body.time_end)).map_err(bad_request)?;
     let req = NodeRequest::BuildDigFile {
         root_id: body.root_id,
         file_id: body.file_id,
@@ -1432,6 +1777,19 @@ async fn record_transition(
         mut params,
     } = body;
 
+    validate_ascii_nonempty("logic_ref", &logic_ref, 1024).map_err(bad_request)?;
+    validate_ascii_nonempty("wall", &wall, 256).map_err(bad_request)?;
+    validate_param_map(&params).map_err(bad_request)?;
+    if let Some(tid) = params.get("tenant_id") {
+        validate_tenant_id_str(tid).map_err(bad_request)?;
+    }
+    if data.len() > 1_048_576 {
+        return Err(bad_request("data too large"));
+    }
+    if signature.len() > 8192 {
+        return Err(bad_request("signature too large"));
+    }
+
     if let Some(tid) = auth_tenant.as_deref() {
         match params.get("tenant_id") {
             Some(p_tid) if p_tid == tid => {}
@@ -1485,7 +1843,14 @@ async fn record_transition(
 }
 
 fn parse_hash32(hex_str: &str) -> Result<[u8; 32], String> {
-    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex: {e}"))?;
+    let s = hex_str.trim();
+    if s.len() != 64 {
+        return Err("hash must be 64 hex chars".to_string());
+    }
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("hash must be hex".to_string());
+    }
+    let bytes = hex::decode(s).map_err(|e| format!("invalid hex: {e}"))?;
     if bytes.len() != 32 {
         return Err(format!("expected 32 bytes, got {}", bytes.len()));
     }
@@ -1510,10 +1875,10 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
     output
 }
 
-fn load_tenant_tokens() -> BTreeMap<String, String> {
+fn load_tenant_tokens() -> Result<BTreeMap<String, String>, String> {
     let raw = match std::env::var("UTLD_API_TOKENS") {
         Ok(v) => v,
-        Err(_) => return BTreeMap::new(),
+        Err(_) => return Ok(BTreeMap::new()),
     };
 
     let mut map = BTreeMap::new();
@@ -1526,12 +1891,16 @@ fn load_tenant_tokens() -> BTreeMap<String, String> {
             let tenant = tenant.trim();
             let token = token.trim();
             if !tenant.is_empty() && !token.is_empty() {
+                validate_tenant_id_str(tenant)?;
+                if token.len() > 2048 {
+                    return Err("token too long".to_string());
+                }
                 map.insert(tenant.to_string(), token.to_string());
             }
         }
     }
 
-    map
+    Ok(map)
 }
 
 fn internal_err(e: impl std::fmt::Debug) -> (axum::http::StatusCode, String) {
@@ -1549,7 +1918,10 @@ fn check_auth(
     state: &AppState,
     headers: &axum::http::HeaderMap,
 ) -> Result<Option<String>, (axum::http::StatusCode, String)> {
-    if state.auth_token.is_none() && state.auth_tenants.is_empty() {
+    if state.jwt_decoding_key.is_none()
+        && state.auth_token.is_none()
+        && state.auth_tenants.is_empty()
+    {
         return Ok(None);
     }
 
@@ -1557,6 +1929,58 @@ fn check_auth(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+
+    if let (Some(key), Some(validation)) = (&state.jwt_decoding_key, &state.jwt_validation) {
+        let token = auth.strip_prefix("Bearer ").unwrap_or("");
+        if token.is_empty() {
+            return Err((
+                axum::http::StatusCode::UNAUTHORIZED,
+                "missing or invalid Authorization bearer token".to_string(),
+            ));
+        }
+
+        match decode::<JwtClaims>(token, key, validation) {
+            Ok(data) => {
+                let claims = data.claims;
+                let _ = (
+                    claims.exp,
+                    claims.nbf,
+                    claims.iat,
+                    claims.iss.as_deref(),
+                    claims.aud.as_deref(),
+                );
+                if let Some(tenant) = claims.tenant_id {
+                    if let Some(header_tid) =
+                        headers.get("x-tenant-id").and_then(|v| v.to_str().ok())
+                    {
+                        if header_tid != tenant {
+                            return Err((
+                                axum::http::StatusCode::FORBIDDEN,
+                                "tenant_id does not match token scope".to_string(),
+                            ));
+                        }
+                    }
+                    return Ok(Some(tenant));
+                }
+
+                if claims.all.unwrap_or(false) {
+                    return Ok(None);
+                }
+
+                return Err((
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "token missing required tenant scope".to_string(),
+                ));
+            }
+            Err(_) if state.jwt_allow_legacy => {}
+            Err(_) => {
+                return Err((
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "missing or invalid Authorization bearer token".to_string(),
+                ));
+            }
+        }
+    }
 
     if !state.auth_tenants.is_empty() {
         let token = auth.strip_prefix("Bearer ").unwrap_or("");
@@ -1712,76 +2136,6 @@ impl SecurityTool for SqlInjectionTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::{HeaderMap, HeaderValue, StatusCode};
-
-    #[test]
-    fn tenant_token_auth_succeeds_and_returns_tenant() {
-        std::env::set_var("UTLD_API_TOKENS", "tenantA=tokenA");
-        let auth_tenants = load_tenant_tokens();
-        assert_eq!(auth_tenants.get("tenantA").unwrap(), "tokenA");
-
-        let state = AppState {
-            client: Arc::new(UtlClient::new("/tmp/utld-test.sock")),
-            auth_token: None,
-            auth_tenants,
-            metrics: Arc::new(Metrics::new()),
-            usage_totals: Arc::new(Mutex::new(BTreeMap::new())),
-        };
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer tokenA"),
-        );
-        headers.insert("x-tenant-id", HeaderValue::from_static("tenantA"));
-
-        let tenant = check_auth(&state, &headers).expect("auth ok");
-        assert_eq!(tenant.as_deref(), Some("tenantA"));
-    }
-
-    #[test]
-    fn tenant_token_auth_forbidden_on_mismatched_tenant_header() {
-        std::env::set_var("UTLD_API_TOKENS", "tenantA=tokenA");
-        let auth_tenants = load_tenant_tokens();
-        let state = AppState {
-            client: Arc::new(UtlClient::new("/tmp/utld-test.sock")),
-            auth_token: None,
-            auth_tenants,
-            metrics: Arc::new(Metrics::new()),
-            usage_totals: Arc::new(Mutex::new(BTreeMap::new())),
-        };
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer tokenA"),
-        );
-        headers.insert("x-tenant-id", HeaderValue::from_static("tenantB"));
-
-        let res = check_auth(&state, &headers);
-        assert!(res.is_err());
-        let (status, _) = res.unwrap_err();
-        assert_eq!(status, StatusCode::FORBIDDEN);
-    }
-
-    #[test]
-    fn key_governance_enforcement_env_parsing() {
-        std::env::remove_var("RITMA_ENFORCE_KEY_GOVERNANCE");
-        assert!(!key_governance_enforcement_enabled());
-
-        std::env::set_var("RITMA_ENFORCE_KEY_GOVERNANCE", "1");
-        assert!(key_governance_enforcement_enabled());
-
-        std::env::set_var("RITMA_ENFORCE_KEY_GOVERNANCE", "true");
-        assert!(key_governance_enforcement_enabled());
-
-        std::env::set_var("RITMA_ENFORCE_KEY_GOVERNANCE", "false");
-        assert!(!key_governance_enforcement_enabled());
-    }
-}
 struct BruteForceAuthTool;
 
 impl SecurityTool for BruteForceAuthTool {
@@ -1840,5 +2194,82 @@ impl SecurityTool for BruteForceAuthTool {
         }
 
         verdict
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue, StatusCode};
+
+    #[test]
+    fn tenant_token_auth_succeeds_and_returns_tenant() {
+        std::env::set_var("UTLD_API_TOKENS", "tenantA=tokenA");
+        let auth_tenants = load_tenant_tokens().unwrap();
+        assert_eq!(auth_tenants.get("tenantA").unwrap(), "tokenA");
+
+        let state = AppState {
+            client: Arc::new(UtlClient::new("/run/ritma/utld-test.sock")),
+            auth_token: None,
+            auth_tenants,
+            jwt_decoding_key: None,
+            jwt_validation: None,
+            jwt_allow_legacy: false,
+            metrics: Arc::new(Metrics::new()),
+            usage_totals: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer tokenA"),
+        );
+        headers.insert("x-tenant-id", HeaderValue::from_static("tenantA"));
+
+        let tenant = check_auth(&state, &headers).expect("auth ok");
+        assert_eq!(tenant.as_deref(), Some("tenantA"));
+    }
+
+    #[test]
+    fn tenant_token_auth_forbidden_on_mismatched_tenant_header() {
+        std::env::set_var("UTLD_API_TOKENS", "tenantA=tokenA");
+        let auth_tenants = load_tenant_tokens().unwrap();
+        let state = AppState {
+            client: Arc::new(UtlClient::new("/run/ritma/utld-test.sock")),
+            auth_token: None,
+            auth_tenants,
+            jwt_decoding_key: None,
+            jwt_validation: None,
+            jwt_allow_legacy: false,
+            metrics: Arc::new(Metrics::new()),
+            usage_totals: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer tokenA"),
+        );
+        headers.insert("x-tenant-id", HeaderValue::from_static("tenantB"));
+
+        let res = check_auth(&state, &headers);
+        assert!(res.is_err());
+        let (status, _) = res.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn key_governance_enforcement_env_parsing() {
+        std::env::remove_var("RITMA_ENFORCE_KEY_GOVERNANCE");
+        assert!(!key_governance_enforcement_enabled());
+
+        std::env::set_var("RITMA_ENFORCE_KEY_GOVERNANCE", "1");
+        assert!(key_governance_enforcement_enabled());
+
+        std::env::set_var("RITMA_ENFORCE_KEY_GOVERNANCE", "true");
+        assert!(key_governance_enforcement_enabled());
+
+        std::env::set_var("RITMA_ENFORCE_KEY_GOVERNANCE", "false");
+        assert!(!key_governance_enforcement_enabled());
     }
 }

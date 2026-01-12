@@ -1,5 +1,4 @@
 use ark_bn254::Bn254;
-use ark_crypto_primitives::snark::SNARK;
 use ark_ec::pairing::Pairing;
 use ark_ff::{BigInteger, PrimeField};
 use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, ProvingKey};
@@ -7,6 +6,7 @@ use ark_relations::{
     lc,
     r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable},
 };
+use ark_snark::SNARK;
 use core_types::{Hash, UID};
 use rand::thread_rng;
 

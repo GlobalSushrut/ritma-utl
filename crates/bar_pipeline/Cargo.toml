@@ -3,6 +3,9 @@ name = "bar_pipeline"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 bar_powers = { path = "../bar_powers" }
 common_models = { path = "../common_models" }

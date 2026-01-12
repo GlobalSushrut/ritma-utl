@@ -295,7 +295,7 @@ mod tests {
         // Verify chain integrity
         let result = process.verify_chain("tenant_a", "SOC2");
         if let Err(e) = &result {
-            eprintln!("Chain verification failed: {}", e);
+            eprintln!("Chain verification failed: {e}");
         }
         assert!(result.is_ok());
     }

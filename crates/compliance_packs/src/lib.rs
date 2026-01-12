@@ -81,11 +81,11 @@ mod tests {
 
     fn mk_receipt(ns: &str, prev: &str, ts: &str) -> Receipt {
         let mut r = Receipt {
-            receipt_id: format!("r_{}", ts),
+            receipt_id: format!("r_{ts}"),
             namespace_id: ns.to_string(),
             prev_hash: prev.to_string(),
-            event_hash: format!("evh_{}", ts),
-            verdict_hash: format!("verh_{}", ts),
+            event_hash: format!("evh_{ts}"),
+            verdict_hash: format!("verh_{ts}"),
             contract_hash: "contract".to_string(),
             config_hash: "cfg".to_string(),
             ts: ts.to_string(),

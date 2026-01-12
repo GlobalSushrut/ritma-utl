@@ -82,12 +82,22 @@ pub struct KineticGraph {
 }
 
 pub struct AttackGraphBuilder {
-    db: IndexDb,
+    #[allow(dead_code)]
+    db: Option<IndexDb>,
 }
 
 impl AttackGraphBuilder {
+    /// Create a builder with an optional IndexDb reference.
+    /// Note: build_graph() does not use the db - it builds purely from input events
+    /// for deterministic output.
     pub fn new(db: IndexDb) -> Self {
-        Self { db }
+        Self { db: Some(db) }
+    }
+
+    /// Create a stateless builder for deterministic graph building.
+    /// Preferred for correlation since no DB state is needed.
+    pub fn stateless() -> Self {
+        Self { db: None }
     }
 
     pub fn build_graph(
@@ -233,6 +243,7 @@ impl AttackGraphBuilder {
     }
 
     pub fn persist_graph(&self, window_id: &str, edges: &[AttackGraphEdge]) -> Result<(), String> {
+        let db = self.db.as_ref().ok_or("persist_graph requires a db")?;
         for edge in edges {
             let row = AttackGraphEdgeRow {
                 window_id: window_id.to_string(),
@@ -242,8 +253,7 @@ impl AttackGraphBuilder {
                 attrs: edge.attrs.clone(),
             };
 
-            self.db
-                .insert_attack_graph_edge(&row)
+            db.insert_attack_graph_edge(&row)
                 .map_err(|e| format!("insert edge: {e}"))?;
         }
 
@@ -271,12 +281,11 @@ impl AttackGraphBuilder {
         window_a: &str,
         window_b: &str,
     ) -> Result<(Vec<AttackGraphEdgeRow>, Vec<AttackGraphEdgeRow>), String> {
-        let edges_a = self
-            .db
+        let db = self.db.as_ref().ok_or("get_edge_delta requires a db")?;
+        let edges_a = db
             .list_edges(window_a)
             .map_err(|e| format!("list edges a: {e}"))?;
-        let edges_b = self
-            .db
+        let edges_b = db
             .list_edges(window_b)
             .map_err(|e| format!("list edges b: {e}"))?;
 
@@ -549,6 +558,10 @@ mod tests {
                     ppid: 1,
                     uid: 0,
                     gid: 0,
+                    comm_hash: None,
+                    exe_hash: None,
+                    comm: None,
+                    exe: None,
                     container_id: None,
                     service: None,
                     build_hash: None,
@@ -575,6 +588,10 @@ mod tests {
                     ppid: 1,
                     uid: 0,
                     gid: 0,
+                    comm_hash: None,
+                    exe_hash: None,
+                    comm: None,
+                    exe: None,
                     container_id: None,
                     service: None,
                     build_hash: None,

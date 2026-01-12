@@ -24,14 +24,14 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: UTLD_SOCKET
-              value: /tmp/utld.sock
+              value: /run/ritma/utld.sock
             - name: UTLD_HTTP_ADDR
               value: 0.0.0.0:8080
           ports:
             - containerPort: 8080
           volumeMounts:
             - name: utld-socket
-              mountPath: /tmp
+              mountPath: /run/ritma
       volumes:
         - name: utld-socket
           emptyDir: {}

@@ -1,0 +1,15 @@
+[package]
+name = "ritma_demo_workload"
+version = "0.1.0"
+edition = "2021"
+
+license = "Apache-2.0"
+
+[[bin]]
+name = "ritma_demo_workload"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }

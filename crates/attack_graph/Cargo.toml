@@ -3,6 +3,9 @@ name = "attack_graph"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 common_models = { path = "../common_models" }
 index_db = { path = "../index_db" }

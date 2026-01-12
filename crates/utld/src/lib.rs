@@ -12,6 +12,79 @@ use sha2::Sha256;
 use sot_root::StateOfTruthRoot;
 use tata::TataFrame;
 use tracer::UnknownLogicCapsule;
+use zeroize::Zeroize;
+
+fn validate_ascii_nonempty(name: &str, s: &str, max_len: usize) -> std::result::Result<(), String> {
+    if s.trim().is_empty() {
+        return Err(format!("{name} cannot be empty"));
+    }
+    if s.len() > max_len {
+        return Err(format!("{name} too long"));
+    }
+    if !s.is_ascii() {
+        return Err(format!("{name} must be ASCII"));
+    }
+    if s.contains('\0') {
+        return Err(format!("{name} must not contain NUL"));
+    }
+    Ok(())
+}
+
+fn validate_fs_path(name: &str, p: &str, allow_relative: bool) -> std::result::Result<(), String> {
+    validate_ascii_nonempty(name, p, 4096)?;
+    if p.contains("..") {
+        return Err(format!("{name} must not contain '..'"));
+    }
+    let pb = std::path::Path::new(p);
+    if !allow_relative && !pb.is_absolute() {
+        return Err(format!("{name} must be an absolute path"));
+    }
+    Ok(())
+}
+
+fn validate_param_map(params: &BTreeMap<String, String>) -> std::result::Result<(), String> {
+    if params.len() > 256 {
+        return Err("params has too many entries (max 256)".to_string());
+    }
+    for (k, v) in params.iter() {
+        validate_ascii_nonempty("param key", k, 128)?;
+        if k.contains("..") {
+            return Err("param key traversal not allowed".to_string());
+        }
+        if k.contains('\n') || k.contains('\r') {
+            return Err("param key must not contain newlines".to_string());
+        }
+        if v.len() > 4096 {
+            return Err("param value too long".to_string());
+        }
+        if v.contains('\0') {
+            return Err("param value must not contain NUL".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_hex_fixed(name: &str, s: &str, hex_chars: usize) -> std::result::Result<(), String> {
+    let s = s.trim();
+    if s.len() != hex_chars {
+        return Err(format!("{name} must be {hex_chars} hex chars"));
+    }
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("{name} must be hex"));
+    }
+    Ok(())
+}
+
+fn validate_time_range(time_start: u64, time_end: u64) -> std::result::Result<(), String> {
+    const MAX_TS: u64 = 4_102_444_800;
+    if time_start > time_end {
+        return Err("time_start must be <= time_end".to_string());
+    }
+    if time_start > MAX_TS || time_end > MAX_TS {
+        return Err("timestamp too far in the future".to_string());
+    }
+    Ok(())
+}
 
 #[derive(Debug)]
 pub enum UtlError {
@@ -31,6 +104,7 @@ fn persist_roots(roots: &HashMap<UID, StateOfTruthRoot>) -> std::io::Result<()> 
     }
 
     let base = std::env::var("UTLD_STATE_FILE").unwrap_or_else(|_| "./utld_roots.json".to_string());
+    validate_fs_path("UTLD_STATE_FILE", &base, true).map_err(std::io::Error::other)?;
     let path = PathBuf::from(base);
 
     if let Some(parent) = path.parent() {
@@ -116,6 +190,98 @@ pub struct PolicyBurnRequest {
     pub signature_hex: Option<String>,
     #[serde(default)]
     pub meta: BTreeMap<String, String>,
+}
+
+fn validate_tenant_id_str(tenant: &str) -> std::result::Result<(), String> {
+    validate_ascii_nonempty("tenant_id", tenant, 128)?;
+    for ch in tenant.chars() {
+        if !ch.is_alphanumeric() && !matches!(ch, '-' | '_' | '.') {
+            return Err(format!("invalid character '{ch}' in tenant_id"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_node_request(req: &NodeRequest) -> std::result::Result<(), String> {
+    match req {
+        NodeRequest::RegisterRoot {
+            root_params,
+            zk_arc_commit,
+            ..
+        } => {
+            validate_param_map(root_params)?;
+            if let Some(tid) = root_params.get("tenant_id") {
+                validate_tenant_id_str(tid)?;
+            }
+            if zk_arc_commit.len() > 1_048_576 {
+                return Err("zk_arc_commit too large".to_string());
+            }
+        }
+        NodeRequest::RecordTransition {
+            signature,
+            data,
+            p_container,
+            logic_ref,
+            wall,
+            ..
+        } => {
+            if signature.len() > 8192 {
+                return Err("signature too large".to_string());
+            }
+            if data.len() > 1_048_576 {
+                return Err("data too large".to_string());
+            }
+            validate_param_map(p_container)?;
+            if let Some(tid) = p_container.get("tenant_id") {
+                validate_tenant_id_str(tid)?;
+            }
+            validate_ascii_nonempty("logic_ref", logic_ref, 1024)?;
+            validate_ascii_nonempty("wall", wall, 256)?;
+        }
+        NodeRequest::BuildDigFile {
+            time_start,
+            time_end,
+            ..
+        } => {
+            validate_time_range(*time_start, *time_end)?;
+        }
+        NodeRequest::BuildEntropyBin { .. } => {}
+        NodeRequest::PolicyBurn { request } => {
+            validate_ascii_nonempty("policy_id", &request.policy_id, 256)?;
+            if request.version == 0 {
+                return Err("policy version must be > 0".to_string());
+            }
+            validate_hex_fixed("policy_hash_hex", &request.policy_hash_hex, 64)?;
+            if let Some(ref cue) = request.cue_hash_hex {
+                validate_hex_fixed("cue_hash_hex", cue, 64)?;
+            }
+            if let Some(ref issuer) = request.issuer {
+                validate_ascii_nonempty("issuer", issuer, 256)?;
+            }
+            if let Some(ref sig) = request.signature_hex {
+                if sig.len() > 4096 {
+                    return Err("signature_hex too long".to_string());
+                }
+                if sig.len() % 2 != 0 {
+                    return Err("signature_hex must have even length".to_string());
+                }
+                if !sig.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err("signature_hex must be hex".to_string());
+                }
+            }
+            if request.meta.len() > 256 {
+                return Err("meta has too many entries (max 256)".to_string());
+            }
+            for (k, v) in request.meta.iter() {
+                validate_ascii_nonempty("meta key", k, 128)?;
+                if v.len() > 4096 {
+                    return Err("meta value too long".to_string());
+                }
+            }
+        }
+        NodeRequest::ListRoots => {}
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -457,12 +623,16 @@ fn load_sig_key() -> Option<Vec<u8>> {
     // Prefer file-based key if provided.
     if let Ok(path) = env::var("UTLD_SIG_KEY_FILE") {
         match fs::read_to_string(&path) {
-            Ok(text) => match hex::decode(text.trim()) {
-                Ok(b) => return Some(b),
+            Ok(mut text) => match hex::decode(text.trim()) {
+                Ok(b) => {
+                    text.zeroize();
+                    return Some(b);
+                }
                 Err(e) => {
                     eprintln!(
                         "UTLD_SIG_KEY_FILE is not valid hex ({e}); skipping signature verification"
                     );
+                    text.zeroize();
                     return None;
                 }
             },
@@ -495,10 +665,11 @@ fn load_policy_burn_key() -> std::result::Result<Option<Vec<u8>>, String> {
 
     // Prefer file-based key if provided.
     if let Ok(path) = env::var("UTLD_POLICY_BURN_KEY_FILE") {
-        let text = fs::read_to_string(&path)
+        let mut text = fs::read_to_string(&path)
             .map_err(|e| format!("failed to read UTLD_POLICY_BURN_KEY_FILE: {e}"))?;
         let bytes = hex::decode(text.trim())
             .map_err(|_| "UTLD_POLICY_BURN_KEY_FILE is not valid hex".to_string())?;
+        text.zeroize();
         return Ok(Some(bytes));
     }
 
@@ -520,7 +691,7 @@ fn verify_signature(
     addr_heap_hash: &Hash,
     hook_hash: &Hash,
 ) -> Result<()> {
-    let key_bytes = match load_sig_key() {
+    let mut key_bytes = match load_sig_key() {
         Some(b) => b,
         None => return Ok(()),
     };
@@ -538,6 +709,8 @@ fn verify_signature(
         Ok(m) => m,
         Err(_) => {
             eprintln!("failed to create HMAC from UTLD_SIG_KEY; skipping signature verification");
+            key_bytes.zeroize();
+            buf.zeroize();
             return Ok(());
         }
     };
@@ -545,8 +718,13 @@ fn verify_signature(
     let expected = mac.finalize().into_bytes();
 
     if signature.0 != expected.as_slice() {
+        key_bytes.zeroize();
+        buf.zeroize();
         return Err(UtlError::InvalidSignature(root_id));
     }
+
+    key_bytes.zeroize();
+    buf.zeroize();
 
     Ok(())
 }
@@ -603,6 +781,11 @@ fn format_error(e: UtlError) -> String {
 }
 
 pub fn handle_request(node: &mut UtlNode, req: NodeRequest) -> NodeResponse {
+    if let Err(e) = validate_node_request(&req) {
+        return NodeResponse::Error {
+            message: format!("invalid_request: {e}"),
+        };
+    }
     match req {
         NodeRequest::RegisterRoot {
             root_id,
@@ -757,7 +940,12 @@ struct PolicyBurnEntry {
 }
 
 fn policy_ledger_path() -> String {
-    std::env::var("UTLD_POLICY_LEDGER").unwrap_or_else(|_| "./policy_ledger.jsonl".to_string())
+    let p = std::env::var("UTLD_POLICY_LEDGER").unwrap_or_else(|_| "./policy_ledger.jsonl".to_string());
+    if let Err(e) = validate_fs_path("UTLD_POLICY_LEDGER", &p, true) {
+        eprintln!("invalid UTLD_POLICY_LEDGER ({e}); using default ./policy_ledger.jsonl");
+        return "./policy_ledger.jsonl".to_string();
+    }
+    p
 }
 
 fn compute_policy_entry_hash(prev: Option<&str>, line: &[u8]) -> String {
@@ -865,11 +1053,12 @@ fn handle_policy_burn(req: PolicyBurnRequest) -> std::result::Result<(), String>
         }
     }
 
-    if let Some(key_bytes) = load_policy_burn_key()? {
+    if let Some(mut key_bytes) = load_policy_burn_key()? {
         let sig_hex = req.signature_hex.clone().ok_or_else(|| {
             "policy burn signature required when UTLD_POLICY_BURN_KEY is set".to_string()
         })?;
-        let sig_bytes = hex::decode(&sig_hex).map_err(|e| format!("invalid signature_hex: {e}"))?;
+        let mut sig_bytes =
+            hex::decode(&sig_hex).map_err(|e| format!("invalid signature_hex: {e}"))?;
 
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(&key_bytes)
@@ -884,8 +1073,13 @@ fn handle_policy_burn(req: PolicyBurnRequest) -> std::result::Result<(), String>
         let expected = mac.finalize().into_bytes();
 
         if expected.as_slice() != sig_bytes.as_slice() {
+            key_bytes.zeroize();
+            sig_bytes.zeroize();
             return Err("invalid policy burn signature".to_string());
         }
+
+        key_bytes.zeroize();
+        sig_bytes.zeroize();
     }
 
     let tick = TimeTick::now();

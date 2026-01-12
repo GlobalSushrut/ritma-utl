@@ -457,7 +457,7 @@ async fn create_enrollment_token(
 
 async fn get_config() -> Json<ConfigInfo> {
     let addr =
-        std::env::var("NODE_CONTROLLER_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8093".to_string());
+        std::env::var("NODE_CONTROLLER_LISTEN_ADDR").unwrap_or_else(|_| "127.0.0.1:8093".to_string());
     let compliance_index = std::env::var("UTLD_COMPLIANCE_INDEX")
         .unwrap_or_else(|_| "./compliance_index.jsonl".to_string());
     let slo_events =
@@ -794,7 +794,7 @@ async fn main() {
         .layer(cors);
 
     let addr: SocketAddr = std::env::var("NODE_CONTROLLER_LISTEN_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8093".to_string())
+        .unwrap_or_else(|_| "127.0.0.1:8093".to_string())
         .parse()
         .expect("invalid NODE_CONTROLLER_LISTEN_ADDR");
 

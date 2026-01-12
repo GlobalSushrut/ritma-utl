@@ -110,8 +110,8 @@ mod tests {
     fn ml_assist_bounds_and_sign() {
         let ml = MLAssist::new();
         let (d1, _) = ml.confidence_delta(&make_event("read"));
-        assert!(d1 >= 0.0 && d1 <= 0.1);
+        assert!((0.0..=0.1).contains(&d1));
         let (d2, _) = ml.confidence_delta(&make_event("delete_all"));
-        assert!(d2 <= 0.0 && d2 >= -0.1);
+        assert!((-0.1..=0.0).contains(&d2));
     }
 }

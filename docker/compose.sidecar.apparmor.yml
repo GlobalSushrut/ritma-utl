@@ -1,0 +1,10 @@
+version: "3.3"
+
+services:
+  tracer:
+    security_opt:
+      - apparmor:ritma-tracer-sidecar
+
+  utld:
+    security_opt:
+      - apparmor:ritma-utld

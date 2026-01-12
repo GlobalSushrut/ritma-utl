@@ -3,6 +3,9 @@ name = "bar_daemon"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 bar_core = { path = "../bar_core" }
 serde = { version = "1", features = ["derive"] }

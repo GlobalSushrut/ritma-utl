@@ -3,11 +3,21 @@ name = "tracer_sidecar"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 common_models = { path = "../common_models" }
 index_db = { path = "../index_db" }
+ebpf_provider = { path = "../ebpf_provider" }
+ritma_contract = { path = "../ritma_contract" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
+libc = "0.2"
+
+[features]
+default = []
+ebpf = ["ebpf_provider/aya"]

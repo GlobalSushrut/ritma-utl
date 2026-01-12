@@ -3,8 +3,22 @@ name = "ebpf_provider"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 common_models = { path = "../common_models" }
 index_db = { path = "../index_db" }
 anyhow = "1"
 log = "0.4"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+bytemuck = { version = "1", features = ["derive"] }
+hex = "0.4"
+
+aya = { version = "0.12", optional = true }
+libc = { version = "0.2", optional = true }
+
+[features]
+default = []
+aya = ["dep:aya", "dep:libc"]

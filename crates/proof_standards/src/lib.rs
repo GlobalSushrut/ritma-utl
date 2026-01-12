@@ -360,6 +360,7 @@ pub mod zksnark {
 
     impl ProofBackend for ZkSnarkBackend {
         fn generate_proof(&self, circuit: &ProofCircuit) -> Result<ProofPack, ProofError> {
+            let _ = &self.proving_key;
             // In production, this would:
             // 1. Compile circuit to R1CS constraints
             // 2. Generate witness from inputs
@@ -430,6 +431,7 @@ pub mod distillium {
 
     impl ProofBackend for DistilliumBackend {
         fn generate_proof(&self, circuit: &ProofCircuit) -> Result<ProofPack, ProofError> {
+            let _ = self.api_key.len();
             // In production, this would:
             // 1. Submit circuit to Distillium API
             // 2. Wait for proof generation

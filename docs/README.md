@@ -11,6 +11,7 @@ This page is the canonical index of documentation intended for GitHub.
 - `ARCHITECTURE.md` — what exists now, data flows, and boundaries
 - `CLI_REFERENCE.md` — current `ritma`/`ritma_cli` commands
 - `EVIDENCE_AND_ATTESTATION.md` — artifacts produced today and how to verify them
+- `PILOT_READINESS_CHECKLIST.md` — pilot-ready runbooks (5 wedges) + institutional hardening checklist
 - `UX_GATE.md` — UX acceptance checklist / contract
 - `RITMA_UX_CONTRACT_30_COMMANDS.md` — command tree contract
 

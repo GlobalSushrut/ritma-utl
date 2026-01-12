@@ -2,13 +2,69 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::fs::metadata as fs_metadata;
 use std::io::{self, BufRead, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command as ProcCommand, ExitCode, Stdio};
 use std::time::Duration;
 
 mod enhanced_demo;
+mod validate;
+
+fn validate_env_ascii(name: &str, v: &str, max_len: usize) -> Result<(), (u8, String)> {
+    if v.trim().is_empty() {
+        return Err((1, format!("{name} cannot be empty")));
+    }
+    if v.len() > max_len {
+        return Err((1, format!("{name} too long")));
+    }
+    if !v.is_ascii() {
+        return Err((1, format!("{name} must be ASCII")));
+    }
+    if v.contains('\0') {
+        return Err((1, format!("{name} must not contain NUL")));
+    }
+    Ok(())
+}
+
+fn sanitize_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        let ok = ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-';
+        out.push(if ok { ch } else { '_' });
+    }
+    if out.is_empty() {
+        "_".to_string()
+    } else if out.len() > 128 {
+        out.chars().take(128).collect()
+    } else {
+        out
+    }
+}
+
+fn default_proofpack_export_dir(id: &str) -> Result<PathBuf, (u8, String)> {
+    let c = StorageContract::resolve_best_effort();
+    c.ensure_out_layout()
+        .map_err(|e| (1, format!("ensure RITMA_OUT layout: {e}")))?;
+    let base = c.out_dir.join("exports").join("proofpacks");
+    fs::create_dir_all(&base).map_err(|e| (1, format!("mkdir {}: {e}", base.display())))?;
+    Ok(base.join(sanitize_component(id)))
+}
+
+fn validate_env_path(name: &str, v: &str, allow_absolute: bool) -> Result<(), (u8, String)> {
+    if v.trim().is_empty() {
+        return Err((1, format!("{name} cannot be empty")));
+    }
+    if v.len() > 4096 {
+        return Err((1, format!("{name} too long")));
+    }
+    if v.contains('\0') {
+        return Err((1, format!("{name} must not contain NUL")));
+    }
+    let pb = PathBuf::from(v);
+    validate::validate_path_allowed(&pb, allow_absolute).map_err(|e| (1, format!("{name}: {e}")))?;
+    Ok(())
+}
 
 use bar_client::BarClient;
 use bar_core::{BarAgent, NoopBarAgent, ObservedEvent};
@@ -21,14 +77,238 @@ use dig_mem::DigFile;
 use evidence_package::{PackageBuilder, PackageScope, PackageSigner, SigningKey};
 use index_db::{IndexDb, RuntimeDnaCommitRow};
 use mime_guess::from_path as mime_from_path;
-use node_keystore::{KeystoreKey, NodeKeystore};
+use node_keystore::NodeKeystore;
 use qrcode::render::svg;
 use qrcode::QrCode;
 use security_interfaces::PipelineOrchestrator;
 use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
 use tiny_http::{Response, Server};
 use uuid::Uuid;
 use walkdir::WalkDir;
+use zeroize::Zeroize;
+use ritma_contract::StorageContract;
+
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+
+use ciborium::value::{Integer, Value as CborValue};
+use std::io::Cursor;
+
+const RITMA_SECCOMP_PROFILE_FILENAME: &str = "seccomp-ritma.json";
+const RITMA_SECCOMP_PROFILE_JSON: &str = include_str!("../../../docker/seccomp-ritma.json");
+
+/// Manifest signature file structure for offline verification
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ManifestSigFile {
+    version: String,
+    manifest_sha256: String,
+    signature_type: String,
+    signature_hex: String,
+    signer_id: String,
+    #[serde(default)]
+    public_key_hex: Option<String>,
+    signed_at: i64,
+}
+
+/// Write manifest.sig if signing key is configured (RITMA_KEY_ID or UTLD_PACKAGE_SIG_KEY)
+fn maybe_write_manifest_sig(path: &Path, manifest_sha256: &str) -> Result<bool, (u8, String)> {
+    fn parse_env_key_spec(spec: &str) -> Result<(String, Vec<u8>), (u8, String)> {
+        validate::validate_key_spec(spec).map_err(|e| (1, e))?;
+        let parts: Vec<&str> = spec.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            return Err((1, "expected key spec format type:hex".into()));
+        }
+        let key_type = parts[0].trim().to_lowercase();
+        let bytes = hex::decode(parts[1].trim())
+            .map_err(|e| (1, format!("invalid hex key: {e}")))?;
+        Ok((key_type, bytes))
+    }
+
+    let signed_at = chrono::Utc::now().timestamp();
+
+    // Prefer node keystore signing if configured.
+    if let Ok(key_id) = std::env::var("RITMA_KEY_ID") {
+        validate_env_ascii("RITMA_KEY_ID", &key_id, 256)?;
+        let ks = NodeKeystore::from_env().map_err(|e| (1, format!("keystore: {e}")))?;
+        let kk = ks
+            .key_for_signing(&key_id)
+            .map_err(|e| (1, format!("keystore key: {e}")))?;
+
+        let (sig_type, sig_hex, pk_hex) = if kk.key_type == "hmac" || kk.key_type == "hmac_sha256" {
+            let mut key_bytes = hex::decode(&kk.key_material)
+                .map_err(|e| (1, format!("key decode: {e}")))?;
+            type HmacSha256 = Hmac<Sha256>;
+            let mut mac = HmacSha256::new_from_slice(&key_bytes)
+                .map_err(|e| (1, format!("hmac init: {e}")))?;
+            mac.update(manifest_sha256.as_bytes());
+            let out = mac.finalize();
+            key_bytes.zeroize();
+            ("hmac_sha256".to_string(), hex::encode(out.into_bytes()), None)
+        } else if kk.key_type == "ed25519" {
+            let mut key_bytes = hex::decode(&kk.key_material)
+                .map_err(|e| (1, format!("key decode: {e}")))?;
+            if key_bytes.len() != 32 {
+                key_bytes.zeroize();
+                return Err((1, "ed25519 key must be 32 bytes".to_string()));
+            }
+            let mut kb = [0u8; 32];
+            kb.copy_from_slice(&key_bytes);
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&kb);
+            use ed25519_dalek::Signer;
+            let sig = signing_key.sign(manifest_sha256.as_bytes());
+            let vk = signing_key.verifying_key();
+            kb.zeroize();
+            key_bytes.zeroize();
+            (
+                "ed25519".to_string(),
+                hex::encode(sig.to_bytes()),
+                Some(hex::encode(vk.to_bytes())),
+            )
+        } else {
+            return Err((1, format!("unsupported key type: {}", kk.key_type)));
+        };
+
+        let v = serde_json::to_value(ManifestSigFile {
+            version: "ritma-manifest-sig@0.1".to_string(),
+            manifest_sha256: manifest_sha256.to_string(),
+            signature_type: sig_type,
+            signature_hex: sig_hex,
+            signer_id: key_id,
+            public_key_hex: pk_hex,
+            signed_at,
+        })
+        .map_err(|e| (1, format!("sig serialize: {e}")))?;
+        write_canonical_json(path, &v)?;
+        return Ok(true);
+    }
+
+    // Fallback: env-based signing, same key spec as evidence_package.
+    if let Ok(spec) = std::env::var("UTLD_PACKAGE_SIG_KEY") {
+        if spec.trim().is_empty() {
+            return Err((1, "UTLD_PACKAGE_SIG_KEY cannot be empty".into()));
+        }
+        let (key_type, mut key_bytes) = parse_env_key_spec(&spec)?;
+        let signer_id = std::env::var("RITMA_SIGNER_ID").unwrap_or_else(|_| "ritma_cli".to_string());
+        let signer_id = match validate_env_ascii("RITMA_SIGNER_ID", &signer_id, 256) {
+            Ok(()) => signer_id,
+            Err(_) => "ritma_cli".to_string(),
+        };
+
+        let (sig_type, sig_hex, pk_hex) =
+            if key_type == "hmac" || key_type == "hmac_sha256" {
+                type HmacSha256 = Hmac<Sha256>;
+                let mut mac = HmacSha256::new_from_slice(&key_bytes)
+                    .map_err(|e| (1, format!("hmac init: {e}")))?;
+                mac.update(manifest_sha256.as_bytes());
+                let out = mac.finalize();
+                key_bytes.zeroize();
+                ("hmac_sha256".to_string(), hex::encode(out.into_bytes()), None)
+            } else if key_type == "ed25519" {
+                if key_bytes.len() != 32 {
+                    key_bytes.zeroize();
+                    return Err((1, "ed25519 key must be 32 bytes".into()));
+                }
+                let mut kb = [0u8; 32];
+                kb.copy_from_slice(&key_bytes);
+                let sk = ed25519_dalek::SigningKey::from_bytes(&kb);
+                let sig = sk.sign(manifest_sha256.as_bytes());
+                let vk = sk.verifying_key();
+                kb.zeroize();
+                key_bytes.zeroize();
+                (
+                    "ed25519".to_string(),
+                    hex::encode(sig.to_bytes()),
+                    Some(hex::encode(vk.as_bytes())),
+                )
+            } else {
+                key_bytes.zeroize();
+                return Err((1, format!("unsupported signing key type: {key_type}")));
+            };
+
+        let v = serde_json::to_value(ManifestSigFile {
+            version: "ritma-manifest-sig@0.1".to_string(),
+            manifest_sha256: manifest_sha256.to_string(),
+            signature_type: sig_type,
+            signature_hex: sig_hex,
+            signer_id,
+            public_key_hex: pk_hex,
+            signed_at,
+        })
+        .map_err(|e| (1, format!("sig serialize: {e}")))?;
+        write_canonical_json(path, &v)?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+/// Verify manifest.sig if present; returns Ok(()) if missing or valid
+fn verify_manifest_sig(sig_path: &Path, actual_manifest_sha256: &str) -> Result<(), (u8, String)> {
+    if !sig_path.exists() {
+        return Ok(());
+    }
+    let sig_v: ManifestSigFile = serde_json::from_str(
+        &fs::read_to_string(sig_path)
+            .map_err(|e| (1, format!("read {}: {e}", sig_path.display())))?,
+    )
+    .map_err(|e| (1, format!("parse {}: {e}", sig_path.display())))?;
+
+    if sig_v.manifest_sha256 != actual_manifest_sha256 {
+        return Err((
+            10,
+            format!(
+                "manifest.sig mismatch: expected manifest_sha256={} actual={}",
+                sig_v.manifest_sha256, actual_manifest_sha256
+            ),
+        ));
+    }
+
+    let sig_bytes = hex::decode(&sig_v.signature_hex)
+        .map_err(|e| (1, format!("invalid signature hex: {e}")))?;
+
+    match sig_v.signature_type.as_str() {
+        "ed25519" => {
+            let pk_hex = sig_v
+                .public_key_hex
+                .as_ref()
+                .ok_or((1, "missing public_key_hex for ed25519".into()))?;
+            let pk = hex::decode(pk_hex).map_err(|e| (1, format!("invalid pubkey hex: {e}")))?;
+            if pk.len() != 32 {
+                return Err((1, "invalid pubkey length".into()));
+            }
+            if sig_bytes.len() != 64 {
+                return Err((1, "invalid ed25519 signature length".into()));
+            }
+            let mut pk_arr = [0u8; 32];
+            pk_arr.copy_from_slice(&pk);
+            let mut sig_arr = [0u8; 64];
+            sig_arr.copy_from_slice(&sig_bytes);
+            let vk = VerifyingKey::from_bytes(&pk_arr)
+                .map_err(|e| (1, format!("invalid pubkey: {e}")))?;
+            let sig = Signature::from_bytes(&sig_arr);
+            vk.verify(actual_manifest_sha256.as_bytes(), &sig)
+                .map_err(|e| (10, format!("ed25519 verify failed: {e}")))?;
+            Ok(())
+        }
+        "hmac_sha256" => {
+            let key_hex = std::env::var("UTLD_PACKAGE_VERIFY_KEY")
+                .map_err(|_| (1, "UTLD_PACKAGE_VERIFY_KEY not set for HMAC verification".into()))?;
+            validate::validate_hex_string(key_hex.trim())
+                .map_err(|e| (1, format!("UTLD_PACKAGE_VERIFY_KEY invalid: {e}")))?;
+            let mut key = hex::decode(key_hex.trim())
+                .map_err(|e| (1, format!("invalid verify key hex: {e}")))?;
+            type HmacSha256 = Hmac<Sha256>;
+            let mut mac = HmacSha256::new_from_slice(&key)
+                .map_err(|e| (1, format!("hmac init: {e}")))?;
+            mac.update(actual_manifest_sha256.as_bytes());
+            mac.verify_slice(&sig_bytes)
+                .map_err(|_| (10, "hmac signature mismatch".into()))?;
+            key.zeroize();
+            Ok(())
+        }
+        other => Err((1, format!("unsupported signature_type: {other}"))),
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "ritma", about = "Ritma CLI", version)]
@@ -491,18 +771,24 @@ enum DeployCommands {
         out: PathBuf,
         #[arg(long, default_value = "ns://demo/dev/hello/world")]
         namespace: String,
+        #[arg(long, default_value_t = false)]
+        tracer_host: bool,
     },
     K8s {
         #[arg(long, default_value = "k8s")]
         dir: PathBuf,
         #[arg(long, default_value = "ns://demo/dev/hello/world")]
         namespace: String,
+        #[arg(long, default_value_t = false)]
+        tracer_host: bool,
     },
     Systemd {
         #[arg(long, default_value = "deploy-out")]
         out: PathBuf,
         #[arg(long, default_value = "ns://demo/dev/hello/world")]
         namespace: String,
+        #[arg(long, default_value_t = false)]
+        tracer_host: bool,
         #[arg(long)]
         install: bool,
     },
@@ -511,6 +797,8 @@ enum DeployCommands {
         out: PathBuf,
         #[arg(long, default_value = "ns://demo/dev/hello/world")]
         namespace: String,
+        #[arg(long, default_value_t = false)]
+        tracer_host: bool,
         #[arg(long)]
         install: bool,
     },
@@ -623,6 +911,29 @@ enum Profile {
     Defense,
 }
 
+/// Check if a port is in use (can be connected to)
+fn is_port_in_use(port: u16) -> bool {
+    TcpStream::connect_timeout(
+        &format!("127.0.0.1:{}", port).parse().unwrap(),
+        Duration::from_millis(200),
+    )
+    .is_ok()
+}
+
+/// Check Ritma ports for conflicts (returns list of conflicting ports with details)
+fn check_port_conflicts() -> Vec<(u16, &'static str)> {
+    let mut conflicts = Vec::new();
+    // UTLD port
+    if is_port_in_use(8088) {
+        conflicts.push((8088, "UTLD"));
+    }
+    // BAR health port
+    if is_port_in_use(8090) {
+        conflicts.push((8090, "BAR health"));
+    }
+    conflicts
+}
+
 fn bar_health_http_ok() -> bool {
     let mut stream = match TcpStream::connect_timeout(
         &"127.0.0.1:8090".parse().unwrap(),
@@ -654,17 +965,21 @@ fn bar_health_http_ok() -> bool {
 }
 
 fn ritma_data_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".ritma").join("data");
-    }
-    PathBuf::from("./.ritma/data")
+    StorageContract::resolve_best_effort().base_dir
 }
 
 fn ritma_data_dir_candidates() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
 
+    let system = PathBuf::from("/var/ritma/data");
+    if system.exists() {
+        out.push(system);
+    }
+
     if let Ok(home) = std::env::var("HOME") {
-        out.push(PathBuf::from(home).join(".ritma").join("data"));
+        if validate_env_path("HOME", &home, true).is_ok() {
+            out.push(PathBuf::from(home).join(".ritma").join("data"));
+        }
     }
     out.push(PathBuf::from("./.ritma/data"));
 
@@ -683,46 +998,31 @@ fn first_existing_in_candidates(filename: &str) -> Option<PathBuf> {
     None
 }
 
-fn is_usable_host_path(p: &str) -> bool {
-    let pb = PathBuf::from(p);
-    let parent = match pb.parent() {
-        Some(p) => p,
-        None => return false,
-    };
-    if !parent.exists() {
-        return false;
-    }
-    // Best-effort writability check: attempt to create then remove a tiny temp file.
-    let probe = parent.join(format!(".ritma_probe_{}", std::process::id()));
-    match fs::write(&probe, b"probe") {
-        Ok(_) => {
-            let _ = fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
-    }
-}
-
 fn default_index_db_path() -> String {
-    if let Ok(p) = std::env::var("INDEX_DB_PATH").or_else(|_| std::env::var("RITMA_INDEX_DB_PATH"))
-    {
-        // Ignore container-oriented defaults like /data/... when they aren't usable on host.
-        if is_usable_host_path(&p) {
-            return p;
-        }
-    }
-
-    first_existing_in_candidates("index_db.sqlite")
-        .unwrap_or_else(|| ritma_data_dir().join("index_db.sqlite"))
+    StorageContract::resolve_best_effort()
+        .index_db_path
         .display()
         .to_string()
 }
 
 fn default_bar_socket_path() -> String {
     if let Ok(p) = std::env::var("BAR_SOCKET") {
-        if fs_metadata(&p).is_ok() {
-            return p;
+        let pb = PathBuf::from(&p);
+        if validate::validate_path_allowed(&pb, true).is_ok() {
+            if fs_metadata(&p).is_ok() {
+                return p;
+            }
         }
+    }
+
+    let secure = "/run/ritma/bar_daemon.sock";
+    if fs_metadata(secure).is_ok() {
+        return secure.to_string();
+    }
+
+    let system = "/var/ritma/data/bar_daemon.sock";
+    if fs_metadata(system).is_ok() {
+        return system.to_string();
     }
 
     first_existing_in_candidates("bar_daemon.sock")
@@ -731,50 +1031,22 @@ fn default_bar_socket_path() -> String {
         .to_string()
 }
 
-fn ensure_local_data_dir() -> Result<(), (u8, String)> {
-    let dir = ritma_data_dir();
-    fs::create_dir_all(&dir).map_err(|e| (1, format!("mkdir {}: {e}", dir.display())))
-}
-
-fn try_sync_index_db_from_container(host_path: &str) {
-    let caps = detect_capabilities();
-    if !caps.docker {
-        return;
-    }
-    let names = docker_ps_names();
-    let orch = match names
-        .iter()
-        .find(|n| n.contains("orchestrator") || n.contains("bar_orchestrator"))
-    {
-        Some(c) => c.clone(),
-        None => return,
-    };
-
-    if !docker_exec_test_file(&orch, "/data/index_db.sqlite") {
-        return;
-    }
-
-    // Ensure destination directory exists (may not be the default ritma_data_dir).
-    if let Some(parent) = PathBuf::from(host_path).parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = ProcCommand::new("docker")
-        .arg("cp")
-        .arg(format!("{orch}:/data/index_db.sqlite"))
-        .arg(host_path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
 fn resolve_index_db_path(index_db: Option<PathBuf>) -> String {
     if let Some(p) = index_db.as_ref() {
+        // Validate the provided path
+        if let Err(e) = validate::validate_index_db_path(p) {
+            eprintln!("Invalid index_db path: {}", e);
+            std::process::exit(1);
+        }
         return p.display().to_string();
     }
 
     let p = default_index_db_path();
-    if fs_metadata(&p).is_err() {
-        try_sync_index_db_from_container(&p);
+    let pb = PathBuf::from(&p);
+    // Validate default as well
+    if let Err(e) = validate::validate_index_db_path(&pb) {
+        eprintln!("Invalid default index_db path {}: {}", p, e);
+        std::process::exit(1);
     }
     p
 }
@@ -842,11 +1114,7 @@ fn docker_volume_rm(name: &str) {
 
 fn cmd_ps(json: bool, mode: String) -> Result<(), (u8, String)> {
     let caps = detect_capabilities();
-    let names = if caps.docker {
-        docker_ps_names()
-    } else {
-        Vec::new()
-    };
+    let names = if caps.docker { docker_ps_names() } else { Vec::new() };
 
     let service_state = |service: &str| -> Option<String> {
         if !caps.docker {
@@ -1025,7 +1293,10 @@ fn cmd_tag_rm(
         .delete_tag(&namespace, &name)
         .map_err(|e| (1, format!("delete_tag: {e}")))?;
     if n == 0 {
-        return Err((1, format!("tag not found: {name} (ns={namespace})")));
+        return Err((
+            1,
+            format!("tag not found: {name} (ns={namespace})"),
+        ));
     }
     println!("tag '{name}' removed for {namespace}");
     Ok(())
@@ -1035,10 +1306,11 @@ fn cmd_deploy_host(
     json: bool,
     out: PathBuf,
     namespace: String,
+    tracer_host: bool,
     install: bool,
 ) -> Result<(), (u8, String)> {
-    cmd_deploy_export(false, out.clone(), namespace.clone())?;
-    cmd_deploy_systemd(json, out, namespace, install)
+    cmd_deploy_export(false, out.clone(), namespace.clone(), tracer_host)?;
+    cmd_deploy_systemd(json, out, namespace, tracer_host, install)
 }
 
 fn cmd_deploy_app(json: bool, out: PathBuf) -> Result<(), (u8, String)> {
@@ -1054,16 +1326,18 @@ fn cmd_deploy_app(json: bool, out: PathBuf) -> Result<(), (u8, String)> {
     if json {
         println!(
             "{}",
-            serde_json::json!({"status":"ok","out":out.display().to_string(),"env":env_out.display().to_string()})
+            serde_json::json!({
+                "status": "ok",
+                "out": out.display().to_string(),
+                "env": env_out.display().to_string()
+            })
         );
         return Ok(());
     }
+
     println!("Changed: wrote app integration env");
     println!("Where: {}", env_out.display());
-    println!(
-        "Next: source {}  OR  use it in your app deployment",
-        env_out.display()
-    );
+    println!("Next: source {}  OR  use it in your app deployment", env_out.display());
     Ok(())
 }
 
@@ -1080,7 +1354,7 @@ fn systemd_unit_template(compose_path: &Path, namespace: &str) -> String {
         .to_string();
 
     format!(
-        "[Unit]\nDescription=Ritma Runtime (managed)\nAfter=network.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory={}\nEnvironment=RITMA_NAMESPACE={}\nEnvironment=RITMA_PRIVACY_MODE=hash-only\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1\nExecStartPre=/bin/mkdir -p /var/ritma/data\nExecStart={} up --profile regulated --no-prompt --compose {}\nExecStop={} down --compose {}\nTimeoutStartSec=0\n\n[Install]\nWantedBy=multi-user.target\n",
+        "[Unit]\nDescription=Ritma Runtime (managed)\nAfter=network.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory={}\nEnvironment=RITMA_NAMESPACE={}\nEnvironment=RITMA_PRIVACY_MODE=hash-only\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1\nExecStartPre=/bin/mkdir -p /var/lib/ritma /run/ritma/locks\nExecStart={} up --profile regulated --no-prompt --compose {}\nExecStop={} down --compose {}\nTimeoutStartSec=0\n\n[Install]\nWantedBy=multi-user.target\n",
         wd,
         namespace,
         exe,
@@ -1092,7 +1366,10 @@ fn systemd_unit_template(compose_path: &Path, namespace: &str) -> String {
 
 fn guess_repo_root() -> String {
     if let Ok(v) = std::env::var("RITMA_REPO_ROOT") {
-        return v;
+        let pb = PathBuf::from(&v);
+        if validate::validate_path_allowed(&pb, true).is_ok() {
+            return v;
+        }
     }
     std::env::current_dir()
         .ok()
@@ -1101,14 +1378,43 @@ fn guess_repo_root() -> String {
         .unwrap_or_else(|| "/opt/ritma".to_string())
 }
 
+fn ensure_local_data_dir() -> Result<(), (u8, String)> {
+    let c = StorageContract::resolve_best_effort();
+    fs::create_dir_all(&c.base_dir)
+        .map_err(|e| (1, format!("mkdir {}: {e}", c.base_dir.display())))?;
+    c.ensure_out_layout()
+        .map_err(|e| (1, format!("mkdir {}: {e}", c.out_dir.display())))?;
+    Ok(())
+}
+
 fn write_compose_bundle(
     output: &Path,
     namespace: &str,
     data_dir: &str,
     use_images: bool,
     build_root: Option<&str>,
+    tracer_host: bool,
 ) -> Result<(PathBuf, PathBuf), (u8, String)> {
     let (v1_path, v2_path) = compose_variant_paths(output);
+
+    let out_dir = output.parent().unwrap_or_else(|| Path::new("."));
+    if !out_dir.exists() {
+        fs::create_dir_all(out_dir)
+            .map_err(|e| (1, format!("mkdir {}: {e}", out_dir.display())))?;
+    }
+    let out_dir_abs = fs::canonicalize(out_dir).unwrap_or_else(|_| out_dir.to_path_buf());
+    let seccomp_profile_path = out_dir_abs.join(RITMA_SECCOMP_PROFILE_FILENAME);
+    if tracer_host {
+        fs::write(&seccomp_profile_path, RITMA_SECCOMP_PROFILE_JSON).map_err(|e| {
+            (
+                1,
+                format!(
+                    "failed to write {}: {e}",
+                    seccomp_profile_path.display()
+                ),
+            )
+        })?;
+    }
 
     let (bar_daemon, utld, tracer, orchestrator): (String, String, String, String) = if use_images {
         (
@@ -1133,6 +1439,16 @@ fn write_compose_bundle(
         )
     };
 
+    let tracer_security = if tracer_host {
+        format!(
+            "    cap_add:\n      - SYS_ADMIN\n      - SYS_PTRACE\n      - NET_ADMIN\n    cap_drop:\n      - ALL\n    security_opt:\n      - no-new-privileges:true\n      - seccomp={}\n    pid: host\n",
+            seccomp_profile_path.display()
+        )
+    } else {
+        "    cap_drop:\n      - ALL\n    security_opt:\n      - no-new-privileges:true\n"
+            .to_string()
+    };
+
     let tpl_v1 = format!(
         r#"version: "3.3"
 services:
@@ -1144,42 +1460,52 @@ services:
 {bar_daemon}
     restart: unless-stopped
     environment:
-      - BAR_SOCKET=/data/bar_daemon.sock
-      - BAR_HEALTH_ADDR=0.0.0.0:8090
+      - BAR_SOCKET=/var/lib/ritma/bar_daemon.sock
+      - BAR_HEALTH_ADDR=127.0.0.1:8090
       - BAR_AGENT_MODE=noop
       - RUST_LOG=info
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
-      - {data_dir}:/data
+      - {data_dir}:/var/lib/ritma
 
 {utld}
     restart: unless-stopped
-    ports: ["8088:8088"]
+    ports: ["127.0.0.1:8088:8088"]
 
 {tracer}
-    privileged: true
-    pid: host
+{tracer_security}
     restart: unless-stopped
     environment:
       - NAMESPACE_ID={namespace}
       - AUDIT_LOG_PATH=/var/log/audit/audit.log
-      - INDEX_DB_PATH=/data/index_db.sqlite
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+      - RITMA_NODE_ID=${{RITMA_NODE_ID:?set RITMA_NODE_ID}}
+      - RITMA_BASE_DIR=/var/lib/ritma
+      - RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+      - RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
       - PROC_ROOT=/proc
       - PRIVACY_MODE=${{RITMA_PRIVACY_MODE:-hash-only}}
     volumes:
       - /var/log/audit:/var/log/audit:ro
-      - {data_dir}:/data
+      - {data_dir}:/var/lib/ritma
+      - /run/ritma/locks:/run/ritma/locks
 
 {orchestrator}
     depends_on: [tracer, utld]
     restart: unless-stopped
     environment:
       - NAMESPACE_ID={namespace}
-      - INDEX_DB_PATH=/data/index_db.sqlite
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+      - RITMA_NODE_ID=${{RITMA_NODE_ID:?set RITMA_NODE_ID}}
+      - RITMA_BASE_DIR=/var/lib/ritma
+      - RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+      - RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
       - TICK_SECS=60
+      - NO_PROXY=localhost,127.0.0.1,utld,bar_daemon,redis
     volumes:
-      - {data_dir}:/data
+      - {data_dir}:/var/lib/ritma
+      - /run/ritma/locks:/run/ritma/locks
 "#
     );
     let tpl_v2 = tpl_v1.replacen("version: \"3.3\"", "version: \"3.9\"", 1);
@@ -1201,7 +1527,12 @@ services:
     Ok((v1_path, v2_path))
 }
 
-fn cmd_deploy_export(json: bool, out: PathBuf, namespace: String) -> Result<(), (u8, String)> {
+fn cmd_deploy_export(
+    json: bool,
+    out: PathBuf,
+    namespace: String,
+    tracer_host: bool,
+) -> Result<(), (u8, String)> {
     fs::create_dir_all(&out).map_err(|e| (1, format!("mkdir {}: {e}", out.display())))?;
 
     let compose_out = out.join("ritma.sidecar.yml");
@@ -1209,13 +1540,14 @@ fn cmd_deploy_export(json: bool, out: PathBuf, namespace: String) -> Result<(), 
     let _ = write_compose_bundle(
         &compose_out,
         &namespace,
-        "/var/ritma/data",
+        "/var/lib/ritma",
         false,
         Some(&root),
+        tracer_host,
     )?;
 
     let k8s_out = out.join("k8s");
-    write_k8s_manifests(&k8s_out, &namespace)?;
+    write_k8s_manifests(&k8s_out, &namespace, tracer_host)?;
 
     let systemd_out = out.join("ritma-security-host.service");
     let compose_abs = fs::canonicalize(&compose_out).unwrap_or(compose_out.clone());
@@ -1249,7 +1581,12 @@ fn cmd_deploy_export(json: bool, out: PathBuf, namespace: String) -> Result<(), 
     Ok(())
 }
 
-fn cmd_deploy_k8s(json: bool, dir: PathBuf, namespace: String) -> Result<(), (u8, String)> {
+fn cmd_deploy_k8s(
+    json: bool,
+    dir: PathBuf,
+    namespace: String,
+    tracer_host: bool,
+) -> Result<(), (u8, String)> {
     let caps = detect_capabilities();
     if !caps.kubectl {
         return Err((
@@ -1258,7 +1595,7 @@ fn cmd_deploy_k8s(json: bool, dir: PathBuf, namespace: String) -> Result<(), (u8
         ));
     }
 
-    write_k8s_manifests(&dir, &namespace)?;
+    write_k8s_manifests(&dir, &namespace, tracer_host)?;
 
     let status = ProcCommand::new("kubectl")
         .arg("apply")
@@ -1287,6 +1624,7 @@ fn cmd_deploy_systemd(
     json: bool,
     out: PathBuf,
     namespace: String,
+    tracer_host: bool,
     install: bool,
 ) -> Result<(), (u8, String)> {
     let caps = detect_capabilities();
@@ -1301,7 +1639,14 @@ fn cmd_deploy_systemd(
     let compose = out.join("ritma.sidecar.yml");
     if !compose.exists() {
         let root = guess_repo_root();
-        let _ = write_compose_bundle(&compose, &namespace, "/var/ritma/data", false, Some(&root))?;
+        let _ = write_compose_bundle(
+            &compose,
+            &namespace,
+            "/var/lib/ritma",
+            false,
+            Some(&root),
+            tracer_host,
+        )?;
     }
     let unit_out = out.join("ritma-security-host.service");
     let compose_abs = fs::canonicalize(&compose).unwrap_or(compose.clone());
@@ -1372,6 +1717,10 @@ fn cmd_deploy_status(json: bool) -> Result<(), (u8, String)> {
     let ns_hint = std::env::var("RITMA_NAMESPACE")
         .or_else(|_| std::env::var("NAMESPACE_ID"))
         .unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string());
+    let ns_hint = match validate::validate_namespace(&ns_hint) {
+        Ok(()) => ns_hint,
+        Err(_) => "ns://demo/dev/hello/world".to_string(),
+    };
     let mut out: serde_json::Value = serde_json::json!({
         "capabilities": {
             "docker": caps.docker,
@@ -1574,11 +1923,32 @@ fn cmd_logs(
         return Err((1, "logs --json not supported yet".into()));
     }
 
+    let caps = detect_capabilities();
+
+    // K8s mode: use kubectl logs
     if mode == "k8s" {
-        return Err((1, "k8s logs not implemented yet".into()));
+        if !caps.kubectl {
+            return Err((1, "kubectl not detected. Install kubectl and configure cluster access.".into()));
+        }
+        let target = service.unwrap_or_else(|| "orchestrator".to_string());
+        let selector = format!("app={}", target);
+
+        let mut cmd = ProcCommand::new("kubectl");
+        cmd.args(["logs", "-n", "ritma-system", "-l", &selector, "--tail", &format!("{tail}")]);
+        if follow {
+            cmd.arg("-f");
+        }
+
+        let status = cmd
+            .status()
+            .map_err(|e| (1, format!("kubectl logs failed: {e}")))?;
+        if !status.success() {
+            eprintln!("No logs found for selector: {selector}");
+            eprintln!("Next: ritma ps --mode k8s  (to see running pods)");
+        }
+        return Ok(());
     }
 
-    let caps = detect_capabilities();
     if !caps.docker {
         return Err((1, "docker not detected; cannot fetch logs".into()));
     }
@@ -1609,10 +1979,38 @@ fn cmd_logs(
 }
 
 fn cmd_down(mode: String, compose: PathBuf, volumes: bool) -> Result<(), (u8, String)> {
-    if mode == "k8s" {
-        return Err((1, "k8s down not implemented yet".into()));
-    }
     let caps = detect_capabilities();
+
+    // K8s mode: use kubectl delete
+    if mode == "k8s" {
+        if !caps.kubectl {
+            return Err((1, "kubectl not detected. Install kubectl and configure cluster access.".into()));
+        }
+
+        // Delete all resources in ritma-system namespace
+        let status = ProcCommand::new("kubectl")
+            .args(["delete", "all", "--all", "-n", "ritma-system"])
+            .status()
+            .map_err(|e| (1, format!("kubectl delete failed: {e}")))?;
+
+        if volumes {
+            // Also delete PVCs if --volumes flag is set
+            let _ = ProcCommand::new("kubectl")
+                .args(["delete", "pvc", "--all", "-n", "ritma-system"])
+                .status();
+        }
+
+        if status.success() {
+            println!("Changed: deleted ritma-system resources");
+            println!("Where: namespace=ritma-system volumes={}", if volumes { "deleted" } else { "kept" });
+            println!("Next: ritma deploy k8s --dir <manifests>");
+        } else {
+            println!("Warning: some resources may not have been deleted");
+            println!("Next: kubectl get all -n ritma-system");
+        }
+        return Ok(());
+    }
+
     if !caps.docker {
         return Err((1, "docker not detected".into()));
     }
@@ -1674,10 +2072,52 @@ fn cmd_restart(
     compose: PathBuf,
     service: Option<String>,
 ) -> Result<(), (u8, String)> {
-    if mode == "k8s" {
-        return Err((1, "k8s restart not implemented yet".into()));
-    }
     let caps = detect_capabilities();
+
+    // K8s mode: use kubectl rollout restart
+    if mode == "k8s" {
+        if !caps.kubectl {
+            return Err((1, "kubectl not detected. Install kubectl and configure cluster access.".into()));
+        }
+
+        let target = service.unwrap_or_else(|| "all".to_string());
+
+        if target == "all" || target == "minimal" {
+            // Restart all deployments
+            let status = ProcCommand::new("kubectl")
+                .args(["rollout", "restart", "deployment", "-n", "ritma-system"])
+                .status()
+                .map_err(|e| (1, format!("kubectl rollout restart failed: {e}")))?;
+
+            // Also restart daemonsets
+            let _ = ProcCommand::new("kubectl")
+                .args(["rollout", "restart", "daemonset", "-n", "ritma-system"])
+                .status();
+
+            if status.success() {
+                println!("Changed: restarted all deployments and daemonsets");
+                println!("Where: namespace=ritma-system");
+                println!("Next: ritma ps --mode k8s");
+            }
+        } else {
+            // Restart specific deployment
+            let status = ProcCommand::new("kubectl")
+                .args(["rollout", "restart", &format!("deployment/{}", target), "-n", "ritma-system"])
+                .status()
+                .map_err(|e| (1, format!("kubectl rollout restart failed: {e}")))?;
+
+            if status.success() {
+                println!("Changed: restarted deployment/{}", target);
+                println!("Where: namespace=ritma-system");
+                println!("Next: ritma logs --mode k8s --service {}", target);
+            } else {
+                eprintln!("Failed to restart deployment/{}. It may not exist.", target);
+                eprintln!("Next: ritma ps --mode k8s");
+            }
+        }
+        return Ok(());
+    }
+
     if !caps.docker {
         return Err((1, "docker not detected".into()));
     }
@@ -1762,7 +2202,7 @@ enum ExportCommands {
         namespace: String,
         /// Output directory
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         /// IndexDB path (default: /data/index_db.sqlite)
         #[arg(long)]
         index_db: Option<PathBuf>,
@@ -2302,23 +2742,89 @@ fn sha256_file(path: &Path) -> Result<String, (u8, String)> {
 
 fn cmd_export_proof_by_time(
     json: bool,
+    compat_json: bool,
+    human: bool,
     namespace: String,
     at_ts: i64,
-    out: PathBuf,
+    out: Option<PathBuf>,
     index_db: Option<PathBuf>,
 ) -> Result<(), (u8, String)> {
     let idx = resolve_index_db_path(index_db);
     let db = IndexDb::open(&idx).map_err(|e| (1, format!("open index db {idx}: {e}")))?;
 
-    let ml = db
+    let ml = match db
         .get_ml_containing_ts(&namespace, at_ts)
         .map_err(|e| (1, format!("get_ml_containing_ts: {e}")))?
-        .ok_or((
-            1,
-            format!("no ML window found containing ts={at_ts} for namespace={namespace}"),
-        ))?;
+    {
+        Some(ml) => ml,
+        None => {
+            let mut candidates = db
+                .list_ml_windows_overlapping(&namespace, at_ts - 3600, at_ts + 3600, 10)
+                .map_err(|e| (1, format!("list_ml_windows_overlapping: {e}")))?;
+            if candidates.is_empty() {
+                candidates = db
+                    .list_ml_windows(&namespace, 20)
+                    .map_err(|e| (1, format!("list_ml_windows: {e}")))?;
+            }
+            let dist = |w: &index_db::MlWindowRow| -> i64 {
+                if at_ts < w.start_ts {
+                    w.start_ts - at_ts
+                } else if at_ts > w.end_ts {
+                    at_ts - w.end_ts
+                } else {
+                    0
+                }
+            };
+            candidates.sort_by(|a, b| dist(a).cmp(&dist(b)).then_with(|| b.end_ts.cmp(&a.end_ts)));
 
-    cmd_export_proof(json, ml.ml_id, out, Some(PathBuf::from(idx)))
+            let mut msg = format!(
+                "no ML window found containing ts={at_ts} for namespace={namespace}\n"
+            );
+            if !candidates.is_empty() {
+                msg.push_str("Nearest windows:\n");
+                for w in candidates.iter().take(3) {
+                    let start = chrono::DateTime::from_timestamp(w.start_ts, 0)
+                        .unwrap_or(chrono::DateTime::from_timestamp(0, 0).unwrap())
+                        .to_rfc3339();
+                    let end = chrono::DateTime::from_timestamp(w.end_ts, 0)
+                        .unwrap_or(chrono::DateTime::from_timestamp(0, 0).unwrap())
+                        .to_rfc3339();
+                    msg.push_str(&format!(
+                        "  {ml_id}  [{start} .. {end}]  score={score:.3}\n",
+                        ml_id = w.ml_id,
+                        score = w.final_ml_score
+                    ));
+                }
+                let suggested = &candidates[0].ml_id;
+                msg.push_str("Try:\n");
+                msg.push_str(&format!(
+                    "  cargo run -p ritma_cli -- export-proof --namespace '{ns}' --ml-id {ml}\n",
+                    ns = namespace,
+                    ml = suggested
+                ));
+            } else {
+                msg.push_str("No ML windows found for this namespace. Try:\n");
+                msg.push_str(&format!(
+                    "  cargo run -p ritma_cli -- investigate list --namespace '{ns}' --limit 20\n",
+                    ns = namespace
+                ));
+            }
+            return Err((1, msg));
+        }
+    };
+
+    let out_dir = match out {
+        Some(p) => p,
+        None => default_proofpack_export_dir(&ml.ml_id)?,
+    };
+    cmd_export_proof(
+        json,
+        compat_json,
+        human,
+        ml.ml_id,
+        out_dir,
+        Some(PathBuf::from(idx)),
+    )
 }
 
 struct ExportBundleArgs {
@@ -2344,13 +2850,22 @@ fn cmd_export_bundle(args: ExportBundleArgs) -> Result<(), (u8, String)> {
 
     // Proof
     if let Some(ml_id) = args.ml_id {
-        cmd_export_proof(args.json, ml_id, proof_dir.clone(), args.index_db.clone())?;
+        cmd_export_proof(
+            args.json,
+            true,
+            true,
+            ml_id,
+            proof_dir.clone(),
+            args.index_db.clone(),
+        )?;
     } else if let Some(at) = args.at {
         cmd_export_proof_by_time(
             args.json,
+            true,
+            true,
             args.namespace.clone(),
             at,
-            proof_dir.clone(),
+            Some(proof_dir.clone()),
             args.index_db.clone(),
         )?;
     } else {
@@ -2773,7 +3288,7 @@ fn cmd_upgrade(
     println!("Upgrading Ritma runtime (channel={channel})");
 
     if !compose.exists() {
-        cmd_init(compose.clone(), namespace, "docker".to_string())?;
+        cmd_init(compose.clone(), namespace, "docker".to_string(), false)?;
     }
 
     let (v1_path, v2_path) = compose_variant_paths(&compose);
@@ -2890,9 +3405,17 @@ fn cmd_attest(
     serve: bool,
     port: u16,
 ) -> Result<(), (u8, String)> {
-    let ns = namespace.unwrap_or_else(|| {
-        std::env::var("NAMESPACE_ID").unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string())
-    });
+    let ns = match namespace {
+        Some(ns) => ns,
+        None => {
+            let ns = std::env::var("NAMESPACE_ID")
+                .unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string());
+            if let Err(e) = validate::validate_namespace(&ns) {
+                return Err((1, format!("Invalid NAMESPACE_ID: {}", e)));
+            }
+            ns
+        }
+    };
     let tree_sha = canonical_sha256_of_tree(&path)?;
     let git = git_info(&path);
     let created = chrono::Utc::now().to_rfc3339();
@@ -2960,7 +3483,8 @@ fn cmd_attest(
     }
 
     if serve {
-        serve_dir(&out_dir, port)?;
+        let chosen = pick_serve_port(port)?;
+        serve_dir(&out_dir, chosen)?;
     }
 
     if json {
@@ -2998,12 +3522,182 @@ fn write_canonical_json(path: &Path, value: &serde_json::Value) -> Result<(), (u
     Ok(())
 }
 
+
+/// Convert a serde_json::Value to a ciborium CborValue (deterministic mapping)
+fn json_to_cbor(v: &serde_json::Value) -> CborValue {
+    match v {
+        serde_json::Value::Null => CborValue::Null,
+        serde_json::Value::Bool(b) => CborValue::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                CborValue::Integer(Integer::from(i))
+            } else if let Some(u) = n.as_u64() {
+                CborValue::Integer(Integer::from(u))
+            } else if let Some(f) = n.as_f64() {
+                CborValue::Float(f)
+            } else {
+                CborValue::Null
+            }
+        }
+        serde_json::Value::String(s) => CborValue::Text(s.clone()),
+        serde_json::Value::Array(arr) => {
+            CborValue::Array(arr.iter().map(json_to_cbor).collect())
+        }
+        serde_json::Value::Object(map) => {
+            // Sort keys for deterministic output
+            let mut items: Vec<_> = map.iter().collect();
+            items.sort_by(|a, b| a.0.cmp(b.0));
+            CborValue::Map(
+                items
+                    .into_iter()
+                    .map(|(k, vv)| (CborValue::Text(k.clone()), json_to_cbor(vv)))
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// Serialize a serde_json::Value to canonical CBOR bytes (sorted keys)
+fn canonical_cbor_bytes(value: &serde_json::Value) -> Result<Vec<u8>, (u8, String)> {
+    let cbor_val = json_to_cbor(value);
+    let mut buf: Vec<u8> = Vec::new();
+    ciborium::into_writer(&cbor_val, &mut buf)
+        .map_err(|e| (1, format!("cbor encode: {e}")))?;
+    Ok(buf)
+}
+
+/// Write a serde_json::Value as canonical CBOR to a file
+fn write_canonical_cbor(path: &Path, value: &serde_json::Value) -> Result<(), (u8, String)> {
+    let bytes = canonical_cbor_bytes(value)?;
+    fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))
+        .map_err(|e| (1, format!("mkdir: {e}")))?;
+    fs::write(path, &bytes).map_err(|e| (1, format!("write {}: {e}", path.display())))?;
+    Ok(())
+}
+
+/// Write a serde_json::Value as canonical CBOR + zstd compressed to a file
+#[allow(dead_code)]
+fn write_canonical_cbor_zst(path: &Path, value: &serde_json::Value) -> Result<(), (u8, String)> {
+    let bytes = canonical_cbor_bytes(value)?;
+    let compressed = zstd::encode_all(Cursor::new(&bytes), 3)
+        .map_err(|e| (1, format!("zstd compress: {e}")))?;
+    fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))
+        .map_err(|e| (1, format!("mkdir: {e}")))?;
+    fs::write(path, &compressed).map_err(|e| (1, format!("write {}: {e}", path.display())))?;
+    Ok(())
+}
+
+/// Compute blake3 hash of bytes, return hex string
+fn blake3_hex(data: &[u8]) -> String {
+    let hash = blake3::hash(data);
+    hash.to_hex().to_string()
+}
+
+/// Compute blake3 hash of a file, return hex string
+fn blake3_file(path: &Path) -> Result<String, (u8, String)> {
+    let data = fs::read(path).map_err(|e| (1, format!("read {}: {e}", path.display())))?;
+    Ok(blake3_hex(&data))
+}
+
+fn receipts_blake3(receipts_dir: &Path) -> Result<String, (u8, String)> {
+    let mut paths: Vec<PathBuf> = WalkDir::new(receipts_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cbor"))
+        .collect();
+    paths.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+
+    let mut hasher = blake3::Hasher::new();
+    for p in paths {
+        let rel = p
+            .strip_prefix(receipts_dir)
+            .unwrap_or(p.as_path())
+            .to_string_lossy();
+        hasher.update(rel.as_bytes());
+        hasher.update(&[0u8]);
+        let data = fs::read(&p).map_err(|e| (1, format!("read {}: {e}", p.display())))?;
+        hasher.update(&data);
+        hasher.update(&[0u8]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+ }
+
+/// Read a CBOR file and parse to serde_json::Value (for verification)
+fn read_cbor_to_json(path: &Path) -> Result<serde_json::Value, (u8, String)> {
+    let data = fs::read(path).map_err(|e| (1, format!("read {}: {e}", path.display())))?;
+    let cbor_val: CborValue = ciborium::from_reader(Cursor::new(&data))
+        .map_err(|e| (1, format!("cbor decode {}: {e}", path.display())))?;
+    cbor_to_json(&cbor_val)
+}
+
+/// Read a CBOR+zstd file and parse to serde_json::Value
+fn read_cbor_zst_to_json(path: &Path) -> Result<serde_json::Value, (u8, String)> {
+    let compressed = fs::read(path).map_err(|e| (1, format!("read {}: {e}", path.display())))?;
+    let data = zstd::decode_all(Cursor::new(&compressed))
+        .map_err(|e| (1, format!("zstd decompress {}: {e}", path.display())))?;
+    let cbor_val: CborValue = ciborium::from_reader(Cursor::new(&data))
+        .map_err(|e| (1, format!("cbor decode {}: {e}", path.display())))?;
+    cbor_to_json(&cbor_val)
+}
+
+/// Convert a ciborium CborValue back to serde_json::Value
+fn cbor_to_json(v: &CborValue) -> Result<serde_json::Value, (u8, String)> {
+    match v {
+        CborValue::Null => Ok(serde_json::Value::Null),
+        CborValue::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+        CborValue::Integer(i) => {
+            let n: i128 = (*i).into();
+            if let Ok(i64_val) = i64::try_from(n) {
+                Ok(serde_json::Value::Number(i64_val.into()))
+            } else if let Ok(u64_val) = u64::try_from(n) {
+                Ok(serde_json::Value::Number(u64_val.into()))
+            } else {
+                Ok(serde_json::Value::String(n.to_string()))
+            }
+        }
+        CborValue::Float(f) => {
+            serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .ok_or((1, "invalid float".into()))
+        }
+        CborValue::Text(s) => Ok(serde_json::Value::String(s.clone())),
+        CborValue::Bytes(b) => Ok(serde_json::Value::String(hex::encode(b))),
+        CborValue::Array(arr) => {
+            let items: Result<Vec<_>, _> = arr.iter().map(cbor_to_json).collect();
+            Ok(serde_json::Value::Array(items?))
+        }
+        CborValue::Map(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, vv) in map {
+                let key = match k {
+                    CborValue::Text(s) => s.clone(),
+                    _ => return Err((1, "cbor map key must be text".into())),
+                };
+                out.insert(key, cbor_to_json(vv)?);
+            }
+            Ok(serde_json::Value::Object(out))
+        }
+        CborValue::Tag(_, inner) => cbor_to_json(inner),
+        _ => Err((1, "unsupported cbor type".into())),
+    }
+}
+
 fn cmd_export_proof(
     json: bool,
+    compat_json: bool,
+    human: bool,
     ml_id: String,
     out: PathBuf,
     index_db: Option<PathBuf>,
 ) -> Result<(), (u8, String)> {
+    if json {
+        return Err((1, "--json output disabled for proof export (strict CBOR)".into()));
+    }
+    if compat_json {
+        return Err((1, "--compat-json disabled (strict CBOR)".into()));
+    }
     let idx = resolve_index_db_path(index_db);
     let db = IndexDb::open(&idx).map_err(|e| (1, format!("open index db {idx}: {e}")))?;
     let ml = db
@@ -3053,8 +3747,8 @@ fn cmd_export_proof(
         .map_err(|e| (1, format!("build_kinetic_graph: {e}")))?;
 
     // Export kinetic graph (structural + velocity + intent + trajectory)
-    let kinetic_json = serde_json::json!({
-        "version": "0.1",
+    let kinetic_data = serde_json::json!({
+        "version": "0.2",
         "type": "kinetic_attack_graph",
         "kinetic_hash": kinetic_graph.kinetic_hash,
         "velocity": {
@@ -3078,7 +3772,7 @@ fn cmd_export_proof(
         },
         "structural_graph": {
             "canonicalization": "sorted_edges_stable_node_ids",
-            "hash_algo": "sha256(canon_graph_bytes)",
+            "hash_algo": "blake3(cbor_bytes)",
             "node_types": ["proc", "file", "socket", "auth_subject"],
             "edges": kinetic_graph.structural_edges.iter().map(|e| serde_json::json!({
                 "type": e.edge_type,
@@ -3090,13 +3784,15 @@ fn cmd_export_proof(
             })).collect::<Vec<_>>(),
         },
     });
-    write_canonical_json(&out.join("kinetic_graph.json"), &kinetic_json)?;
+    write_canonical_cbor(&out.join("kinetic_graph.cbor"), &kinetic_data)?;
+    if compat_json {
+        write_canonical_json(&out.join("kinetic_graph.json"), &kinetic_data)?;
+    }
 
-    // Also export legacy attack_graph.canon for compatibility
-    let attack_graph_canon = serde_json::json!({
-        "version": "0.1",
+    let attack_graph_data = serde_json::json!({
+        "version": "0.2",
         "canonicalization": "sorted_edges_stable_node_ids",
-        "hash_algo": "sha256(canon_graph_bytes)",
+        "hash_algo": "blake3(cbor_bytes)",
         "node_types": ["proc", "file", "socket", "auth_subject"],
         "edges": kinetic_graph.structural_edges.iter().map(|e| serde_json::json!({
             "type": e.edge_type,
@@ -3105,26 +3801,32 @@ fn cmd_export_proof(
             "attrs": e.attrs,
         })).collect::<Vec<_>>(),
     });
-    write_canonical_json(&out.join("attack_graph.canon"), &attack_graph_canon)?;
+    write_canonical_cbor(&out.join("attack_graph.cbor"), &attack_graph_data)?;
+    if compat_json {
+        write_canonical_json(&out.join("attack_graph.canon"), &attack_graph_data)?;
+    }
 
-    // Export cyber_trace.json (TLS, API calls, DNS, HTTP)
+    // Export cyber_trace (TLS, API calls, DNS, HTTP)
     let snapshotter = snapshotter::Snapshotter::new(&ml.namespace_id);
     if let Ok(cyber_trace) = snapshotter.capture_cyber_traces() {
-        let cyber_json = serde_json::json!({
-            "version": "0.1",
+        let cyber_data = serde_json::json!({
+            "version": "0.2",
             "type": "cyber_trace",
             "tls_handshakes": cyber_trace.tls_handshakes,
             "api_calls": cyber_trace.api_calls,
             "dns_queries": cyber_trace.dns_queries,
             "http_requests": cyber_trace.http_requests,
         });
-        write_canonical_json(&out.join("cyber_trace.json"), &cyber_json)?;
+        write_canonical_cbor(&out.join("cyber_trace.cbor"), &cyber_data)?;
+        if compat_json {
+            write_canonical_json(&out.join("cyber_trace.json"), &cyber_data)?;
+        }
     }
 
-    // Export network_topology.json (IP, routes, K8s, ports)
+    // Export network_topology (IP, routes, K8s, ports)
     if let Ok(topology) = snapshotter.capture_network_topology() {
-        let topo_json = serde_json::json!({
-            "version": "0.1",
+        let topo_data = serde_json::json!({
+            "version": "0.2",
             "type": "network_topology",
             "interfaces": topology.interfaces,
             "routes": topology.routes,
@@ -3133,24 +3835,30 @@ fn cmd_export_proof(
             "k8s_services": topology.k8s_services,
             "network_segments": topology.network_segments,
         });
-        write_canonical_json(&out.join("network_topology.json"), &topo_json)?;
+        write_canonical_cbor(&out.join("network_topology.cbor"), &topo_data)?;
+        if compat_json {
+            write_canonical_json(&out.join("network_topology.json"), &topo_data)?;
+        }
     }
 
-    // Export fileless_alerts.json (memfd, process injection, /dev/shm)
+    // Export fileless_alerts (memfd, process injection, /dev/shm)
     let fileless_alerts = snapshotter.get_fileless_alerts();
     if !fileless_alerts.is_empty() {
-        let fileless_json = serde_json::json!({
-            "version": "0.1",
+        let fileless_data = serde_json::json!({
+            "version": "0.2",
             "type": "fileless_malware_alerts",
             "alert_count": fileless_alerts.len(),
             "alerts": fileless_alerts,
         });
-        write_canonical_json(&out.join("fileless_alerts.json"), &fileless_json)?;
+        write_canonical_cbor(&out.join("fileless_alerts.cbor"), &fileless_data)?;
+        if compat_json {
+            write_canonical_json(&out.join("fileless_alerts.json"), &fileless_data)?;
+        }
     }
 
-    // Export policy.json (what rules/ranges produced the verdict)
-    let policy = serde_json::json!({
-        "version": "0.1",
+    // Export policy (what rules/ranges produced the verdict)
+    let policy_data = serde_json::json!({
+        "version": "0.2",
         "alert_threshold": 0.72,
         "baseline_window_hours": 24,
         "models": ["isolation_forest", "ngram_lr"],
@@ -3160,11 +3868,14 @@ fn cmd_export_proof(
             {"condition": "score >= 0.90", "action": "snapshot_full"},
         ],
     });
-    write_canonical_json(&out.join("policy.json"), &policy)?;
+    write_canonical_cbor(&out.join("policy.cbor"), &policy_data)?;
+    if compat_json {
+        write_canonical_json(&out.join("policy.json"), &policy_data)?;
+    }
 
-    // Export model_snapshot.json (model ids + feature config, not weights)
-    let model_snapshot = serde_json::json!({
-        "version": "0.1",
+    // Export model_snapshot (model ids + feature config, not weights)
+    let model_snapshot_data = serde_json::json!({
+        "version": "0.2",
         "models": [
             {"id": "isolation_forest_v1", "type": "anomaly_detection", "features": ["proc_diversity", "net_novelty", "file_entropy"]},
             {"id": "ngram_lr_v1", "type": "sequence_classifier", "features": ["syscall_ngrams", "arg_patterns"]},
@@ -3172,41 +3883,45 @@ fn cmd_export_proof(
         "feature_extractor": "window_summarizer_v1",
         "training_baseline": "last_24h_windows",
     });
-    write_canonical_json(&out.join("model_snapshot.json"), &model_snapshot)?;
+    write_canonical_cbor(&out.join("model_snapshot.cbor"), &model_snapshot_data)?;
+    if compat_json {
+        write_canonical_json(&out.join("model_snapshot.json"), &model_snapshot_data)?;
+    }
 
-    // Build manifest.json (v0.1) - now includes all artifacts including kinetic graph
     let all_artifacts = [
         (
-            "kinetic_graph.json",
-            canonical_sha256_of_file(&out.join("kinetic_graph.json"))?,
-            fs::metadata(out.join("kinetic_graph.json"))
+            "kinetic_graph.cbor",
+            blake3_file(&out.join("kinetic_graph.cbor"))?,
+            fs::metadata(out.join("kinetic_graph.cbor"))
                 .map(|m| m.len())
                 .unwrap_or(0),
         ),
         (
-            "attack_graph.canon",
-            canonical_sha256_of_file(&out.join("attack_graph.canon"))?,
-            fs::metadata(out.join("attack_graph.canon"))
+            "attack_graph.cbor",
+            blake3_file(&out.join("attack_graph.cbor"))?,
+            fs::metadata(out.join("attack_graph.cbor"))
                 .map(|m| m.len())
                 .unwrap_or(0),
         ),
         (
-            "policy.json",
-            canonical_sha256_of_file(&out.join("policy.json"))?,
-            fs::metadata(out.join("policy.json"))
+            "policy.cbor",
+            blake3_file(&out.join("policy.cbor"))?,
+            fs::metadata(out.join("policy.cbor"))
                 .map(|m| m.len())
                 .unwrap_or(0),
         ),
         (
-            "model_snapshot.json",
-            canonical_sha256_of_file(&out.join("model_snapshot.json"))?,
-            fs::metadata(out.join("model_snapshot.json"))
+            "model_snapshot.cbor",
+            blake3_file(&out.join("model_snapshot.cbor"))?,
+            fs::metadata(out.join("model_snapshot.cbor"))
                 .map(|m| m.len())
                 .unwrap_or(0),
         ),
     ];
-    let manifest = serde_json::json!({
-        "version": "0.1",
+    let manifest_data = serde_json::json!({
+        "version": "0.2",
+        "format": "cbor",
+        "hash_algo": "blake3",
         "window": {
             "start": chrono::DateTime::from_timestamp(ml.start_ts, 0).unwrap_or(chrono::DateTime::from_timestamp(0,0).unwrap()).to_rfc3339(),
             "end": chrono::DateTime::from_timestamp(ml.end_ts, 0).unwrap_or(chrono::DateTime::from_timestamp(0,0).unwrap()).to_rfc3339(),
@@ -3215,61 +3930,66 @@ fn cmd_export_proof(
         "kinetic_hash": kinetic_graph.kinetic_hash,
         "artifacts": evid.iter().flat_map(|ep| ep.artifacts.iter()).map(|a| serde_json::json!({
             "name": a.name,
-            "sha256": a.sha256,
+            "blake3": a.sha256,
             "size": a.size,
-        })).chain(all_artifacts.iter().map(|(name, sha, size)| serde_json::json!({
+        })).chain(all_artifacts.iter().map(|(name, hash, size)| serde_json::json!({
             "name": name,
-            "sha256": sha,
+            "blake3": hash,
             "size": size,
         }))).collect::<Vec<_>>(),
         "privacy": evid.first().map(|ep| serde_json::json!({"mode": ep.privacy.mode, "redactions": ep.privacy.redactions})).unwrap_or(serde_json::json!({"mode":"hash-only","redactions":[]})),
         "config_hash": evid.first().and_then(|ep| ep.config_hash.clone()),
         "contract_hash": evid.first().and_then(|ep| ep.contract_hash.clone()),
     });
-    let manifest_path = out.join("manifest.json");
-    write_canonical_json(&manifest_path, &manifest)?;
+    let manifest_cbor_path = out.join("manifest.cbor");
+    write_canonical_cbor(&manifest_cbor_path, &manifest_data)?;
+    if compat_json {
+        write_canonical_json(&out.join("manifest.json"), &manifest_data)?;
+    }
 
-    // Build receipts: minimal public-inputs note (placeholder)
     let pub_inputs = serde_json::json!({
+        "version": "0.2",
         "namespace_id": ml.namespace_id,
         "window": {"start": ml.start_ts, "end": ml.end_ts},
         "attack_graph_hash": ws.attack_graph_hash,
     });
-    let public_inputs_path = receipts_dir.join("public_inputs.json");
-    write_canonical_json(&public_inputs_path, &pub_inputs)?;
-
-    // Hash manifest + receipts (receipts.log will be added later)
-    let manifest_sha = canonical_sha256_of_file(&manifest_path)?;
-    let mut hasher = Sha256::new();
-    for entry in WalkDir::new(&receipts_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let data = fs::read(entry.path())
-            .map_err(|e| (1, format!("read {}: {e}", entry.path().display())))?;
-        hasher.update(&data);
+    let public_inputs_cbor_path = receipts_dir.join("public_inputs.cbor");
+    write_canonical_cbor(&public_inputs_cbor_path, &pub_inputs)?;
+    if compat_json {
+        write_canonical_json(&receipts_dir.join("public_inputs.json"), &pub_inputs)?;
     }
-    let receipts_sha = hex::encode(hasher.finalize());
 
-    // Build proofpack.json
-    let proofpack = serde_json::json!({
-        "version": "0.1",
+    let manifest_b3 = blake3_file(&manifest_cbor_path)?;
+    let receipts_b3 = receipts_blake3(&receipts_dir)?;
+
+    let pub_inputs_cbor_bytes = canonical_cbor_bytes(&pub_inputs)?;
+    let pub_inputs_b3 = blake3_hex(&pub_inputs_cbor_bytes);
+
+    let proofpack_data = serde_json::json!({
+        "version": "0.2",
+        "format": "cbor",
+        "hash_algo": "blake3",
         "pack_id": format!("pp_{}", Uuid::new_v4()),
         "namespace_id": ml.namespace_id,
         "created_at": chrono::Utc::now().to_rfc3339(),
         "proof_mode": "dev-noop",
         "proof_mode_description": "Integrity sealing only (ZK verifier planned)",
         "inputs": {
-            "manifest_sha256": manifest_sha,
-            "receipts_sha256": receipts_sha,
+            "manifest_blake3": manifest_b3.clone(),
+            "receipts_blake3": receipts_b3,
             "vk_id": "noop_vk_1",
-            "public_inputs_hash": common_models::hash_string_sha256(&serde_json::to_string(&pub_inputs).unwrap_or_default()),
+            "public_inputs_blake3": pub_inputs_b3,
         },
         "range": {"window": {"start": chrono::DateTime::from_timestamp(ml.start_ts, 0).unwrap_or(chrono::DateTime::from_timestamp(0,0).unwrap()).to_rfc3339(), "end": chrono::DateTime::from_timestamp(ml.end_ts, 0).unwrap_or(chrono::DateTime::from_timestamp(0,0).unwrap()).to_rfc3339()}},
     });
-    let proofpack_path = out.join("proofpack.json");
-    write_canonical_json(&proofpack_path, &proofpack)?;
+    let proofpack_cbor_path = out.join("proofpack.cbor");
+    write_canonical_cbor(&proofpack_cbor_path, &proofpack_data)?;
+    if compat_json {
+        write_canonical_json(&out.join("proofpack.json"), &proofpack_data)?;
+    }
+
+    let sig_path = out.join("manifest.sig");
+    let _ = maybe_write_manifest_sig(&sig_path, &manifest_b3)?;
 
     // Calculate bounded verdict metrics
     let total_events = ws
@@ -3353,8 +4073,10 @@ fn cmd_export_proof(
             .collect::<Vec<_>>()
             .join("")
     );
-    std::fs::write(out.join("index.html"), index_html)
-        .map_err(|e| (1, format!("write index.html: {e}")))?;
+    if human {
+        std::fs::write(out.join("index.html"), index_html)
+            .map_err(|e| (1, format!("write index.html: {e}")))?;
+    }
 
     // Write README.md (human summary)
     let readme = format!(
@@ -3467,8 +4189,10 @@ jq '.alert_threshold' policy.json
         total_edges,
         ws.attack_graph_hash.clone().unwrap_or_default(),
     );
-    std::fs::write(out.join("README.md"), readme)
-        .map_err(|e| (1, format!("write README.md: {e}")))?;
+    if human {
+        std::fs::write(out.join("README.md"), readme)
+            .map_err(|e| (1, format!("write README.md: {e}")))?;
+    }
 
     // Create receipts.log (hash-chained append-only log) - now that we have all variables
     let receipts_log = format!(
@@ -3516,21 +4240,24 @@ jq '.alert_threshold' policy.json
         kinetic_graph.intent.total_intent,
         kinetic_graph.trajectory.direction,
         chrono::Utc::now().to_rfc3339(),
-        &manifest_sha[..16],
-        &receipts_sha[..16],
+        &manifest_b3[..16],
+        &receipts_b3[..16],
         chrono::Utc::now().to_rfc3339(),
     );
-    std::fs::write(receipts_dir.join("receipts.log"), receipts_log)
-        .map_err(|e| (1, format!("write receipts.log: {e}")))?;
+    if human {
+        std::fs::write(receipts_dir.join("receipts.log"), receipts_log)
+            .map_err(|e| (1, format!("write receipts.log: {e}")))?;
+    }
 
-    // Create receipts/index.html for browser viewing
-    let receipts_index = format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"/><title>Ritma Receipts</title><style>body{{font-family:monospace;padding:2rem;background:#f9fafb}}pre{{background:#fff;padding:1rem;border:1px solid #e5e7eb;border-radius:8px}}</style></head><body><h1>Ritma Proof Receipts</h1><h2>Public Inputs</h2><pre>{}</pre><h2>Receipts Log</h2><pre>{}</pre></body></html>"#,
-        serde_json::to_string_pretty(&pub_inputs).unwrap_or_default(),
-        std::fs::read_to_string(receipts_dir.join("receipts.log")).unwrap_or_default(),
-    );
-    std::fs::write(receipts_dir.join("index.html"), receipts_index)
-        .map_err(|e| (1, format!("write receipts/index.html: {e}")))?;
+    if human {
+        let receipts_index = format!(
+            r#"<!doctype html><html><head><meta charset=\"utf-8\"/><title>Ritma Receipts</title><style>body{{font-family:monospace;padding:2rem;background:#f9fafb}}pre{{background:#fff;padding:1rem;border:1px solid #e5e7eb;border-radius:8px}}</style></head><body><h1>Ritma Proof Receipts</h1><h2>Public Inputs</h2><pre>{}</pre><h2>Receipts Log</h2><pre>{}</pre></body></html>"#,
+            serde_json::to_string_pretty(&pub_inputs).unwrap_or_default(),
+            std::fs::read_to_string(receipts_dir.join("receipts.log")).unwrap_or_default(),
+        );
+        std::fs::write(receipts_dir.join("index.html"), receipts_index)
+            .map_err(|e| (1, format!("write receipts/index.html: {e}")))?;
+    }
 
     // Write SECURITY_COMPARISON.md (300x advantage over Auth0/banking)
     let security_comparison = format!(
@@ -3671,106 +4398,61 @@ jq '.alert_threshold' policy.json
         ws.attack_graph_hash.clone().unwrap_or_default(),
         verdict_label,
     );
-    std::fs::write(out.join("SECURITY_COMPARISON.md"), security_comparison)
-        .map_err(|e| (1, format!("write SECURITY_COMPARISON.md: {e}")))?;
+    let git_commit_result = if human {
+        std::fs::write(out.join("SECURITY_COMPARISON.md"), security_comparison)
+            .map_err(|e| (1, format!("write SECURITY_COMPARISON.md: {e}")))?;
 
-    // Auto-commit ProofPack to Git (immutable audit trail)
-    let git_commit_result = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(&out)
-        .output();
-
-    if git_commit_result.is_ok() {
-        let _ = std::process::Command::new("git")
-            .args(["add", "."])
+        let git_commit_result = std::process::Command::new("git")
+            .args(["init"])
             .current_dir(&out)
             .output();
 
-        let commit_msg = format!(
-            "Ritma ProofPack {} | Score {:.3} | {} edges | {}",
-            ml.namespace_id, ml.final_ml_score, total_edges, verdict_label
-        );
+        if git_commit_result.is_ok() {
+            let _ = std::process::Command::new("git")
+                .args(["add", "."])
+                .current_dir(&out)
+                .output();
 
-        let _ = std::process::Command::new("git")
-            .args(["commit", "-m", &commit_msg])
-            .current_dir(&out)
-            .output();
+            let commit_msg = format!(
+                "Ritma ProofPack {} | Score {:.3} | {} edges | {}",
+                ml.namespace_id, ml.final_ml_score, total_edges, verdict_label
+            );
 
-        if !json {
-            println!("✓ ProofPack committed to Git (immutable audit trail)");
+            let _ = std::process::Command::new("git")
+                .args(["commit", "-m", &commit_msg])
+                .current_dir(&out)
+                .output();
+
+            if !json {
+                println!("✓ ProofPack committed to Git (immutable audit trail)");
+            }
         }
-    }
+        Ok(git_commit_result)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "git commit disabled",
+        ))
+    };
 
     if json {
         println!(
             "{}",
             serde_json::json!({
                 "out": out.display().to_string(),
-                "manifest_sha256": manifest_sha,
-                "receipts_sha256": receipts_sha,
+                "manifest_blake3": manifest_b3,
+                "receipts_blake3": receipts_b3,
                 "git_committed": git_commit_result.is_ok(),
             })
         );
     } else {
         println!("Exported ProofPack to {}", out.display());
-        println!("\n🔒 Second-Order Security + Kinetic Graph:");
-        println!("   • Behavioral provenance: {total_events} events analyzed");
-        println!("   • Attack graph: {total_edges} edges mapped");
-        println!(
-            "   • ML verdict: {} (score {:.3}, P{})",
-            verdict_label, ml.final_ml_score, percentile
-        );
-        println!("   • Immutable audit: Git-committed with SHA-256 hashes");
-        println!("   • Tamper-evident: Any modification breaks hash chain");
-        println!("\n⚡ Kinetic Metrics (9 New Features):");
-        println!(
-            "   1. Events/sec: {:.2}",
-            kinetic_graph.velocity.events_per_second
-        );
-        println!(
-            "   2. Targets/min: {:.2}",
-            kinetic_graph.velocity.unique_targets_per_minute
-        );
-        println!(
-            "   3. Escalation rate: {:.2}%",
-            kinetic_graph.velocity.escalation_rate * 100.0
-        );
-        println!(
-            "   4. Lateral movement: {:.2}/min",
-            kinetic_graph.velocity.lateral_movement_rate
-        );
-        println!(
-            "   5. Intent (recon/access/exfil/persist): {:.1}/{:.1}/{:.1}/{:.1}",
-            kinetic_graph.intent.recon_score,
-            kinetic_graph.intent.access_score,
-            kinetic_graph.intent.exfil_score,
-            kinetic_graph.intent.persist_score
-        );
-        println!(
-            "   6. Total intent: {:.2}",
-            kinetic_graph.intent.total_intent
-        );
-        println!(
-            "   7. Trajectory direction: {}",
-            kinetic_graph.trajectory.direction
-        );
-        println!(
-            "   8. Trajectory velocity: {:.3}",
-            kinetic_graph.trajectory.velocity
-        );
-        println!(
-            "   9. Anomaly momentum: {:.3}",
-            kinetic_graph.trajectory.anomaly_momentum
-        );
-        println!("\n🔑 Kinetic hash: {}", &kinetic_graph.kinetic_hash[..16]);
-        println!(
-            "\n📊 View comparison: cat {}/SECURITY_COMPARISON.md",
-            out.display()
-        );
-        println!(
-            "📈 View kinetic graph: jq . {}/kinetic_graph.json",
-            out.display()
-        );
+        println!("  proofpack: proofpack.cbor");
+        println!("  manifest: manifest.cbor  b3={}", &manifest_b3);
+        println!("  receipts: receipts/  b3={}", &receipts_b3);
+        if human {
+            println!("  viewer: index.html");
+        }
     }
 
     Ok(())
@@ -4071,17 +4753,24 @@ fn canonical_sha256_of_file(path: &Path) -> Result<String, (u8, String)> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn cmd_verify_proof(json: bool, path: PathBuf) -> Result<(), (u8, String)> {
+fn cmd_verify_proof(json_output: bool, path: PathBuf) -> Result<(), (u8, String)> {
     let root = path;
-    let pf = root.join("proofpack.json");
-    let mf = root.join("manifest.json");
     let receipts_dir = root.join("receipts");
+    let sig_path = root.join("manifest.sig");
 
-    if !pf.exists() || !mf.exists() {
+    let pf_cbor = root.join("proofpack.cbor");
+    let mf_cbor = root.join("manifest.cbor");
+    let pf_json = root.join("proofpack.json");
+    let mf_json = root.join("manifest.json");
+
+    let is_cbor = pf_cbor.exists() && mf_cbor.exists();
+    let is_json = pf_json.exists() && mf_json.exists();
+
+    if !is_cbor && !is_json {
         return Err((
             1,
             format!(
-                "missing proofpack.json or manifest.json in {}",
+                "missing proofpack/manifest files (cbor or json) in {}",
                 root.display()
             ),
         ));
@@ -4090,17 +4779,20 @@ fn cmd_verify_proof(json: bool, path: PathBuf) -> Result<(), (u8, String)> {
         return Err((1, format!("missing receipts/ folder in {}", root.display())));
     }
 
-    // Parse JSON files
-    let proofpack_v: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&pf).map_err(|e| (1, format!("read {}: {e}", pf.display())))?,
-    )
-    .map_err(|e| (1, format!("parse {}: {e}", pf.display())))?;
-    let manifest_v: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&mf).map_err(|e| (1, format!("read {}: {e}", mf.display())))?,
-    )
-    .map_err(|e| (1, format!("parse {}: {e}", mf.display())))?;
+    let (proofpack_v, manifest_v, format_name) = if is_cbor {
+        let pp = read_cbor_to_json(&pf_cbor)?;
+        let mf = read_cbor_to_json(&mf_cbor)?;
+        (pp, mf, "cbor")
+    } else {
+        let pp: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&pf_json).map_err(|e| (1, format!("read {}: {e}", pf_json.display())))?,
+        ).map_err(|e| (1, format!("parse {}: {e}", pf_json.display())))?;
+        let mf: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&mf_json).map_err(|e| (1, format!("read {}: {e}", mf_json.display())))?,
+        ).map_err(|e| (1, format!("parse {}: {e}", mf_json.display())))?;
+        (pp, mf, "json")
+    };
 
-    // Basic shape checks
     let version = proofpack_v
         .get("version")
         .and_then(|v| v.as_str())
@@ -4110,124 +4802,131 @@ fn cmd_verify_proof(json: bool, path: PathBuf) -> Result<(), (u8, String)> {
         .and_then(|v| v.as_str())
         .unwrap_or("?");
 
-    // Deterministic hash expectations
-    let manifest_sha_expected = proofpack_v
-        .get("inputs")
-        .and_then(|i| i.get("manifest_sha256"))
+    let uses_blake3 = proofpack_v
+        .get("hash_algo")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let receipts_sha_expected = proofpack_v
-        .get("inputs")
-        .and_then(|i| i.get("receipts_sha256"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .map(|s| s == "blake3")
+        .unwrap_or(false)
+        || proofpack_v
+            .get("inputs")
+            .and_then(|i| i.get("manifest_blake3"))
+            .is_some();
 
-    let manifest_sha = canonical_sha256_of_file(&mf)?;
-    let mut hasher = Sha256::new();
-    for entry in WalkDir::new(&receipts_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let p = entry.path();
-        let data = fs::read(p).map_err(|e| (1, format!("read {}: {e}", p.display())))?;
-        hasher.update(&data);
-    }
-    let receipts_sha = hex::encode(hasher.finalize());
-
-    let ok_manifest = !manifest_sha_expected.is_empty() && manifest_sha_expected == manifest_sha;
-    let ok_receipts = !receipts_sha_expected.is_empty() && receipts_sha_expected == receipts_sha;
-
-    // Required field checks (v0.1 minimal)
-    let mut missing: Vec<&'static str> = Vec::new();
-    for (path, present) in [
-        ("proofpack.version", proofpack_v.get("version").is_some()),
+    let (manifest_hash_expected, receipts_hash_expected) = if uses_blake3 {
         (
-            "proofpack.namespace_id",
-            proofpack_v.get("namespace_id").is_some(),
-        ),
+            proofpack_v
+                .get("inputs")
+                .and_then(|i| i.get("manifest_blake3"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            proofpack_v
+                .get("inputs")
+                .and_then(|i| i.get("receipts_blake3"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        )
+    } else {
         (
-            "proofpack.inputs.manifest_sha256",
             proofpack_v
                 .get("inputs")
                 .and_then(|i| i.get("manifest_sha256"))
-                .is_some(),
-        ),
-        (
-            "proofpack.inputs.receipts_sha256",
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             proofpack_v
                 .get("inputs")
                 .and_then(|i| i.get("receipts_sha256"))
-                .is_some(),
-        ),
-        (
-            "proofpack.inputs.vk_id",
-            proofpack_v
-                .get("inputs")
-                .and_then(|i| i.get("vk_id"))
-                .is_some(),
-        ),
-        (
-            "proofpack.inputs.public_inputs_hash",
-            proofpack_v
-                .get("inputs")
-                .and_then(|i| i.get("public_inputs_hash"))
-                .is_some(),
-        ),
-        (
-            "proofpack.range.window.start",
-            proofpack_v
-                .get("range")
-                .and_then(|r| r.get("window"))
-                .and_then(|w| w.get("start"))
-                .is_some(),
-        ),
-        (
-            "proofpack.range.window.end",
-            proofpack_v
-                .get("range")
-                .and_then(|r| r.get("window"))
-                .and_then(|w| w.get("end"))
-                .is_some(),
-        ),
-        (
-            "manifest.window.start",
-            manifest_v
-                .get("window")
-                .and_then(|w| w.get("start"))
-                .is_some(),
-        ),
-        (
-            "manifest.window.end",
-            manifest_v
-                .get("window")
-                .and_then(|w| w.get("end"))
-                .is_some(),
-        ),
-        (
-            "manifest.attack_graph_hash",
-            manifest_v.get("attack_graph_hash").is_some(),
-        ),
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+
+    let manifest_path: &Path = if is_cbor {
+        mf_cbor.as_path()
+    } else {
+        mf_json.as_path()
+    };
+
+    let (manifest_hash_actual, receipts_hash_actual) = if uses_blake3 {
+        let mf_hash = blake3_file(manifest_path)?;
+        let rc_hash = receipts_blake3(&receipts_dir)?;
+        (mf_hash, rc_hash)
+    } else {
+        let mf_hash = canonical_sha256_of_file(manifest_path)?;
+        let mut hasher = Sha256::new();
+        for entry in WalkDir::new(&receipts_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            let data = fs::read(entry.path())
+                .map_err(|e| (1, format!("read {}: {e}", entry.path().display())))?;
+            hasher.update(&data);
+        }
+        (mf_hash, hex::encode(hasher.finalize()))
+    };
+
+    let ok_manifest = !manifest_hash_expected.is_empty() && manifest_hash_expected == manifest_hash_actual;
+    let ok_receipts = !receipts_hash_expected.is_empty() && receipts_hash_expected == receipts_hash_actual;
+
+    let sig_present = sig_path.exists();
+    let sig_check = verify_manifest_sig(&sig_path, &manifest_hash_actual);
+    let sig_ok = if sig_present { sig_check.is_ok() } else { true };
+
+    let mut missing: Vec<&'static str> = Vec::new();
+    let has_manifest_hash = proofpack_v
+        .get("inputs")
+        .map(|i| i.get("manifest_blake3").is_some() || i.get("manifest_sha256").is_some())
+        .unwrap_or(false);
+    let has_receipts_hash = proofpack_v
+        .get("inputs")
+        .map(|i| i.get("receipts_blake3").is_some() || i.get("receipts_sha256").is_some())
+        .unwrap_or(false);
+    let has_public_inputs_hash = proofpack_v
+        .get("inputs")
+        .map(|i| i.get("public_inputs_blake3").is_some() || i.get("public_inputs_hash").is_some())
+        .unwrap_or(false);
+
+    for (field_path, present) in [
+        ("proofpack.version", proofpack_v.get("version").is_some()),
+        ("proofpack.namespace_id", proofpack_v.get("namespace_id").is_some()),
+        ("proofpack.inputs.manifest_hash", has_manifest_hash),
+        ("proofpack.inputs.receipts_hash", has_receipts_hash),
+        ("proofpack.inputs.vk_id", proofpack_v.get("inputs").and_then(|i| i.get("vk_id")).is_some()),
+        ("proofpack.inputs.public_inputs_hash", has_public_inputs_hash),
+        ("proofpack.range.window.start", proofpack_v.get("range").and_then(|r| r.get("window")).and_then(|w| w.get("start")).is_some()),
+        ("proofpack.range.window.end", proofpack_v.get("range").and_then(|r| r.get("window")).and_then(|w| w.get("end")).is_some()),
+        ("manifest.window.start", manifest_v.get("window").and_then(|w| w.get("start")).is_some()),
+        ("manifest.window.end", manifest_v.get("window").and_then(|w| w.get("end")).is_some()),
+        ("manifest.attack_graph_hash", manifest_v.get("attack_graph_hash").is_some()),
     ] {
         if !present {
-            missing.push(path);
+            missing.push(field_path);
         }
     }
 
-    if json {
+    let hash_algo = if uses_blake3 { "blake3" } else { "sha256" };
+
+    if json_output {
         println!(
             "{}",
             serde_json::json!({
                 "version": version,
+                "format": format_name,
+                "hash_algo": hash_algo,
                 "namespace_id": ns,
-                "manifest_sha256": {"expected": manifest_sha_expected, "actual": manifest_sha, "ok": ok_manifest},
-                "receipts_sha256": {"expected": receipts_sha_expected, "actual": receipts_sha, "ok": ok_receipts},
+                "manifest_hash": {"expected": manifest_hash_expected, "actual": manifest_hash_actual, "ok": ok_manifest},
+                "receipts_hash": {"expected": receipts_hash_expected, "actual": receipts_hash_actual, "ok": ok_receipts},
+                "signature": {"present": sig_present, "ok": sig_ok, "error": sig_check.err().map(|e| e.1)},
                 "required_missing": missing,
-                "status": if ok_manifest && ok_receipts { "ok" } else { "mismatch" }
+                "status": if ok_manifest && ok_receipts && sig_ok { "ok" } else { "mismatch" }
             })
         );
     } else {
-        println!("ProofPack verify (v{version} ns={ns})");
+        println!("ProofPack verify (v{version} format={format_name} hash={hash_algo} ns={ns})");
         println!(
             "  manifest: {}",
             if ok_manifest { "OK" } else { "MISMATCH" }
@@ -4236,12 +4935,27 @@ fn cmd_verify_proof(json: bool, path: PathBuf) -> Result<(), (u8, String)> {
             "  receipts: {}",
             if ok_receipts { "OK" } else { "MISMATCH" }
         );
+        println!(
+            "  signature: {}",
+            if !sig_present {
+                "MISSING"
+            } else if sig_ok {
+                "OK"
+            } else {
+                "MISMATCH"
+            }
+        );
+        if sig_present {
+            if let Err((_code, msg)) = &sig_check {
+                println!("    error: {msg}");
+            }
+        }
         if !missing.is_empty() {
             println!("  missing: {missing:?}");
         }
     }
 
-    if ok_manifest && ok_receipts && missing.is_empty() {
+    if ok_manifest && ok_receipts && sig_ok && missing.is_empty() {
         Ok(())
     } else {
         Err((
@@ -4251,14 +4965,20 @@ fn cmd_verify_proof(json: bool, path: PathBuf) -> Result<(), (u8, String)> {
     }
 }
 
-fn cmd_init(output: PathBuf, namespace: String, mode: String) -> Result<(), (u8, String)> {
+fn cmd_init(
+    output: PathBuf,
+    namespace: String,
+    mode: String,
+    tracer_host: bool,
+) -> Result<(), (u8, String)> {
     if mode == "k8s" {
-        return cmd_init_k8s(output, namespace);
+        return cmd_init_k8s(output, namespace, tracer_host);
     }
     ensure_local_data_dir()?;
 
     let data_dir = ritma_data_dir().display().to_string();
-    let (v1_path, v2_path) = write_compose_bundle(&output, &namespace, &data_dir, false, None)?;
+    let (v1_path, v2_path) =
+        write_compose_bundle(&output, &namespace, &data_dir, false, None, tracer_host)?;
     eprintln!("Wrote {}", v1_path.display());
     eprintln!("Wrote {}", v2_path.display());
     eprintln!("Wrote {}", output.display());
@@ -4397,7 +5117,7 @@ fn cmd_up(
             .arg("--name")
             .arg("utld")
             .arg("-p")
-            .arg("8088:8088")
+            .arg("127.0.0.1:8088:8088")
             .arg("-e")
             .arg("RUST_LOG=info")
             .arg("ritma/utld:latest")
@@ -4413,9 +5133,9 @@ fn cmd_up(
             .arg("--name")
             .arg("bar_daemon")
             .arg("-p")
-            .arg("8090:8090")
+            .arg("127.0.0.1:8090:8090")
             .arg("-e")
-            .arg("BAR_HEALTH_ADDR=0.0.0.0:8090")
+            .arg("BAR_HEALTH_ADDR=127.0.0.1:8090")
             .arg("-e")
             .arg("BAR_SOCKET=/data/bar_daemon.sock")
             .arg("-e")
@@ -4496,7 +5216,7 @@ fn cmd_up(
     Ok(())
 }
 
-fn k8s_manifest_bundle(namespace: &str) -> Vec<(String, String)> {
+fn k8s_manifest_bundle(namespace: &str, tracer_host: bool) -> Vec<(String, String)> {
     let namespace_yaml = r#"apiVersion: v1
 kind: Namespace
 metadata:
@@ -4587,6 +5307,28 @@ spec:
 "#
     );
 
+    let tracer_host_fields = if tracer_host {
+        "      hostPID: true\n      hostNetwork: true\n".to_string()
+    } else {
+        "".to_string()
+    };
+    let proc_mounts = if tracer_host {
+        "        - name: proc\n          mountPath: /proc\n          readOnly: true\n".to_string()
+    } else {
+        "".to_string()
+    };
+    let proc_volumes = if tracer_host {
+        "      - name: proc\n        hostPath:\n          path: /proc\n          type: Directory\n"
+            .to_string()
+    } else {
+        "".to_string()
+    };
+    let tracer_caps = if tracer_host {
+        "            add: [\"SYS_ADMIN\", \"SYS_PTRACE\", \"NET_ADMIN\"]\n".to_string()
+    } else {
+        "            drop: [\"ALL\"]\n".to_string()
+    };
+
     let tracer_yaml = format!(
         r#"apiVersion: apps/v1
 kind: DaemonSet
@@ -4602,21 +5344,36 @@ spec:
       labels:
         app: tracer-sidecar
     spec:
-      hostPID: true
-      hostNetwork: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+{tracer_host_fields}
       containers:
       - name: tracer
         image: ritma/tracer_sidecar:latest
         imagePullPolicy: IfNotPresent
         securityContext:
-          privileged: true
+          privileged: false
+          allowPrivilegeEscalation: false
+          capabilities:
+{tracer_caps}
         env:
         - name: NAMESPACE_ID
           value: "{namespace}"
         - name: AUDIT_LOG_PATH
           value: "/var/log/audit/audit.log"
         - name: INDEX_DB_PATH
-          value: "/data/index_db.sqlite"
+          value: "/var/lib/ritma/index_db.sqlite"
+        - name: RITMA_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: RITMA_BASE_DIR
+          value: "/var/lib/ritma"
+        - name: RITMA_OUT_DIR
+          value: "/var/lib/ritma/RITMA_OUT"
+        - name: RITMA_SIDECAR_LOCK_DIR
+          value: "/run/ritma/locks"
         - name: PROC_ROOT
           value: "/proc"
         - name: PRIVACY_MODE
@@ -4626,24 +5383,23 @@ spec:
           mountPath: /var/log/audit
           readOnly: true
         - name: data
-          mountPath: /data
-        - name: proc
-          mountPath: /proc
-          readOnly: true
-      volumes:
+          mountPath: /var/lib/ritma
+        - name: locks
+          mountPath: /run/ritma/locks
+{proc_mounts}      volumes:
       - name: audit
         hostPath:
           path: /var/log/audit
           type: DirectoryOrCreate
       - name: data
         hostPath:
-          path: /var/ritma/data
+          path: /var/lib/ritma
           type: DirectoryOrCreate
-      - name: proc
+      - name: locks
         hostPath:
-          path: /proc
-          type: Directory
-"#
+          path: /run/ritma/locks
+          type: DirectoryOrCreate
+{proc_volumes}"#
     );
 
     let orchestrator_yaml = format!(
@@ -4670,18 +5426,36 @@ spec:
         - name: NAMESPACE_ID
           value: "{namespace}"
         - name: INDEX_DB_PATH
-          value: "/data/index_db.sqlite"
+          value: "/var/lib/ritma/index_db.sqlite"
+        - name: RITMA_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: RITMA_BASE_DIR
+          value: "/var/lib/ritma"
+        - name: RITMA_OUT_DIR
+          value: "/var/lib/ritma/RITMA_OUT"
+        - name: RITMA_SIDECAR_LOCK_DIR
+          value: "/run/ritma/locks"
         - name: TICK_SECS
           value: "60"
         - name: UTLD_URL
           value: "http://utld:8088"
+        - name: NO_PROXY
+          value: "localhost,127.0.0.1,utld,redis,.ritma-system.svc.cluster.local"
         volumeMounts:
         - name: data
-          mountPath: /data
+          mountPath: /var/lib/ritma
+        - name: locks
+          mountPath: /run/ritma/locks
       volumes:
       - name: data
         hostPath:
-          path: /var/ritma/data
+          path: /var/lib/ritma
+          type: DirectoryOrCreate
+      - name: locks
+        hostPath:
+          path: /run/ritma/locks
           type: DirectoryOrCreate
 "#
     );
@@ -4695,20 +5469,20 @@ spec:
     ]
 }
 
-fn write_k8s_manifests(dir: &Path, namespace: &str) -> Result<(), (u8, String)> {
+fn write_k8s_manifests(dir: &Path, namespace: &str, tracer_host: bool) -> Result<(), (u8, String)> {
     fs::create_dir_all(dir).map_err(|e| (1, format!("mkdir {}: {e}", dir.display())))?;
-    for (name, content) in k8s_manifest_bundle(namespace) {
+    for (name, content) in k8s_manifest_bundle(namespace, tracer_host) {
         let path = dir.join(name);
         fs::write(&path, content).map_err(|e| (1, format!("write {}: {e}", path.display())))?;
     }
     Ok(())
 }
 
-fn cmd_init_k8s(_output: PathBuf, namespace: String) -> Result<(), (u8, String)> {
+fn cmd_init_k8s(_output: PathBuf, namespace: String, tracer_host: bool) -> Result<(), (u8, String)> {
     let k8s_dir = PathBuf::from("./k8s");
-    write_k8s_manifests(&k8s_dir, &namespace)?;
+    write_k8s_manifests(&k8s_dir, &namespace, tracer_host)?;
     eprintln!("K8s manifests written to ./k8s/");
-    eprintln!("Apply with: kubectl apply -f ./k8s/");
+    eprintln!("Next: kubectl apply -f ./k8s/");
     Ok(())
 }
 
@@ -4734,10 +5508,26 @@ fn cmd_demo(
     qr: bool,
     serve: bool,
     port: u16,
+    compat_json: bool,
+    human: bool,
 ) -> Result<(), (u8, String)> {
-    let ns = namespace.unwrap_or_else(|| {
-        std::env::var("NAMESPACE_ID").unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string())
-    });
+    if json {
+        return Err((1, "--json output disabled for demo (strict CBOR)".into()));
+    }
+    if compat_json {
+        return Err((1, "--compat-json disabled (strict CBOR)".into()));
+    }
+    let ns = match namespace {
+        Some(ns) => ns,
+        None => {
+            let ns = std::env::var("NAMESPACE_ID")
+                .unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string());
+            if let Err(e) = validate::validate_namespace(&ns) {
+                return Err((1, format!("Invalid NAMESPACE_ID: {}", e)));
+            }
+            ns
+        }
+    };
     let idx = resolve_index_db_path(index_db.clone());
     let _ = ensure_local_data_dir();
     let db = IndexDb::open(&idx).map_err(|e| (1, format!("open index db {idx}: {e}")))?;
@@ -4774,6 +5564,10 @@ fn cmd_demo(
                         ppid: 1,
                         uid: if i % 7 == 0 { 0 } else { 1000 },
                         gid: 1000,
+                        comm_hash: None,
+                        exe_hash: None,
+                        comm: None,
+                        exe: None,
                         container_id: None,
                         service: None,
                         build_hash: None,
@@ -4864,18 +5658,32 @@ fn cmd_demo(
     if let Ok(Some(m)) = IndexDb::open(&idx)
         .and_then(|dbq| dbq.get_ml_by_time(&ns, start.timestamp(), end.timestamp()))
     {
-        let out_dir = PathBuf::from("./ritma-demo-out").join(format!("{}", Uuid::new_v4()));
-        cmd_export_proof(json, m.ml_id.clone(), out_dir.clone(), index_db.clone())?;
+        let out_dir = default_proofpack_export_dir(&Uuid::new_v4().to_string())?;
+        cmd_export_proof(
+            json,
+            compat_json,
+            human,
+            m.ml_id.clone(),
+            out_dir.clone(),
+            index_db.clone(),
+        )?;
         if !json {
             println!("Exported shareable ProofPack to {}", out_dir.display());
         }
         exported_dir = Some(out_dir);
     }
-    // Generate RBAC-style attestation and QR code if requested
+
+    let chosen_port = if serve { pick_serve_port(port)? } else { port };
+
     if qr {
+        if !human {
+            return Err((1, "--qr requires --human".into()));
+        }
         if let Some(ref dir) = exported_dir {
             let attestation = serde_json::json!({
-                "version": "rbac-attestation-v0.1",
+                "version": "rbac-attestation-v0.2",
+                "format": "cbor",
+                "hash_algo": "blake3",
                 "created_at": chrono::Utc::now().to_rfc3339(),
                 "namespace_id": ns,
                 "window": {"start": window.start.clone(), "end": window.end.clone()},
@@ -4885,41 +5693,49 @@ fn cmd_demo(
                     "public_inputs_hash": proof.public_inputs_hash,
                 }
             });
-            let att_path = dir.join("attestation.json");
-            write_canonical_json(&att_path, &attestation)?;
-            let att_sha = canonical_sha256_of_file(&att_path)?;
+            let att_cbor_path = dir.join("attestation.cbor");
+            write_canonical_cbor(&att_cbor_path, &attestation)?;
+            let att_b3 = blake3_file(&att_cbor_path)?;
             std::fs::write(
-                dir.join("attestation.sha256"),
-                format!("{att_sha}  attestation.json\n"),
+                dir.join("attestation.blake3"),
+                format!("{att_b3}  attestation.cbor\n"),
             )
-            .map_err(|e| (1, format!("write attestation.sha256: {e}")))?;
-
-            // Build QR payload (compact JSON)
-            let mut payload = serde_json::json!({
-                "v": "ritma-rbac-qr@0.1",
-                "ns": ns,
-                "pih": proof.public_inputs_hash,
-                "vk": proof.verification_key_id,
-                "pid": proof.proof_id,
-                "ts": chrono::Utc::now().timestamp(),
-                "sha": att_sha,
-            });
-            if serve {
-                payload["url"] = serde_json::Value::String(format!("http://localhost:{port}/"));
+            .map_err(|e| (1, format!("write attestation.blake3: {e}")))?;
+            if compat_json {
+                write_canonical_json(&dir.join("attestation.json"), &attestation)?;
             }
-            let qr_data = serde_json::to_string(&payload).unwrap_or_else(|_| String::from("{}"));
-            let code = QrCode::new(qr_data.as_bytes()).map_err(|e| (1, format!("qr: {e}")))?;
+
+            let mut arr: Vec<CborValue> = Vec::new();
+            arr.push(CborValue::Text("ritma-rbac-qr@0.2".to_string()));
+            arr.push(CborValue::Text(ns.clone()));
+            arr.push(CborValue::Text(proof.public_inputs_hash.clone()));
+            arr.push(CborValue::Text(proof.verification_key_id.clone()));
+            arr.push(CborValue::Text(proof.proof_id.clone()));
+            arr.push(CborValue::Integer(Integer::from(chrono::Utc::now().timestamp())));
+            arr.push(CborValue::Text(att_b3.clone()));
+            if serve {
+                arr.push(CborValue::Text(format!("http://localhost:{chosen_port}/")));
+            } else {
+                arr.push(CborValue::Null);
+            }
+            let mut qr_bytes: Vec<u8> = Vec::new();
+            ciborium::into_writer(&CborValue::Array(arr), &mut qr_bytes)
+                .map_err(|e| (1, format!("cbor encode qr: {e}")))?;
+            let code = QrCode::new(&qr_bytes).map_err(|e| (1, format!("qr: {e}")))?;
             let svg_str = code.render::<svg::Color>().min_dimensions(256, 256).build();
             std::fs::write(dir.join("qrcode.svg"), svg_str)
                 .map_err(|e| (1, format!("qr save: {e}")))?;
             if !json {
-                println!("Generated attestation.json, attestation.sha256, qrcode.svg");
+                println!("Generated attestation.cbor, attestation.blake3, qrcode.svg");
             }
         }
     }
     if serve {
+        if !human {
+            return Err((1, "--serve requires --human".into()));
+        }
         if let Some(dir) = exported_dir {
-            serve_dir(&dir, port)?;
+            serve_dir(&dir, chosen_port)?;
         } else if !json {
             println!("Nothing exported to serve.");
         }
@@ -4927,8 +5743,27 @@ fn cmd_demo(
     Ok(())
 }
 
+fn pick_serve_port(start: u16) -> Result<u16, (u8, String)> {
+    let end = if start == 8080 { 8100 } else { start.saturating_add(20) };
+    for p in start..=end {
+        match TcpListener::bind(("127.0.0.1", p)) {
+            Ok(l) => {
+                drop(l);
+                return Ok(p);
+            }
+            Err(e) => {
+                if e.kind() == io::ErrorKind::AddrInUse {
+                    continue;
+                }
+                return Err((1, format!("check port {p}: {e}")));
+            }
+        }
+    }
+    Err((1, format!("no free port found in range {start}..={end}")))
+}
+
 fn serve_dir(root: &std::path::Path, port: u16) -> Result<(), (u8, String)> {
-    let addr = format!("0.0.0.0:{port}");
+    let addr = format!("127.0.0.1:{port}");
     let server = Server::http(&addr).map_err(|e| (1, format!("start server: {e}")))?;
     println!(
         "Serving {} at http://{}/ (Ctrl+C to stop)",
@@ -4936,7 +5771,101 @@ fn serve_dir(root: &std::path::Path, port: u16) -> Result<(), (u8, String)> {
         addr
     );
     for req in server.incoming_requests() {
-        let url_path = req.url().trim_start_matches('/');
+        let url_raw = req.url();
+        let url_no_q = url_raw.split('?').next().unwrap_or(url_raw);
+        let url_path = url_no_q.trim_start_matches('/');
+
+        let maybe_serve_json = |path: &Path| -> Result<serde_json::Value, (u8, String)> {
+            if path.extension().and_then(|s| s.to_str()) == Some("zst") {
+                read_cbor_zst_to_json(path)
+            } else {
+                read_cbor_to_json(path)
+            }
+        };
+
+        let api_path = if url_path.starts_with("api/") {
+            Some(url_path.trim_start_matches("api/"))
+        } else {
+            None
+        };
+
+        let alias_path = match url_path {
+            "manifest.json" => Some("manifest.cbor"),
+            "proofpack.json" => Some("proofpack.cbor"),
+            "attack_graph.json" => Some("attack_graph.cbor"),
+            "kinetic_graph.json" => Some("kinetic_graph.cbor"),
+            "policy.json" => Some("policy.cbor"),
+            "model_snapshot.json" => Some("model_snapshot.cbor"),
+            "receipts/public_inputs.json" => Some("receipts/public_inputs.cbor"),
+            _ => None,
+        };
+
+        if let Some(api) = api_path {
+            let rel = match api {
+                "manifest.json" => Some("manifest.cbor"),
+                "proofpack.json" => Some("proofpack.cbor"),
+                "attack_graph.json" => Some("attack_graph.cbor"),
+                "kinetic_graph.json" => Some("kinetic_graph.cbor"),
+                "policy.json" => Some("policy.cbor"),
+                "model_snapshot.json" => Some("model_snapshot.cbor"),
+                "receipts/public_inputs.json" => Some("receipts/public_inputs.cbor"),
+                _ => None,
+            };
+            if let Some(rel) = rel {
+                let p1 = root.join(rel);
+                let p2 = root.join(format!("{rel}.zst"));
+                let chosen = if p1.exists() { p1 } else { p2 };
+                match maybe_serve_json(&chosen)
+                    .and_then(|v| serde_json::to_string_pretty(&v).map_err(|e| (1, format!("json: {e}"))))
+                {
+                    Ok(body) => {
+                        let mut resp = Response::from_string(body);
+                        resp.add_header(
+                            tiny_http::Header::from_bytes(
+                                &b"Content-Type"[..],
+                                &b"application/json; charset=utf-8"[..],
+                            )
+                            .unwrap(),
+                        );
+                        let _ = req.respond(resp);
+                    }
+                    Err((_, e)) => {
+                        let _ = req.respond(
+                            Response::from_string(e).with_status_code(500),
+                        );
+                    }
+                }
+            } else {
+                let _ = req.respond(Response::from_string("Not Found").with_status_code(404));
+            }
+            continue;
+        }
+
+        if let Some(rel) = alias_path {
+            let p1 = root.join(rel);
+            let p2 = root.join(format!("{rel}.zst"));
+            let chosen = if p1.exists() { p1 } else { p2 };
+            match maybe_serve_json(&chosen)
+                .and_then(|v| serde_json::to_string_pretty(&v).map_err(|e| (1, format!("json: {e}"))))
+            {
+                Ok(body) => {
+                    let mut resp = Response::from_string(body);
+                    resp.add_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"application/json; charset=utf-8"[..],
+                        )
+                        .unwrap(),
+                    );
+                    let _ = req.respond(resp);
+                }
+                Err((_, e)) => {
+                    let _ = req.respond(Response::from_string(e).with_status_code(500));
+                }
+            }
+            continue;
+        }
+
         let p = if url_path.is_empty() {
             root.join("index.html")
         } else {
@@ -4963,17 +5892,77 @@ fn cmd_doctor(
     namespace: Option<String>,
 ) -> Result<(), (u8, String)> {
     let caps = detect_capabilities();
-    let ns = namespace.unwrap_or_else(|| {
-        std::env::var("NAMESPACE_ID").unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string())
-    });
+    let ns = match namespace {
+        Some(ns) => ns,
+        None => {
+            let ns = std::env::var("NAMESPACE_ID")
+                .unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string());
+            if let Err(e) = validate::validate_namespace(&ns) {
+                return Err((1, format!("Invalid NAMESPACE_ID: {}", e)));
+            }
+            ns
+        }
+    };
     let idx = resolve_index_db_path(index_db);
+
+    let contract = StorageContract::resolve_cctv();
+    let contract_ok = contract.is_ok();
+    let (c_node_id, c_base_dir, c_out_dir, c_lock_dir, c_lock_path, c_idx_path, c_orch_lock_path) = match contract {
+        Ok(ref c) => (
+            Some(c.node_id.clone()),
+            Some(c.base_dir.display().to_string()),
+            Some(c.out_dir.display().to_string()),
+            Some(c.lock_dir.display().to_string()),
+            Some(c.tracer_lock_path().display().to_string()),
+            Some(c.index_db_path.display().to_string()),
+            Some(c.orchestrator_lock_path().display().to_string()),
+        ),
+        Err(_) => (None, None, None, None, None, None, None),
+    };
 
     let audit_path =
         std::env::var("AUDIT_LOG_PATH").unwrap_or_else(|_| "/var/log/audit/audit.log".to_string());
+    let _ = validate_env_path("AUDIT_LOG_PATH", &audit_path, true);
     let has_audit = fs_metadata(&audit_path).is_ok();
     let has_bpf_fs = fs_metadata("/sys/fs/bpf").is_ok();
     let has_proc = fs_metadata("/proc").is_ok();
     let idx_exists_host = fs_metadata(&idx).is_ok();
+
+    let lock_dir = c_lock_dir
+        .as_deref()
+        .unwrap_or("/run/ritma/locks");
+    let lock_dir_exists = fs_metadata(lock_dir).is_ok();
+    let lock_dir_writable = if lock_dir_exists {
+        let probe = format!(
+            ".ritma-doctor-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let probe_path = std::path::Path::new(lock_dir).join(probe);
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&probe_path)
+        {
+            Ok(f) => {
+                drop(f);
+                std::fs::remove_file(&probe_path).is_ok()
+            }
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+
+    let ebpf_obj = std::env::var("RITMA_EBPF_OBJECT_PATH").ok().map(|s| s.trim().to_string());
+    let ebpf_obj = ebpf_obj.filter(|s| !s.is_empty());
+    let ebpf_obj_exists = ebpf_obj
+        .as_deref()
+        .map(|p| fs_metadata(p).is_ok())
+        .unwrap_or(false);
 
     let docker_names = if caps.docker {
         docker_ps_names()
@@ -4986,11 +5975,11 @@ fn cmd_doctor(
         .cloned();
     let idx_exists_in_container = orch_container
         .as_deref()
-        .map(|c| docker_exec_test_file(c, "/data/index_db.sqlite"))
+        .map(|c| docker_exec_test_file(c, "/var/lib/ritma/index_db.sqlite"))
         .unwrap_or(false);
     let data_writable_in_container = orch_container
         .as_deref()
-        .map(|c| docker_exec_test_writable_dir(c, "/data"))
+        .map(|c| docker_exec_test_writable_dir(c, "/var/lib/ritma"))
         .unwrap_or(false);
 
     let idx_state = if idx_exists_host {
@@ -5042,6 +6031,13 @@ fn cmd_doctor(
         "none"
     };
 
+    // Check for port conflicts (only if runtime not running - otherwise ports are expected to be in use)
+    let port_conflicts = if orch_container.is_none() {
+        check_port_conflicts()
+    } else {
+        Vec::new()
+    };
+
     let mut blockers: Vec<String> = Vec::new();
     if !caps.docker && !caps.kubectl {
         blockers.push("docker_or_kubectl_missing".into());
@@ -5062,7 +6058,26 @@ fn cmd_doctor(
         blockers.push("missing_audit_or_ebpf".into());
     }
 
-    let fix = if !caps.docker && !caps.kubectl {
+    if !contract_ok {
+        blockers.push("storage_contract_invalid".into());
+    }
+    if !lock_dir_exists {
+        blockers.push("lock_dir_missing".into());
+    }
+    if lock_dir_exists && !lock_dir_writable {
+        blockers.push("lock_dir_not_writable".into());
+    }
+    if ebpf_obj.is_some() && !ebpf_obj_exists {
+        blockers.push("ebpf_object_missing".into());
+    }
+    // Add port conflict blockers
+    for (port, service) in &port_conflicts {
+        blockers.push(format!("port_{}_in_use_{}", port, service.to_lowercase().replace(' ', "_")));
+    }
+
+    let fix = if !port_conflicts.is_empty() {
+        "stop conflicting services on ports 8088/8090, then run: ritma up"
+    } else if !caps.docker && !caps.kubectl {
         "install docker, then run: ritma up"
     } else if orch_container.is_none() || idx_state == "not_writable_in_container" {
         "ritma up"
@@ -5080,6 +6095,20 @@ fn cmd_doctor(
             serde_json::json!({
                 "namespace_id": ns,
                 "index_db": idx,
+                "contract": {
+                    "ok": contract_ok,
+                    "node_id": c_node_id,
+                    "base_dir": c_base_dir,
+                    "index_db_path": c_idx_path,
+                    "out_dir": c_out_dir,
+                    "lock_dir": c_lock_dir,
+                    "lock_dir_exists": lock_dir_exists,
+                    "lock_dir_writable": lock_dir_writable,
+                    "lock_path": c_lock_path,
+                    "orchestrator_lock_path": c_orch_lock_path,
+                    "ebpf_object_path": ebpf_obj,
+                    "ebpf_object_exists": ebpf_obj_exists,
+                },
                 "mode": mode,
                 "score": score,
                 "readiness": readiness,
@@ -5099,6 +6128,7 @@ fn cmd_doctor(
                     "systemd": caps.systemd
                 },
                 "index_db_state": idx_state,
+                "port_conflicts": port_conflicts.iter().map(|(p, s)| serde_json::json!({"port": p, "service": s})).collect::<Vec<_>>(),
                 "blockers": blockers,
                 "fix": fix,
                 "verify": verify
@@ -5108,6 +6138,27 @@ fn cmd_doctor(
         println!(
             "Ritma Doctor\n  namespace: {ns}\n  index_db: {idx}\n  mode: {mode}\n  readiness: {readiness}\n  chosen: {chosen}"
         );
+        if contract_ok {
+            if let (Some(node_id), Some(base_dir), Some(out_dir), Some(lock_dir), Some(lock_path), Some(orch_lock_path)) =
+                (c_node_id.as_deref(), c_base_dir.as_deref(), c_out_dir.as_deref(), c_lock_dir.as_deref(), c_lock_path.as_deref(), c_orch_lock_path.as_deref())
+            {
+                println!("Contract:");
+                println!("  node_id:   {node_id}");
+                println!("  base_dir:  {base_dir}");
+                println!("  out_dir:   {out_dir}");
+                println!("  lock_dir:  {lock_dir}");
+                println!("  lock_path: {lock_path}");
+                println!("  orch_lock: {orch_lock_path}");
+            }
+        } else {
+            println!("Contract: invalid (set RITMA_NODE_ID and absolute paths)");
+        }
+        if let Some(ref p) = ebpf_obj {
+            println!(
+                "eBPF object: {p} ({})",
+                if ebpf_obj_exists { "present" } else { "missing" }
+            );
+        }
         println!(
             "Runtime engines: docker={} compose_v2={} compose_v1={} kubectl={} systemd={}",
             if caps.docker { "yes" } else { "no" },
@@ -5158,19 +6209,30 @@ fn cmd_doctor(
             }
         }
         if !has_bpf_fs && !has_audit {
-            println!("  • Enable auditd or eBPF for stronger signals");
+            println!("  - Enable auditd or eBPF for stronger signals");
         }
         if has_audit && !has_bpf_fs {
-            println!("  • Consider enabling eBPF (mount /sys/fs/bpf, CAP_BPF)");
+            println!("  - Consider enabling eBPF (mount /sys/fs/bpf, CAP_BPF)");
         }
         if idx_state == "not_writable_in_container" {
-            println!("  • /data is not writable in orchestrator container; ensure volume is mounted and writable");
+            println!("  - /var/lib/ritma is not writable in orchestrator container; ensure volume is mounted and writable");
         } else if idx_state == "missing_in_container_volume" {
-            println!("  • index_db will be created by orchestrator when it writes its first window; run `ritma demo` to generate a window");
+            println!("  - index_db will be created by orchestrator when it writes its first window; run `ritma demo` to generate a window");
+        }
+        if !lock_dir_exists {
+            println!(
+                "  - lock dir missing: create {} (systemd: RuntimeDirectory=... or ExecStartPre mkdir)",
+                lock_dir
+            );
+        } else if !lock_dir_writable {
+            println!(
+                "  - lock dir not writable: fix permissions for {} (needed for single-writer locks)",
+                lock_dir
+            );
         }
         if !has_proc {
             println!(
-                "  • /proc not visible: run with host pid namespace or ensure container has access"
+                "  - /proc not visible: run with host pid namespace or ensure container has access"
             );
         }
     }
@@ -5503,6 +6565,9 @@ enum Commands {
         /// Path to ProofPack folder containing proofpack.json, manifest.json, receipts/
         #[arg(long)]
         path: PathBuf,
+        /// Output JSON instead of human-readable text
+        #[arg(long, default_value = "false")]
+        json: bool,
     },
 
     /// Diff two commits (by ml_id) and show attack-graph and feature deltas
@@ -5573,10 +6638,16 @@ enum Commands {
         namespace: String,
         /// Output directory to write proofpack.json, manifest.json, receipts/
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         /// IndexDB path (default: /data/index_db.sqlite)
         #[arg(long)]
         index_db: Option<PathBuf>,
+
+        #[arg(long, default_value_t = false)]
+        compat_json: bool,
+
+        #[arg(long, default_value_t = false)]
+        human: bool,
     },
 
     /// Generate local sidecar manifests (compose) and defaults
@@ -5590,6 +6661,8 @@ enum Commands {
         /// Mode: docker or k8s
         #[arg(long, default_value = "docker")]
         mode: String,
+        #[arg(long, default_value_t = false)]
+        tracer_host: bool,
     },
 
     /// Bring up sidecars via docker compose or kubectl.
@@ -5641,7 +6714,7 @@ enum Commands {
         #[arg(long, default_value_t = 60u64)]
         window_secs: u64,
         /// Also generate RBAC attestation and QR code in the export folder
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         qr: bool,
         /// Serve the exported ProofPack via an embedded web server
         #[arg(long, default_value_t = false)]
@@ -5649,6 +6722,12 @@ enum Commands {
         /// Port to serve on (when --serve)
         #[arg(long, default_value_t = 8080u16)]
         port: u16,
+
+        #[arg(long, default_value_t = false)]
+        compat_json: bool,
+
+        #[arg(long, default_value_t = false)]
+        human: bool,
     },
 
     /// Run BAR in observe-only mode, reading JSON events from stdin.
@@ -5691,6 +6770,9 @@ enum Commands {
         index_db: Option<PathBuf>,
         #[arg(long)]
         namespace: Option<String>,
+        /// Output JSON instead of human-readable text
+        #[arg(long, default_value = "false")]
+        json: bool,
     },
 
     CommitList {
@@ -5737,25 +6819,56 @@ enum Commands {
     },
 }
 
-fn main() -> ExitCode {
+fn run() -> Result<(), (u8, String)> {
     let cli = Cli::parse();
 
     let result = match cli.command {
         Commands::Deploy { cmd } => match cmd {
-            DeployCommands::Export { out, namespace } => {
-                cmd_deploy_export(cli.json, out, namespace)
+            DeployCommands::Export {
+                out,
+                namespace,
+                tracer_host,
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                cmd_deploy_export(cli.json, out, namespace, tracer_host)
             }
-            DeployCommands::K8s { dir, namespace } => cmd_deploy_k8s(cli.json, dir, namespace),
+            DeployCommands::K8s {
+                dir,
+                namespace,
+                tracer_host,
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                if let Err(e) = validate::validate_path_allowed(&dir, true) {
+                    return Err((1, e));
+                }
+                cmd_deploy_k8s(cli.json, dir, namespace, tracer_host)
+            }
             DeployCommands::Systemd {
                 out,
                 namespace,
+                tracer_host,
                 install,
-            } => cmd_deploy_systemd(cli.json, out, namespace, install),
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                cmd_deploy_systemd(cli.json, out, namespace, tracer_host, install)
+            }
             DeployCommands::Host {
                 out,
                 namespace,
+                tracer_host,
                 install,
-            } => cmd_deploy_host(cli.json, out, namespace, install),
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                cmd_deploy_host(cli.json, out, namespace, tracer_host, install)
+            }
             DeployCommands::App { out } => cmd_deploy_app(cli.json, out),
             DeployCommands::Status { json } => cmd_deploy_status(cli.json || json),
         },
@@ -5763,20 +6876,70 @@ fn main() -> ExitCode {
             DnaCommands::Status {
                 namespace,
                 index_db,
-            } => cmd_dna_status(cli.json, namespace, index_db),
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                if let Some(ref db) = index_db {
+                    if let Err(e) = validate::validate_index_db_path(db) {
+                        return Err((1, e));
+                    }
+                }
+                cmd_dna_status(cli.json, namespace, index_db)
+            }
             DnaCommands::Build {
                 namespace,
                 start,
                 end,
                 limit,
                 index_db,
-            } => cmd_dna_build(cli.json, namespace, start, end, limit, index_db),
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                if let Err(e) = validate::validate_timestamp(start) {
+                    return Err((1, e));
+                }
+                if let Err(e) = validate::validate_timestamp(end) {
+                    return Err((1, e));
+                }
+                if start >= end {
+                    return Err((1, "start must be less than end".into()));
+                }
+                if let Err(e) = validate::validate_limit(limit) {
+                    return Err((1, e));
+                }
+                if let Some(ref db) = index_db {
+                    if let Err(e) = validate::validate_index_db_path(db) {
+                        return Err((1, e));
+                    }
+                }
+                cmd_dna_build(cli.json, namespace, start, end, limit, index_db)
+            }
             DnaCommands::Trace {
                 namespace,
                 since,
                 limit,
                 index_db,
-            } => cmd_dna_trace(cli.json, namespace, since, limit, index_db),
+            } => {
+                if let Err(e) = validate::validate_namespace(&namespace) {
+                    return Err((1, e));
+                }
+                if let Err(e) = validate::validate_limit(limit) {
+                    return Err((1, e));
+                }
+                if let Some(s) = since {
+                    if s > 999999 {
+                        return Err((1, "since value too large (max 999999)".into()));
+                    }
+                }
+                if let Some(ref db) = index_db {
+                    if let Err(e) = validate::validate_index_db_path(db) {
+                        return Err((1, e));
+                    }
+                }
+                cmd_dna_trace(cli.json, namespace, since, limit, index_db)
+            }
         },
         Commands::Investigate { json, cmd } => {
             let json2 = cli.json || json;
@@ -5847,10 +7010,21 @@ fn main() -> ExitCode {
                 out,
                 index_db,
             } => {
+                validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+                if let Some(at) = at {
+                    validate::validate_timestamp(at).map_err(|e| (1, e))?;
+                }
+                if let Some(ref db) = index_db {
+                    validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+                }
                 if let Some(ml_id) = ml_id {
-                    cmd_export_proof(cli.json, ml_id, out, index_db)
+                    let out_dir = match out {
+                        Some(p) => p,
+                        None => default_proofpack_export_dir(&ml_id)?,
+                    };
+                    cmd_export_proof(cli.json, false, false, ml_id, out_dir, index_db)
                 } else if let Some(at) = at {
-                    cmd_export_proof_by_time(cli.json, namespace, at, out, index_db)
+                    cmd_export_proof_by_time(cli.json, false, false, namespace, at, out, index_db)
                 } else {
                     Err((1, "missing --ml-id or --at".into()))
                 }
@@ -5862,7 +7036,31 @@ fn main() -> ExitCode {
                 framework,
                 out,
                 requester_did,
-            } => cmd_export_incident(tenant, time_start, time_end, framework, out, requester_did),
+            } => {
+                if let Err(e) = validate::validate_tenant_id(&tenant) {
+                    return Err((1, e));
+                }
+                if let Err(e) = validate::validate_timestamp(time_start as i64) {
+                    return Err((1, e));
+                }
+                if let Err(e) = validate::validate_timestamp(time_end as i64) {
+                    return Err((1, e));
+                }
+                if time_start >= time_end {
+                    return Err((1, "time_start must be less than time_end".into()));
+                }
+                if let Some(ref did) = requester_did {
+                    if let Err(e) = validate::validate_did(did) {
+                        return Err((1, e));
+                    }
+                }
+                if let Some(ref fw) = framework {
+                    if fw.len() > 64 {
+                        return Err((1, "framework name too long (max 64)".into()));
+                    }
+                }
+                cmd_export_incident(tenant, time_start, time_end, framework, out, requester_did)
+            }
             ExportCommands::Bundle {
                 namespace,
                 ml_id,
@@ -5874,19 +7072,42 @@ fn main() -> ExitCode {
                 time_end,
                 framework,
                 requester_did,
-            } => cmd_export_bundle(ExportBundleArgs {
-                json: cli.json,
-                namespace,
-                ml_id,
-                at,
-                out,
-                index_db,
-                tenant,
-                time_start,
-                time_end,
-                framework,
-                requester_did,
-            }),
+            } => {
+                validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+                validate::validate_tenant_id(&tenant).map_err(|e| (1, e))?;
+                validate::validate_timestamp(time_start as i64).map_err(|e| (1, e))?;
+                validate::validate_timestamp(time_end as i64).map_err(|e| (1, e))?;
+                if time_start >= time_end {
+                    return Err((1, "time_start must be less than time_end".into()));
+                }
+                if let Some(at) = at {
+                    validate::validate_timestamp(at).map_err(|e| (1, e))?;
+                }
+                if let Some(ref did) = requester_did {
+                    validate::validate_did(did).map_err(|e| (1, e))?;
+                }
+                if let Some(ref fw) = framework {
+                    if fw.len() > 64 {
+                        return Err((1, "framework name too long (max 64)".into()));
+                    }
+                }
+                if let Some(ref db) = index_db {
+                    validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+                }
+                cmd_export_bundle(ExportBundleArgs {
+                    json: cli.json,
+                    namespace,
+                    ml_id,
+                    at,
+                    out,
+                    index_db,
+                    tenant,
+                    time_start,
+                    time_end,
+                    framework,
+                    requester_did,
+                })
+            }
             ExportCommands::Report {
                 namespace,
                 start,
@@ -5895,16 +7116,28 @@ fn main() -> ExitCode {
                 limit,
                 pdf,
                 index_db,
-            } => cmd_export_report(ExportReportArgs {
-                json: cli.json,
-                namespace,
-                start,
-                end,
-                out,
-                limit,
-                pdf,
-                index_db,
-            }),
+            } => {
+                validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+                validate::validate_timestamp(start).map_err(|e| (1, e))?;
+                validate::validate_timestamp(end).map_err(|e| (1, e))?;
+                if start >= end {
+                    return Err((1, "start must be less than end".into()));
+                }
+                validate::validate_limit(limit).map_err(|e| (1, e))?;
+                if let Some(ref db) = index_db {
+                    validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+                }
+                cmd_export_report(ExportReportArgs {
+                    json: cli.json,
+                    namespace,
+                    start,
+                    end,
+                    out,
+                    limit,
+                    pdf,
+                    index_db,
+                })
+            }
         },
         Commands::Verify { file, cmd } => match cmd {
             Some(VerifySubcommand::Digfile { file }) => cmd_verify_dig(file, cli.json),
@@ -5947,23 +7180,79 @@ fn main() -> ExitCode {
             framework,
             out,
             requester_did,
-        } => cmd_export_incident(tenant, time_start, time_end, framework, out, requester_did),
+        } => {
+            validate::validate_tenant_id(&tenant).map_err(|e| (1, e))?;
+            validate::validate_timestamp(time_start as i64).map_err(|e| (1, e))?;
+            validate::validate_timestamp(time_end as i64).map_err(|e| (1, e))?;
+            if time_start >= time_end {
+                return Err((1, "time_start must be less than time_end".into()));
+            }
+            if let Some(ref did) = requester_did {
+                validate::validate_did(did).map_err(|e| (1, e))?;
+            }
+            if let Some(ref fw) = framework {
+                if fw.len() > 64 {
+                    return Err((1, "framework name too long (max 64)".into()));
+                }
+            }
+            cmd_export_incident(tenant, time_start, time_end, framework, out, requester_did)
+        }
         Commands::Doctor {
             index_db,
             namespace,
-        } => cmd_doctor(cli.json, index_db, namespace),
+            json,
+        } => {
+            if let Some(ref ns) = namespace {
+                validate::validate_namespace(ns).map_err(|e| (1, e))?;
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_doctor(json || cli.json, index_db, namespace)
+        }
         Commands::CommitList {
             namespace,
             limit,
             index_db,
-        } => cmd_commit_list(cli.json, namespace, limit, index_db),
-        Commands::ShowCommit { ml_id, index_db } => cmd_show_commit(cli.json, ml_id, index_db),
-        Commands::Explain { ml_id, index_db } => cmd_show_commit(cli.json, ml_id, index_db),
+        } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            validate::validate_limit(limit).map_err(|e| (1, e))?;
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_commit_list(cli.json, namespace, limit, index_db)
+        }
+        Commands::ShowCommit { ml_id, index_db } => {
+            if ml_id.is_empty() {
+                return Err((1, "ml_id cannot be empty".into()));
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_show_commit(cli.json, ml_id, index_db)
+        }
+        Commands::Explain { ml_id, index_db } => {
+            if ml_id.is_empty() {
+                return Err((1, "ml_id cannot be empty".into()));
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_show_commit(cli.json, ml_id, index_db)
+        }
         Commands::Init {
             output,
             namespace,
             mode,
-        } => cmd_init(output, namespace, mode),
+            tracer_host,
+        } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            validate::validate_path_allowed(&output, true).map_err(|e| (1, e))?;
+            if mode != "docker" && mode != "k8s" {
+                return Err((1, "mode must be 'docker' or 'k8s'".into()));
+            }
+            cmd_init(output, namespace, mode, tracer_host)
+        }
         Commands::Up {
             compose,
             mode,
@@ -5998,7 +7287,16 @@ fn main() -> ExitCode {
             mode,
             full,
             no_prompt,
-        } => cmd_upgrade(compose, namespace, mode, channel, full, no_prompt),
+        } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            if channel != "stable" && channel != "beta" && channel != "nightly" {
+                return Err((1, "channel must be 'stable', 'beta', or 'nightly'".into()));
+            }
+            if mode != "docker" && mode != "k8s" {
+                return Err((1, "mode must be 'docker' or 'k8s'".into()));
+            }
+            cmd_upgrade(compose, namespace, mode, channel, full, no_prompt)
+        }
         Commands::Demo {
             namespace,
             index_db,
@@ -6006,36 +7304,114 @@ fn main() -> ExitCode {
             qr,
             serve,
             port,
-        } => cmd_demo(cli.json, namespace, index_db, window_secs, qr, serve, port),
-        Commands::VerifyProof { path } => cmd_verify_proof(cli.json, path),
-        Commands::Diff { a, b, index_db } => cmd_diff(cli.json, a, b, index_db),
+            compat_json,
+            human,
+        } => {
+            if let Some(ref ns) = namespace {
+                validate::validate_namespace(ns).map_err(|e| (1, e))?;
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            if window_secs == 0 || window_secs > 3600 {
+                return Err((1, "window_secs must be between 1 and 3600".into()));
+            }
+            if serve {
+                validate::validate_port(port).map_err(|e| (1, e))?;
+            }
+            cmd_demo(
+                cli.json,
+                namespace,
+                index_db,
+                window_secs,
+                qr,
+                serve,
+                port,
+                compat_json,
+                human,
+            )
+        }
+        Commands::VerifyProof { path, json } => cmd_verify_proof(json || cli.json, path),
+        Commands::Diff { a, b, index_db } => {
+            if a.is_empty() || b.is_empty() {
+                return Err((1, "both ml_id 'a' and 'b' must be non-empty".into()));
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_diff(cli.json, a, b, index_db)
+        }
         Commands::Blame {
             namespace,
             needle,
             limit,
             index_db,
-        } => cmd_blame(cli.json, namespace, needle, limit, index_db),
+        } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            if needle.is_empty() {
+                return Err((1, "needle cannot be empty".into()));
+            }
+            if needle.len() > 1024 {
+                return Err((1, "needle too long (max 1024)".into()));
+            }
+            validate::validate_limit(limit).map_err(|e| (1, e))?;
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_blame(cli.json, namespace, needle, limit, index_db)
+        }
         Commands::TagAdd {
             namespace,
             name,
             ml_id,
             index_db,
-        } => cmd_tag_add(cli.json, namespace, name, ml_id, index_db),
+        } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            if name.is_empty() || name.len() > 128 {
+                return Err((1, "tag name must be non-empty and <=128 chars".into()));
+            }
+            if ml_id.is_empty() {
+                return Err((1, "ml_id cannot be empty".into()));
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_tag_add(cli.json, namespace, name, ml_id, index_db)
+        }
         Commands::TagList {
             namespace,
             index_db,
-        } => cmd_tag_list(cli.json, namespace, index_db),
+        } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
+            cmd_tag_list(cli.json, namespace, index_db)
+        }
         Commands::ExportProof {
             ml_id,
             at,
             namespace,
             out,
             index_db,
+            compat_json,
+            human,
         } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            if let Some(at) = at {
+                validate::validate_timestamp(at).map_err(|e| (1, e))?;
+            }
+            if let Some(ref db) = index_db {
+                validate::validate_index_db_path(db).map_err(|e| (1, e))?;
+            }
             if let Some(ml_id) = ml_id {
-                cmd_export_proof(cli.json, ml_id, out, index_db)
+                let out_dir = match out {
+                    Some(p) => p,
+                    None => default_proofpack_export_dir(&ml_id)?,
+                };
+                cmd_export_proof(cli.json, compat_json, human, ml_id, out_dir, index_db)
             } else if let Some(at) = at {
-                cmd_export_proof_by_time(cli.json, namespace, at, out, index_db)
+                cmd_export_proof_by_time(cli.json, compat_json, human, namespace, at, out, index_db)
             } else {
                 Err((1, "missing --ml-id or --at".into()))
             }
@@ -6051,6 +7427,8 @@ fn main() -> ExitCode {
             namespace,
             out,
         } => {
+            validate::validate_namespace(&namespace).map_err(|e| (1, e))?;
+            validate::validate_path_allowed(&path, true).map_err(|e| (1, e))?;
             // Minimal wiring: no actor/purpose, no git commit, no QR, no serve
             cmd_attest(
                 cli.json,
@@ -6068,6 +7446,13 @@ fn main() -> ExitCode {
     };
 
     match result {
+        Ok(()) => Ok(()),
+        Err((code, msg)) => Err((code, msg)),
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, msg)) => {
             eprintln!("error: {msg}");
@@ -6310,10 +7695,22 @@ fn cmd_export_incident(
         framework: framework.clone(),
     };
 
-    let dig_index_db =
-        std::env::var("UTLD_DIG_INDEX_DB").unwrap_or_else(|_| "./dig_index.sqlite".to_string());
-    let dig_storage = std::env::var("UTLD_DIG_STORAGE").unwrap_or_else(|_| "./digs".to_string());
-    let burn_storage = std::env::var("UTLD_BURN_STORAGE").unwrap_or_else(|_| "./burns".to_string());
+    let dig_index_db = match std::env::var("UTLD_DIG_INDEX_DB") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => "./dig_index.sqlite".to_string(),
+    };
+    let dig_storage = match std::env::var("UTLD_DIG_STORAGE") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => "./digs".to_string(),
+    };
+    let burn_storage = match std::env::var("UTLD_BURN_STORAGE") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => "./burns".to_string(),
+    };
+
+    validate_env_path("UTLD_DIG_INDEX_DB", &dig_index_db, true)?;
+    validate_env_path("UTLD_DIG_STORAGE", &dig_storage, true)?;
+    validate_env_path("UTLD_BURN_STORAGE", &burn_storage, true)?;
 
     let mut builder = PackageBuilder::new(tenant.clone(), scope)
         .dig_index_db(dig_index_db)
@@ -6333,9 +7730,21 @@ fn cmd_export_incident(
     if let Ok(key_id) = std::env::var("RITMA_KEY_ID") {
         match NodeKeystore::from_env().and_then(|ks| ks.key_for_signing(&key_id)) {
             Ok(keystore_key) => {
-                let signing_key = match keystore_key {
-                    KeystoreKey::HmacSha256(bytes) => SigningKey::HmacSha256(bytes),
-                    KeystoreKey::Ed25519(sk) => SigningKey::Ed25519(sk),
+                let signing_key = if keystore_key.key_type == "hmac" || keystore_key.key_type == "hmac_sha256" {
+                    let bytes = hex::decode(&keystore_key.key_material)
+                        .map_err(|e| (1, format!("key decode: {e}")))?;
+                    SigningKey::HmacSha256(bytes)
+                } else if keystore_key.key_type == "ed25519" {
+                    let bytes = hex::decode(&keystore_key.key_material)
+                        .map_err(|e| (1, format!("key decode: {e}")))?;
+                    if bytes.len() != 32 {
+                        return Err((1, "ed25519 key must be 32 bytes".to_string()));
+                    }
+                    let mut kb = [0u8; 32];
+                    kb.copy_from_slice(&bytes);
+                    SigningKey::Ed25519(ed25519_dalek::SigningKey::from_bytes(&kb))
+                } else {
+                    return Err((1, format!("unsupported key type: {}", keystore_key.key_type)));
                 };
                 let signer = PackageSigner::new(signing_key, "ritma_cli".to_string());
                 signer.sign(&mut manifest).map_err(|e| {
@@ -6391,15 +7800,29 @@ fn cmd_export_incident(
         }
     }
 
-    let json = serde_json::to_string_pretty(&manifest)
+    let manifest_json = serde_json::to_value(&manifest)
         .map_err(|e| (1, format!("failed to serialize incident manifest: {e}")))?;
 
     if let Some(path) = out {
         let path_str = path.display().to_string();
-        fs::write(&path, json).map_err(|e| (1, format!("failed to write {path_str}: {e}")))?;
-        eprintln!("Incident bundle manifest written to: {path_str}");
+        if path_str.ends_with(".cbor") {
+            write_canonical_cbor(&path, &manifest_json)?;
+            eprintln!("Incident bundle manifest written to: {path_str} (CBOR)");
+        } else if path_str.ends_with(".json") {
+            write_canonical_json(&path, &manifest_json)?;
+            eprintln!("Incident bundle manifest written to: {path_str} (JSON)");
+        } else {
+            let cbor_path = path.with_extension("cbor");
+            write_canonical_cbor(&cbor_path, &manifest_json)?;
+            eprintln!("Incident bundle manifest written to: {} (CBOR)", cbor_path.display());
+        }
     } else {
-        println!("{json}");
+        let cbor_bytes = canonical_cbor_bytes(&manifest_json)?;
+        let b3 = blake3_hex(&cbor_bytes);
+        eprintln!("Incident manifest blake3: {b3}");
+        let json_out = serde_json::to_string_pretty(&manifest_json)
+            .map_err(|e| (1, format!("json serialize: {e}")))?;
+        println!("{json_out}");
     }
 
     eprintln!("Incident Package ID: {}", manifest.package_id);

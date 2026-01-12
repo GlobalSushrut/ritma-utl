@@ -1,17 +1,17 @@
 # Ritma one-command demo image: seeds, seals, and serves a ProofPack
-FROM rust:1.79 as builder
+FROM rust:1.88 as builder
 WORKDIR /app
 COPY . .
-RUN cargo build -p ritma_cli --release
+RUN cargo build -p ritma_cli --release --locked
 
 FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/ritma_cli /usr/local/bin/ritma
-ENV INDEX_DB_PATH=/data/index_db.sqlite
+COPY --from=builder /app/target/release/ritma /usr/local/bin/ritma
+ENV INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
 ENV NAMESPACE_ID=ns://demo/dev/hello/world
-VOLUME ["/data"]
+VOLUME ["/var/lib/ritma"]
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/ritma"]
 CMD ["demo","--window-secs","60","--serve","--port","8080"]

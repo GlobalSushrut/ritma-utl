@@ -70,7 +70,7 @@ mod tests {
         let f2 = TataFrame::new(b"b".to_vec(), tick, hash_root, params, logic_ref, wall);
         let h1 = f1.content_hash();
         let h2 = f2.content_hash();
-        println!("tata content_hash: h1={:?} h2={:?}", h1, h2);
+        println!("tata content_hash: h1={h1:?} h2={h2:?}");
         assert_ne!(h1, h2);
     }
 }

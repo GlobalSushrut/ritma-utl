@@ -3,6 +3,9 @@ name = "ritma_cli"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [[bin]]
 name = "ritma"
 path = "src/main.rs"
@@ -12,8 +15,12 @@ clap = { version = "4", features = ["derive"] }
 dig_mem = { path = "../dig_mem" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ciborium = "0.2"
+zstd = "0.13"
+blake3 = "1"
 evidence_package = { path = "../evidence_package" }
 node_keystore = { path = "../node_keystore" }
+ritma_contract = { path = "../ritma_contract" }
 bar_core = { path = "../bar_core" }
 bar_client = { path = "../bar_client" }
 index_db = { path = "../index_db" }
@@ -31,6 +38,9 @@ tiny_http = "0.12"
 mime_guess = "2.0"
 qrcode = { version = "0.12", features = ["image"] }
 image = { version = "0.24", default-features = false, features = ["png"] }
+hmac = "0.12"
+ed25519-dalek = { version = "2.0", features = ["serde"] }
+zeroize = "1.8"
 
 # Phase crates used by enhanced demo
 fileless_detector = { path = "../fileless_detector" }

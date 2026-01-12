@@ -3,6 +3,9 @@ name = "utl_client"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 utld = { path = "../utld" }
 utl_core = { path = "../utl_core" }

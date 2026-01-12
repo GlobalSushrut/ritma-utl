@@ -84,8 +84,14 @@ fn handle_client(stream: UnixStream, agent: Arc<dyn BarAgent>) {
 fn main() -> std::io::Result<()> {
     init_tracing();
 
+    // Use secure socket location, not world-writable /tmp
     let socket_path =
-        std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/tmp/bar_daemon.sock".to_string());
+        std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/run/ritma/bar_daemon.sock".to_string());
+    
+    // Ensure socket directory exists with proper permissions
+    if let Some(parent) = std::path::Path::new(&socket_path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
 
     if Path::new(&socket_path).exists() {
         std::fs::remove_file(&socket_path)?;
@@ -93,10 +99,10 @@ fn main() -> std::io::Result<()> {
 
     let listener = UnixListener::bind(&socket_path)?;
 
-    // Align socket permissions with utld: group-readable/writable by default
+    // Set secure socket permissions - only owner can read/write
     if let Ok(meta) = std::fs::metadata(&socket_path) {
         let mut perms = meta.permissions();
-        perms.set_mode(0o660);
+        perms.set_mode(0o600);  // Owner read/write only
         if let Err(e) = std::fs::set_permissions(&socket_path, perms) {
             error!("failed to set permissions on {}: {}", socket_path, e);
         }

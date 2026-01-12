@@ -30,12 +30,10 @@ fn persist_dig_to_fs_creates_expected_path_and_content() {
     );
 
     let filename = components.last().unwrap().as_os_str().to_string_lossy();
-    let expected_prefix = format!("root-{}_file-{}", root_id, file_id);
+    let expected_prefix = format!("root-{root_id}_file-{file_id}");
     assert!(
         filename.starts_with(&expected_prefix),
-        "filename '{}' should start with '{}'",
-        filename,
-        expected_prefix
+        "filename '{filename}' should start with '{expected_prefix}'"
     );
 
     let contents = fs::read_to_string(&stored_path).expect("read persisted file");

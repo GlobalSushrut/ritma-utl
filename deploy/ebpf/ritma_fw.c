@@ -2,12 +2,41 @@
 // Ritma firewall BPF program
 // Enforces deny/allow/throttle/isolate decisions based on DID pairs
 
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/in.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+
+#define XDP_PASS 2
+#define XDP_DROP 1
+
+#define ETH_P_IP 0x0800
+
+struct xdp_md {
+    __u32 data;
+    __u32 data_end;
+    __u32 data_meta;
+    __u32 ingress_ifindex;
+    __u32 rx_queue_index;
+    __u32 egress_ifindex;
+};
+
+struct ethhdr {
+    __u8 h_dest[6];
+    __u8 h_source[6];
+    __u16 h_proto;
+};
+
+struct iphdr {
+    __u8 ihl_version;
+    __u8 tos;
+    __u16 tot_len;
+    __u16 id;
+    __u16 frag_off;
+    __u8 ttl;
+    __u8 protocol;
+    __u16 check;
+    __u32 saddr;
+    __u32 daddr;
+};
 
 // Map key: (src_id, dst_id) where IDs are u32 hashes of DIDs
 struct fw_key {
@@ -19,29 +48,42 @@ struct fw_key {
 // For deny-list model: presence of entry with value=1 or 3 means drop.
 // Absence of entry or value=0 means allow.
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 10000);
-    __type(key, struct fw_key);
-    __type(value, __u8);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} ritma_fw_pairs SEC(".maps");
+    __u32 _unused;
+} _ritma_fw_pairs_unused;
+
+struct bpf_map_def SEC("maps") ritma_fw_pairs = {
+    .type = BPF_MAP_TYPE_HASH,
+    .key_size = sizeof(struct fw_key),
+    .value_size = sizeof(__u8),
+    .max_entries = 10000,
+    .map_flags = 0,
+};
 
 // IP to DID ID mapping: maps IPv4 address to DID numeric ID
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 10000);
-    __type(key, __u32);   // IPv4 address (network byte order)
-    __type(value, __u32); // DID ID
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} ip_to_did SEC(".maps");
+    __u32 _unused;
+} _ip_to_did_unused;
+
+struct bpf_map_def SEC("maps") ip_to_did = {
+    .type = BPF_MAP_TYPE_HASH,
+    .key_size = sizeof(__u32),
+    .value_size = sizeof(__u32),
+    .max_entries = 10000,
+    .map_flags = 0,
+};
 
 // Statistics counters
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 4);
-    __type(key, __u32);
-    __type(value, __u64);
-} stats SEC(".maps");
+    __u32 _unused;
+} _stats_unused;
+
+struct bpf_map_def SEC("maps") stats = {
+    .type = BPF_MAP_TYPE_PERCPU_ARRAY,
+    .key_size = sizeof(__u32),
+    .value_size = sizeof(__u64),
+    .max_entries = 4,
+    .map_flags = 0,
+};
 
 #define STAT_TOTAL_PKTS    0
 #define STAT_DROPPED_PKTS  1

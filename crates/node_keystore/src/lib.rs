@@ -1,11 +1,13 @@
 use std::fs;
 use std::path::Path;
 
-use ed25519_dalek::SigningKey as Ed25519SigningKey;
+use ed25519_dalek::SigningKey;
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone, Deserialize)]
 struct KeyRecord {
@@ -13,6 +15,28 @@ struct KeyRecord {
     alg: String,
     secret_hex: String,
     label: Option<String>,
+}
+
+impl Drop for KeyRecord {
+    fn drop(&mut self) {
+        self.secret_hex.zeroize();
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeystoreKey {
+    pub key_id: String,
+    pub key_type: String,
+    #[serde(skip_serializing)]  // Don't serialize secrets
+    pub key_material: String,
+    pub metadata: HashMap<String, String>,
+}
+
+impl Drop for KeystoreKey {
+    fn drop(&mut self) {
+        // Manually zero out the key material
+        self.key_material.zeroize();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -39,11 +63,15 @@ pub struct NodeKeystore {
     keys: Vec<KeyRecord>,
 }
 
-#[derive(Debug, Clone)]
-pub enum KeystoreKey {
-    HmacSha256(Vec<u8>),
-    Ed25519(Ed25519SigningKey),
+impl Drop for NodeKeystore {
+    fn drop(&mut self) {
+        // Ensure all secrets are wiped when keystore is dropped
+        for rec in &mut self.keys {
+            rec.secret_hex.zeroize();
+        }
+    }
 }
+
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -55,8 +83,9 @@ impl NodeKeystore {
     }
 
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, KeystoreError> {
-        let data = fs::read_to_string(path)?;
+        let mut data = fs::read_to_string(path)?;
         let keys: Vec<KeyRecord> = serde_json::from_str(&data)?;
+        data.zeroize();
         Ok(Self { keys })
     }
 
@@ -94,25 +123,14 @@ impl NodeKeystore {
             .find(|k| k.key_id == key_id)
             .ok_or_else(|| KeystoreError::UnknownKey(key_id.to_string()))?;
 
-        let bytes = hex::decode(&rec.secret_hex)
-            .map_err(|_| KeystoreError::InvalidKey(rec.key_id.clone()))?;
-
         let alg = rec.alg.to_lowercase();
-        if alg == "hmac" || alg == "hmac_sha256" {
-            return Ok(KeystoreKey::HmacSha256(bytes));
-        }
-
-        if alg == "ed25519" {
-            if bytes.len() != 32 {
-                return Err(KeystoreError::InvalidKey(rec.key_id.clone()));
-            }
-            let mut key_bytes = [0u8; 32];
-            key_bytes.copy_from_slice(&bytes);
-            let signing_key = Ed25519SigningKey::from_bytes(&key_bytes);
-            return Ok(KeystoreKey::Ed25519(signing_key));
-        }
-
-        Err(KeystoreError::InvalidKey(rec.key_id.clone()))
+        
+        Ok(KeystoreKey {
+            key_id: rec.key_id.clone(),
+            key_type: alg.clone(),
+            key_material: rec.secret_hex.clone(),
+            metadata: HashMap::new(),
+        })
     }
 
     /// Sign an arbitrary payload using the key identified by key_id.
@@ -125,7 +143,7 @@ impl NodeKeystore {
             .find(|k| k.key_id == key_id)
             .ok_or_else(|| KeystoreError::UnknownKey(key_id.to_string()))?;
 
-        let bytes = hex::decode(&rec.secret_hex)
+        let mut bytes = hex::decode(&rec.secret_hex)
             .map_err(|_| KeystoreError::InvalidKey(rec.key_id.clone()))?;
         let alg = rec.alg.to_lowercase();
 
@@ -134,47 +152,57 @@ impl NodeKeystore {
                 .map_err(|_| KeystoreError::InvalidKey(rec.key_id.clone()))?;
             mac.update(payload);
             let result = mac.finalize();
-            return Ok(hex::encode(result.into_bytes()));
+            let out = hex::encode(result.into_bytes());
+            bytes.zeroize();
+            return Ok(out);
         }
 
         if alg == "ed25519" {
-            use ed25519_dalek::Signer;
-
             if bytes.len() != 32 {
+                bytes.zeroize();
                 return Err(KeystoreError::InvalidKey(rec.key_id.clone()));
             }
             let mut key_bytes = [0u8; 32];
             key_bytes.copy_from_slice(&bytes);
-            let signing_key = Ed25519SigningKey::from_bytes(&key_bytes);
-            let sig = signing_key.sign(payload);
-            return Ok(hex::encode(sig.to_bytes()));
+            let signing_key = SigningKey::from_bytes(&key_bytes);
+            use ed25519_dalek::Signer;
+            let signature = signing_key.sign(payload);
+            key_bytes.zeroize();
+            bytes.zeroize();
+            return Ok(hex::encode(signature.to_bytes()));
         }
+
+        bytes.zeroize();
 
         Err(KeystoreError::InvalidKey(rec.key_id.clone()))
     }
 
     fn compute_key_hash(&self, rec: &KeyRecord) -> Result<String, KeystoreError> {
-        let bytes = hex::decode(&rec.secret_hex)
+        let mut bytes = hex::decode(&rec.secret_hex)
             .map_err(|_| KeystoreError::InvalidKey(rec.key_id.clone()))?;
         let alg = rec.alg.to_lowercase();
 
         if alg == "ed25519" {
             if bytes.len() != 32 {
+                bytes.zeroize();
                 return Err(KeystoreError::InvalidKey(rec.key_id.clone()));
             }
             let mut key_bytes = [0u8; 32];
             key_bytes.copy_from_slice(&bytes);
-            let signing_key = Ed25519SigningKey::from_bytes(&key_bytes);
+            let signing_key = SigningKey::from_bytes(&key_bytes);
             let verifying = signing_key.verifying_key();
             let mut hasher = Sha256::new();
             hasher.update(verifying.to_bytes());
             let digest = hasher.finalize();
+            key_bytes.zeroize();
+            bytes.zeroize();
             return Ok(hex::encode(digest));
         }
 
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let digest = hasher.finalize();
+        bytes.zeroize();
         Ok(hex::encode(digest))
     }
 }

@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tracer-sidecar
+  namespace: ritma-system
+spec:
+  selector:
+    matchLabels:
+      app: tracer-sidecar
+  template:
+    metadata:
+      labels:
+        app: tracer-sidecar
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/tracer: localhost/ritma-tracer-sidecar
+    spec:
+      hostPID: true
+      initContainers:
+      - name: init-perms
+        image: busybox:1.36
+        command: ["sh", "-c", "mkdir -p /var/lib/ritma /run/ritma/locks && chmod 700 /var/lib/ritma && chmod 700 /run/ritma/locks"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/ritma
+        - name: locks
+          mountPath: /run/ritma/locks
+      containers:
+      - name: tracer
+        image: ritma/tracer_sidecar:latest
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args: ["umask 077; exec /usr/local/bin/tracer_sidecar"]
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop: ["ALL"]
+            add: ["SYS_ADMIN", "BPF", "PERFMON"]
+        env:
+        - name: NAMESPACE_ID
+          value: "ns://k8s/default"
+        - name: RITMA_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: AUDIT_LOG_PATH
+          value: "/var/log/audit/audit.log"
+        - name: INDEX_DB_PATH
+          value: "/var/lib/ritma/index_db.sqlite"
+        - name: RITMA_SIDECAR_LOCK_DIR
+          value: "/run/ritma/locks"
+        - name: RITMA_EBPF_OBJECT_PATH
+          value: "/var/lib/ritma/ebpf/ritma_trace.o"
+        - name: PROC_ROOT
+          value: "/proc"
+        - name: PRIVACY_MODE
+          value: "hash-only"
+        volumeMounts:
+        - name: audit
+          mountPath: /var/log/audit
+          readOnly: true
+        - name: data
+          mountPath: /var/lib/ritma
+        - name: locks
+          mountPath: /run/ritma/locks
+        - name: proc
+          mountPath: /proc
+          readOnly: true
+        - name: bpffs
+          mountPath: /sys/fs/bpf
+        - name: tracefs
+          mountPath: /sys/kernel/tracing
+          readOnly: true
+      volumes:
+      - name: audit
+        hostPath:
+          path: /var/log/audit
+          type: DirectoryOrCreate
+      - name: data
+        hostPath:
+          path: /var/lib/ritma
+          type: DirectoryOrCreate
+      - name: locks
+        hostPath:
+          path: /run/ritma/locks
+          type: DirectoryOrCreate
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: bpffs
+        hostPath:
+          path: /sys/fs/bpf
+          type: DirectoryOrCreate
+      - name: tracefs
+        hostPath:
+          path: /sys/kernel/tracing
+          type: Directory

@@ -26,6 +26,49 @@ use sot_root::StateOfTruthRoot;
 use truthscript::{Action as PolicyAction, Policy};
 use utld::{handle_request, NodeRequest, NodeResponse, UtlNode};
 use zk_snark::{self, Fr as SnarkFr};
+use zeroize::Zeroize;
+
+fn validate_ascii_nonempty(name: &str, s: &str, max_len: usize) -> Result<(), String> {
+    if s.trim().is_empty() {
+        return Err(format!("{name} cannot be empty"));
+    }
+    if s.len() > max_len {
+        return Err(format!("{name} too long"));
+    }
+    if !s.is_ascii() {
+        return Err(format!("{name} must be ASCII"));
+    }
+    if s.contains('\0') {
+        return Err(format!("{name} must not contain NUL"));
+    }
+    Ok(())
+}
+
+fn validate_fs_path(name: &str, p: &str, allow_relative: bool) -> Result<(), String> {
+    validate_ascii_nonempty(name, p, 4096)?;
+    if p.contains("..") {
+        return Err(format!("{name} must not contain '..'"));
+    }
+    let pb = std::path::Path::new(p);
+    if !allow_relative && !pb.is_absolute() {
+        return Err(format!("{name} must be an absolute path"));
+    }
+    Ok(())
+}
+
+fn validate_socket_path(p: &str) -> Result<(), String> {
+    validate_fs_path("UTLD_SOCKET", p, false)?;
+    Ok(())
+}
+
+fn validate_http_url(name: &str, url: &str) -> Result<(), String> {
+    validate_ascii_nonempty(name, url, 2048)?;
+    let u = url.trim();
+    if !(u.starts_with("http://") || u.starts_with("https://")) {
+        return Err(format!("{name} must start with http:// or https://"));
+    }
+    Ok(())
+}
 
 #[cfg(feature = "bar_governance")]
 use bar_client::{BarClient, BarClientError};
@@ -226,10 +269,26 @@ fn node_request_to_bar_event(req: &NodeRequest) -> Option<BarObservedEvent> {
     }
 }
 
-fn load_mtls_config_from_env() -> Option<MtlsConfig> {
-    let ca_bundle_path = std::env::var("UTLD_MTLS_CA").ok()?;
-    let cert_path = std::env::var("UTLD_MTLS_CERT").ok()?;
-    let key_path = std::env::var("UTLD_MTLS_KEY").ok()?;
+fn load_mtls_config_from_env() -> Result<Option<MtlsConfig>, String> {
+    let ca_bundle_path = match std::env::var("UTLD_MTLS_CA") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return Ok(None),
+    };
+    let cert_path = std::env::var("UTLD_MTLS_CERT").map_err(|_| "missing UTLD_MTLS_CERT".to_string())?;
+    let key_path = std::env::var("UTLD_MTLS_KEY").map_err(|_| "missing UTLD_MTLS_KEY".to_string())?;
+
+    validate_fs_path("UTLD_MTLS_CA", &ca_bundle_path, false)?;
+    validate_fs_path("UTLD_MTLS_CERT", &cert_path, false)?;
+    validate_fs_path("UTLD_MTLS_KEY", &key_path, false)?;
+    if !std::path::Path::new(&ca_bundle_path).is_file() {
+        return Err(format!("UTLD_MTLS_CA not found: {ca_bundle_path}"));
+    }
+    if !std::path::Path::new(&cert_path).is_file() {
+        return Err(format!("UTLD_MTLS_CERT not found: {cert_path}"));
+    }
+    if !std::path::Path::new(&key_path).is_file() {
+        return Err(format!("UTLD_MTLS_KEY not found: {key_path}"));
+    }
 
     let require_client_auth = std::env::var("UTLD_MTLS_REQUIRE_CLIENT_AUTH")
         .ok()
@@ -239,12 +298,22 @@ fn load_mtls_config_from_env() -> Option<MtlsConfig> {
         })
         .unwrap_or(true);
 
-    Some(MtlsConfig {
+    Ok(Some(MtlsConfig {
         ca_bundle_path,
         cert_path,
         key_path,
         require_client_auth,
-    })
+    }))
+}
+
+fn env_truthy(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
+            let v = v.trim().to_lowercase();
+            !(v.is_empty() || v == "0" || v == "false" || v == "no")
+        }
+        Err(_) => false,
+    }
 }
 
 impl BusinessPlugin for FileBusinessPlugin {
@@ -339,9 +408,31 @@ impl BusinessPlugin for CompositeBusinessPlugin {
 
 fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
-    let socket_path = std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".into());
+    // Use secure socket location, not world-writable /tmp
+    let socket_path = std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/run/ritma/utld.sock".into());
+    validate_socket_path(&socket_path).map_err(std::io::Error::other)?;
+    
+    // Ensure socket directory exists
+    if let Some(parent) = std::path::Path::new(&socket_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
-    if let Some(cfg) = load_mtls_config_from_env() {
+    let tls_strict = env_truthy("UTLD_TLS_STRICT");
+    let cfg_opt = load_mtls_config_from_env().map_err(std::io::Error::other)?;
+    if tls_strict {
+        let tls_addr = std::env::var("UTLD_TLS_ADDR").unwrap_or_default();
+        if tls_addr.trim().is_empty() {
+            return Err(std::io::Error::other("UTLD_TLS_ADDR required when UTLD_TLS_STRICT=1"));
+        }
+        let cfg = cfg_opt
+            .clone()
+            .ok_or_else(|| std::io::Error::other("UTLD_MTLS_CA/UTLD_MTLS_CERT/UTLD_MTLS_KEY required when UTLD_TLS_STRICT=1"))?;
+        if !cfg.require_client_auth {
+            return Err(std::io::Error::other("mTLS client auth required when UTLD_TLS_STRICT=1"));
+        }
+    }
+
+    if let Some(cfg) = cfg_opt {
         tracing::info!(
             "mtls config loaded: ca_bundle_path={}, cert_path={}, key_path={}, require_client_auth={}",
             cfg.ca_bundle_path,
@@ -359,7 +450,7 @@ fn main() -> std::io::Result<()> {
 
     if let Ok(meta) = std::fs::metadata(&socket_path) {
         let mut perms = meta.permissions();
-        perms.set_mode(0o660);
+        perms.set_mode(0o600);
         if let Err(e) = std::fs::set_permissions(&socket_path, perms) {
             eprintln!("failed to set permissions on {}: {}", socket_path, e);
         }
@@ -387,6 +478,9 @@ fn main() -> std::io::Result<()> {
 
     if let Ok(path) = std::env::var("UTLD_USAGE_EVENTS") {
         if !path.trim().is_empty() {
+            if let Err(e) = validate_fs_path("UTLD_USAGE_EVENTS", &path, true) {
+                return Err(std::io::Error::other(e));
+            }
             sinks.push(Arc::new(FileBusinessPlugin::new(path)));
         }
     }
@@ -399,9 +493,13 @@ fn main() -> std::io::Result<()> {
 
     if let Ok(url) = std::env::var("UTLD_USAGE_HTTP_URL") {
         if !url.trim().is_empty() {
-            match HttpBusinessPlugin::new(url) {
-                Ok(p) => sinks.push(Arc::new(p)),
-                Err(e) => eprintln!("failed to init HttpBusinessPlugin: {}", e),
+            if let Err(e) = validate_http_url("UTLD_USAGE_HTTP_URL", &url) {
+                eprintln!("invalid UTLD_USAGE_HTTP_URL: {e}");
+            } else {
+                match HttpBusinessPlugin::new(url) {
+                    Ok(p) => sinks.push(Arc::new(p)),
+                    Err(e) => eprintln!("failed to init HttpBusinessPlugin: {}", e),
+                }
             }
         }
     }
@@ -415,21 +513,22 @@ fn main() -> std::io::Result<()> {
     // Optional TCP+TLS listener.
     #[cfg(all(target_os = "linux", feature = "tls"))]
     if let Ok(tls_addr_str) = std::env::var("UTLD_TLS_ADDR") {
-        if let Some(cfg) = load_mtls_config_from_env() {
-            if let Ok(tls_addr) = tls_addr_str.parse() {
-                let node_tls = Arc::clone(&node);
-                let engine_tls = engine.as_ref().map(Arc::clone);
-                let plugin_tls = plugin.as_ref().map(Arc::clone);
-                thread::spawn(move || {
-                    if let Err(e) = tls_listener::start_tls_listener(
-                        tls_addr, cfg, node_tls, engine_tls, plugin_tls,
-                    ) {
-                        tracing::error!("TLS listener error: {}", e);
-                    }
-                });
-            } else {
-                tracing::error!("invalid UTLD_TLS_ADDR: {}", tls_addr_str);
-            }
+        if !tls_addr_str.trim().is_empty() {
+            let cfg = load_mtls_config_from_env().map_err(std::io::Error::other)?
+                .ok_or_else(|| std::io::Error::other("UTLD_TLS_ADDR set but UTLD_MTLS_CA not configured"))?;
+            let tls_addr = tls_addr_str
+                .parse()
+                .map_err(|e| std::io::Error::other(format!("invalid UTLD_TLS_ADDR: {e}")))?;
+            let node_tls = Arc::clone(&node);
+            let engine_tls = engine.as_ref().map(Arc::clone);
+            let plugin_tls = plugin.as_ref().map(Arc::clone);
+            thread::spawn(move || {
+                if let Err(e) = tls_listener::start_tls_listener(
+                    tls_addr, cfg, node_tls, engine_tls, plugin_tls,
+                ) {
+                    tracing::error!("TLS listener error: {}", e);
+                }
+            });
         }
     }
 
@@ -458,6 +557,11 @@ fn load_policy_from_env() -> Option<Policy> {
         Err(_) => return None,
     };
 
+    if let Err(e) = validate_fs_path("UTLD_POLICY", &path, true) {
+        eprintln!("invalid UTLD_POLICY: {e}");
+        return None;
+    }
+
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -476,7 +580,12 @@ fn load_policy_from_env() -> Option<Policy> {
 }
 
 fn state_file_path() -> String {
-    std::env::var("UTLD_STATE_FILE").unwrap_or_else(|_| "./utld_roots.json".to_string())
+    let p = std::env::var("UTLD_STATE_FILE").unwrap_or_else(|_| "./utld_roots.json".to_string());
+    if let Err(e) = validate_fs_path("UTLD_STATE_FILE", &p, true) {
+        eprintln!("invalid UTLD_STATE_FILE ({e}); using default ./utld_roots.json");
+        return "./utld_roots.json".to_string();
+    }
+    p
 }
 
 fn load_roots_into_node(node: &mut UtlNode) -> std::io::Result<()> {
@@ -1109,7 +1218,7 @@ fn persist_dig_file(root_id: UID, dig: &dig_mem::DigFile) -> std::io::Result<()>
 
     // Optional HMAC-SHA256 signature over the JSON, if UTLD_DIG_SIGN_KEY is set.
     if let Ok(key_hex) = std::env::var("UTLD_DIG_SIGN_KEY") {
-        if let Ok(key_bytes) = hex::decode(&key_hex) {
+        if let Ok(mut key_bytes) = hex::decode(&key_hex) {
             if let Ok(mut mac) = HmacSha256::new_from_slice(&key_bytes) {
                 mac.update(json.as_bytes());
                 let sig = mac.finalize().into_bytes();
@@ -1119,6 +1228,7 @@ fn persist_dig_file(root_id: UID, dig: &dig_mem::DigFile) -> std::io::Result<()>
                 let mut sig_file = File::create(&sig_path)?;
                 sig_file.write_all(sig_hex.as_bytes())?;
                 sig_file.sync_all()?;
+                key_bytes.zeroize();
             } else {
                 eprintln!("failed to create HMAC from UTLD_DIG_SIGN_KEY; skipping dig signing");
             }
@@ -1160,6 +1270,7 @@ fn handle_client_generic<S>(
 where
     S: std::io::Read + std::io::Write,
 {
+    const MAX_REQ_LINE_BYTES: usize = 2 * 1024 * 1024;
     let mut buffer = String::new();
 
     #[cfg(feature = "bar_governance")]
@@ -1170,6 +1281,7 @@ where
 
         // Read a single line from the stream (blocking) into buffer.
         let mut n_total = 0usize;
+        let mut too_large = false;
         loop {
             let mut byte = [0u8; 1];
             let n = stream.read(&mut byte)?;
@@ -1178,7 +1290,13 @@ where
             }
             n_total += n;
             let b = byte[0];
-            buffer.push(b as char);
+            if !too_large {
+                if n_total > MAX_REQ_LINE_BYTES {
+                    too_large = true;
+                } else {
+                    buffer.push(b as char);
+                }
+            }
             if b == b'\n' {
                 break;
             }
@@ -1187,6 +1305,15 @@ where
         if n_total == 0 {
             // EOF
             break;
+        }
+
+        if too_large {
+            let resp = NodeResponse::Error {
+                message: "request_too_large".to_string(),
+            };
+            let s = serde_json::to_string(&resp).unwrap();
+            writeln!(&mut stream, "{}", s)?;
+            continue;
         }
 
         let line = buffer.trim();
@@ -1228,22 +1355,18 @@ where
             {
                 if let Some(bar_resp) = bar_gov.maybe_apply(&mut req, &mut node_guard, &plugin) {
                     bar_resp
-                } else {
-                    if let Some(engine_arc) = engine.as_ref() {
-                        let mut eng_guard = engine_arc.lock().unwrap();
-                        let mut gov = PolicyGovernance {
-                            engine: &mut eng_guard,
-                        };
-                        if let Some(policy_resp) =
-                            gov.maybe_apply(&mut req, &mut node_guard, &plugin)
-                        {
-                            policy_resp
-                        } else {
-                            handle_request(&mut node_guard, req)
-                        }
+                } else if let Some(engine_arc) = engine.as_ref() {
+                    let mut eng_guard = engine_arc.lock().unwrap();
+                    let mut gov = PolicyGovernance {
+                        engine: &mut eng_guard,
+                    };
+                    if let Some(policy_resp) = gov.maybe_apply(&mut req, &mut node_guard, &plugin) {
+                        policy_resp
                     } else {
                         handle_request(&mut node_guard, req)
                     }
+                } else {
+                    handle_request(&mut node_guard, req)
                 }
             }
 

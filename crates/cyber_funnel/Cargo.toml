@@ -3,6 +3,9 @@ name = "cyber_funnel"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 common_models = { path = "../common_models" }
 serde = { version = "1", features = ["derive"] }

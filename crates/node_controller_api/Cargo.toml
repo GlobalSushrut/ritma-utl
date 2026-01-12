@@ -3,6 +3,9 @@ name = "node_controller_api"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["full"] }

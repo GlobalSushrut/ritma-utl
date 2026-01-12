@@ -1,4 +1,4 @@
-version: "3.9"
+version: "3.3"
 
 # Non-custodial, distributed sidecars per-namespace
 # - tracer (auditd fallback today; eBPF-capable runtime flags)
@@ -21,47 +21,79 @@ services:
     environment:
       # configure per your UTLD settings if needed
       - RUST_LOG=info
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-ritma.json
+      - apparmor:ritma-utld
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
 
   tracer:
     build:
       context: ..
       dockerfile: docker/Dockerfile-tracer
     container_name: tracer_sidecar
-    # eBPF-ready flags (kept even if auditd fallback is used)
-    privileged: true
-    pid: host
-    # network_mode host optional; not strictly required for auditd fallback
-    # network_mode: host
+    entrypoint: ["sh", "-c", "umask 077; exec /usr/local/bin/tracer_sidecar"]
+    # Security hardened - strict by default
+    cap_drop:
+      - ALL        # Drop everything else
+    cap_add:
+      - SYS_ADMIN
+      - BPF
+      - PERFMON
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-ritma.json
+      - apparmor:ritma-tracer-sidecar
     restart: unless-stopped
+    pid: host
+    user: "0:0"
     environment:
       - NAMESPACE_ID=ns://demo/dev/hello/world
+      - RITMA_NODE_ID=${RITMA_NODE_ID:?set RITMA_NODE_ID}
+      - RITMA_BASE_DIR=/var/lib/ritma
+      - RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+      - RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+      - RITMA_EBPF_OBJECT_PATH=${RITMA_EBPF_OBJECT_PATH:-/var/lib/ritma/ebpf/ritma_trace.o}
       - AUDIT_LOG_PATH=/var/log/audit/audit.log
-      - INDEX_DB_PATH=/data/index_db.sqlite
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
     volumes:
       - /var/log/audit:/var/log/audit:ro
-      - sidecar-data:/data
+      - /var/lib/ritma:/var/lib/ritma
+      - /run/ritma/locks:/run/ritma/locks
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
 
   orchestrator:
     build:
       context: ..
       dockerfile: docker/Dockerfile-orchestrator
     container_name: bar_orchestrator
+    entrypoint: ["sh", "-c", "umask 077; exec /usr/local/bin/bar_orchestrator"]
+    user: "0:0"
+    cap_drop:
+      - ALL
     depends_on:
       - tracer
       - utld
     restart: unless-stopped
     environment:
       - NAMESPACE_ID=ns://demo/dev/hello/world
-      - INDEX_DB_PATH=/data/index_db.sqlite
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
       - TICK_SECS=60
+      - RITMA_NODE_ID=${RITMA_NODE_ID:?set RITMA_NODE_ID}
+      - RITMA_BASE_DIR=/var/lib/ritma
+      - RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+      - RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-ritma.json
     volumes:
-      - sidecar-data:/data
+      - /var/lib/ritma:/var/lib/ritma
+      - /run/ritma/locks:/run/ritma/locks
 
-volumes:
-  sidecar-data:
-  
 # Notes:
 # - sidecar-data is per-namespace volume; to isolate, compose per namespace or use distinct volume names
 # - ML remains advisory; orchestrator only adjusts confidence; UTL seals proofs; no enforcement tasks are run here

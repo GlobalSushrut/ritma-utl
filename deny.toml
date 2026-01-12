@@ -1,0 +1,37 @@
+[advisories]
+db-urls = ["https://github.com/RustSec/advisory-db"]
+db-path = "~/.cargo/advisory-db"
+unmaintained = "none"
+yanked = "warn"
+ignore = [
+  { id = "RUSTSEC-2025-0055", reason = "Pulled in by ark-relations 0.5.1; upgrading arkworks stack is out of scope for pilot readiness. Mitigation: avoid logging untrusted user input with tracing subscriber in production." },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+
+[licenses]
+unused-allowed-license = "allow"
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSL-1.0",
+  "CC0-1.0",
+  "MPL-2.0",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "OpenSSL",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+]
+exceptions = []

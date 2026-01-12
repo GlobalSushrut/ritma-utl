@@ -3,6 +3,9 @@ name = "compliance_packs"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 common_models = { path = "../common_models" }
 proof_standards = { path = "../proof_standards" }

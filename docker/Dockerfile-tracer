@@ -1,16 +1,25 @@
 # Tracer sidecar (auditd fallback tailer)
-FROM rust:1.83 AS builder
+FROM rust:1.88 AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build -p tracer_sidecar --release
+RUN cargo build -p tracer_sidecar --release --features ebpf
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/tracer_sidecar /usr/local/bin/tracer_sidecar
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && \
+    groupadd -r ritma -g 1001 && \
+    useradd -r -g ritma -u 1001 -m -d /home/ritma -s /bin/false ritma && \
+    mkdir -p /var/lib/ritma /run/ritma/locks && \
+    chown -R ritma:ritma /var/lib/ritma /run/ritma
+COPY --from=builder --chown=ritma:ritma /app/target/release/tracer_sidecar /usr/local/bin/tracer_sidecar
+USER ritma
 # Read-only mount of host audit log directory required for auditd fallback
 VOLUME ["/var/log/audit"]
-VOLUME ["/data"]
+VOLUME ["/var/lib/ritma"]
 ENV AUDIT_LOG_PATH=/var/log/audit/audit.log
-ENV INDEX_DB_PATH=/data/index_db.sqlite
+ENV INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+ENV RITMA_BASE_DIR=/var/lib/ritma
+ENV RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+ENV RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+ENV RITMA_EBPF_OBJECT_PATH=/var/lib/ritma/ebpf/ritma_trace.o
 ENV NAMESPACE_ID=ns://demo/dev/hello/world
 ENTRYPOINT ["/usr/local/bin/tracer_sidecar"]

@@ -85,3 +85,28 @@ The incident packaging/signing lives in the `evidence_package` crate and related
 - Signing with `node_keystore` or an env key (fallback), or computing an unsigned package hash
 
 This is distinct from the `attest` command, which focuses on canonical JSON + receipt hashing.
+
+## 5) Evidence discipline (append-only semantics)
+
+Ritma has two storage classes:
+
+- **Hot store (mutable):** `INDEX_DB_PATH` (SQLite). This is an operational database and may be compacted/updated; it is not the evidence vault.
+- **Evidence vault (append-only, local-first):** `RITMA_OUT_DIR` (Output Container v2 layout). This is the intended long-term, tamper-evident artifact area.
+
+Append-only semantics (for `RITMA_OUT_DIR`):
+
+- **No in-place edits for sealed artifacts.** Once a micro-window/hour/day artifact is considered “closed”, it must not be modified.
+- **Writes are additive.** New micro-windows are new files under `windows/YYYY/MM/DD/HH/micro/` and catalogs/time-jump indices are appended as framed records.
+- **Deletions are not part of the normal write path.** Retention/rotation is a separate policy concern and must respect future case-freeze semantics.
+
+Current enforcement mechanisms (today):
+
+- **Single-writer locks:** `tracer_sidecar` and `bar_orchestrator` take an `flock()` on a host-shared lock file under `RITMA_SIDECAR_LOCK_DIR` (default `/run/ritma/locks`). This prevents concurrent writers from racing and producing conflicting artifacts.
+- **Directory/layout initialization:** writers call `StorageContract::ensure_base_dir()` and `StorageContract::ensure_out_layout()` so the expected `RITMA_OUT_DIR` structure exists before any artifacts are emitted.
+- **Append-style indices/catalogs:** the current v0 implementations append framed records to:
+  - `catalog/YYYY/MM/DD/day.cbor.zst`
+  - `windows/.../index/timejump.cbor`
+
+Notes on “mutable while active” files:
+
+- Some files may be rewritten while an hour/window is still in progress (e.g., rolling roots). Those files become immutable once the corresponding partition is closed. A future sealing step will formalize this boundary and add explicit “sealed” markers/signatures.

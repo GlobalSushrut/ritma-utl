@@ -3,6 +3,9 @@ name = "compliance_console_api"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
@@ -18,5 +21,4 @@ svc_ledger = { path = "../svc_ledger" }
 core_types = { path = "../core_types" }
 dig_index = { path = "../dig_index" }
 security_kit = { path = "../security_kit" }
-jsonwebtoken = "8"
 tower-http = { version = "0.5", features = ["cors"] }

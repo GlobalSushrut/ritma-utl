@@ -149,5 +149,6 @@ cargo run -p ritma_cli -- export report \
 - `docs/ARCHITECTURE.md` (overview, boundaries, integration points)
 - `docs/CLI_REFERENCE.md` (current CLI commands)
 - `docs/EVIDENCE_AND_ATTESTATION.md` (artifacts + verification)
+- `docs/PILOT_READINESS_CHECKLIST.md` (pilot runbooks + institutional readiness checklist)
 - `docs/UX_GATE.md` (UX contract / acceptance checklist)
 - `demo/README.md` (node console demo)

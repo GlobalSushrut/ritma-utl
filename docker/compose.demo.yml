@@ -1,4 +1,4 @@
-version: "3.9"
+version: "3.3"
 services:
   ritma-demo:
     build:
@@ -8,9 +8,9 @@ services:
     container_name: ritma-demo
     environment:
       - NAMESPACE_ID=ns://demo/dev/hello/world
-      - INDEX_DB_PATH=/data/index_db.sqlite
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
     volumes:
-      - ./demo-data:/data
+      - ./demo-data:/var/lib/ritma
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped

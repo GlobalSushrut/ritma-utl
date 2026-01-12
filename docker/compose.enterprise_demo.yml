@@ -1,0 +1,75 @@
+version: "3.3"
+
+services:
+  utld:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-utld
+    container_name: utld
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+
+
+  tracer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-tracer
+    container_name: tracer_sidecar
+    user: "${HOST_UID}:${HOST_GID}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    environment:
+      - NAMESPACE_ID=${NAMESPACE_ID}
+      - RITMA_NODE_ID=${RITMA_NODE_ID:?set RITMA_NODE_ID}
+      - RITMA_BASE_DIR=/var/lib/ritma
+      - RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+      - RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+      - AUDIT_LOG_PATH=/var/log/audit/audit.log
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+    volumes:
+      - ../demo/enterprise-audit:/var/log/audit:ro
+      - ../demo/enterprise-data:/var/lib/ritma
+      - ../demo/enterprise-data:/run/ritma
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile-orchestrator
+    container_name: bar_orchestrator
+    user: "${HOST_UID}:${HOST_GID}"
+    depends_on:
+      - tracer
+      - utld
+    restart: unless-stopped
+    environment:
+      - NAMESPACE_ID=${NAMESPACE_ID}
+      - RITMA_NODE_ID=${RITMA_NODE_ID:?set RITMA_NODE_ID}
+      - RITMA_BASE_DIR=/var/lib/ritma
+      - RITMA_OUT_DIR=/var/lib/ritma/RITMA_OUT
+      - RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+      - INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+      - TICK_SECS=${TICK_SECS}
+    volumes:
+      - ../demo/enterprise-data:/var/lib/ritma
+      - ../demo/enterprise-data:/run/ritma
+
+  enterprise_mock_app:
+    image: bash:5.2
+    container_name: enterprise_mock_app
+    user: "${HOST_UID}:${HOST_GID}"
+    depends_on:
+      - tracer
+    environment:
+      - NAMESPACE_ID=${NAMESPACE_ID}
+      - AUDIT_LOG_PATH=/var/log/audit/audit.log
+      - ENTERPRISE_DURATION_SECS=${ENTERPRISE_DURATION_SECS}
+      - ENTERPRISE_SLEEP_MS=${ENTERPRISE_SLEEP_MS}
+    volumes:
+      - ../demo:/demo:ro
+      - ../demo/enterprise-audit:/var/log/audit:rw
+    command: ["bash", "/demo/enterprise_mock_app.sh"]
+    restart: "no"

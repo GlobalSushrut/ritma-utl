@@ -3,14 +3,17 @@ use common_models::{
     MLScore as CmMLScore, ProofPack as CmProofPack, TraceEvent as CmTraceEvent,
     Verdict as CmVerdict,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum IndexDbError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("sqlite journal_mode is '{0}', expected 'wal'")]
+    JournalModeNotWal(String),
 }
 
 pub type Result<T> = std::result::Result<T, IndexDbError>;
@@ -33,6 +36,29 @@ impl IndexDb {
     /// Open or create an IndexDB at the given path and run migrations.
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
+
+        conn.busy_timeout(Duration::from_secs(30))?;
+
+        let is_memory = path == ":memory:"
+            || (path.starts_with("file:")
+                && path.contains("mode=memory")
+                && path.contains("cache=shared"));
+
+        for _ in 0..50 {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+            let mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+            if mode.eq_ignore_ascii_case("wal") || (is_memory && mode.eq_ignore_ascii_case("memory")) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+        if !mode.eq_ignore_ascii_case("wal") && !(is_memory && mode.eq_ignore_ascii_case("memory")) {
+            return Err(IndexDbError::JournalModeNotWal(mode));
+        }
+
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+
         let db = IndexDb { conn };
         db.migrate()?;
         Ok(db)
@@ -157,6 +183,8 @@ impl IndexDb {
                 ts INTEGER NOT NULL,
                 source TEXT NOT NULL,
                 kind TEXT NOT NULL,
+                event_hash TEXT,
+                prev_hash TEXT,
                 actor JSON,
                 target JSON,
                 attrs JSON
@@ -231,40 +259,44 @@ impl IndexDb {
                 created_ts INTEGER NOT NULL,
                 UNIQUE(namespace_id, name)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_tags_ns_time ON tags(namespace_id, created_ts);
             "#,
         )?;
 
+        self.ensure_trace_event_hash_columns()?;
         Ok(())
     }
 
-    /// Simple smoke test to ensure the DB is writable.
-    pub fn smoke_test(&self) -> Result<()> {
+    fn ensure_trace_event_hash_columns(&self) -> Result<()> {
+        fn has_col(conn: &Connection, table: &str, col: &str) -> rusqlite::Result<bool> {
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let name: String = row.get(1)?;
+                if name == col {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+
+        if !has_col(&self.conn, "trace_events", "event_hash")? {
+            self.conn
+                .execute("ALTER TABLE trace_events ADD COLUMN event_hash TEXT", [])?;
+        }
+        if !has_col(&self.conn, "trace_events", "prev_hash")? {
+            self.conn
+                .execute("ALTER TABLE trace_events ADD COLUMN prev_hash TEXT", [])?;
+        }
+
         self.conn.execute(
-            "INSERT INTO events (namespace_id, event_id, ts, event_type, actor, subject, action, context, env_stamp, redaction, stage_trace)
-             VALUES (?1, ?2, ?3, ?4, 'null', 'null', 'null', 'null', 'null', 'null', '[]')",
-            params!["ns://test/env/app/svc", "evt_smoke", 0i64, "SMOKE_TEST"],
+            "CREATE INDEX IF NOT EXISTS idx_trace_ns_hash ON trace_events(namespace_id, event_hash)",
+            [],
         )?;
         Ok(())
     }
 
-    /// Convenience helper: insert proof metadata directly from a canonical
-    /// ProofPack. The statement_hash is derived canonically from the
-    /// `statement` field.
-    pub fn insert_proof_from_pack(&self, pack: &CmProofPack, status: &str) -> Result<()> {
-        let row = ProofMetadataRow {
-            proof_id: pack.proof_id.clone(),
-            namespace_id: pack.namespace_id.clone(),
-            proof_type: pack.proof_type.clone(),
-            statement_hash: hash_string_sha256(&pack.statement),
-            public_inputs_hash: pack.public_inputs_hash.clone(),
-            verification_key_id: pack.verification_key_id.clone(),
-            status: status.to_string(),
-            receipt_refs: serde_json::to_value(&pack.receipt_refs)
-                .unwrap_or(serde_json::Value::Null),
-            blob_ref: pack.proof_ref.clone(),
-        };
-        self.insert_proof_metadata(&row)
-    }
 }
 
 /// Simplified stored representation of a canonical decision event row.
@@ -369,6 +401,24 @@ pub struct WindowRefRow {
     pub start_ts: i64,
     pub end_ts: i64,
     pub hits: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PruneStats {
+    pub cutoff_ts: i64,
+    pub events_deleted: usize,
+    pub trace_events_deleted: usize,
+    pub verdicts_deleted: usize,
+    pub receipts_deleted: usize,
+    pub window_summaries_deleted: usize,
+    pub attack_graph_edges_deleted: usize,
+    pub ml_scores_deleted: usize,
+    pub runtime_dna_deleted: usize,
+    pub evidence_packs_deleted: usize,
+    pub patterns_deleted: usize,
+    pub baselines_deleted: usize,
+    pub effective_config_deleted: usize,
+    pub tags_deleted: usize,
 }
 
 impl IndexDb {
@@ -564,17 +614,49 @@ impl IndexDb {
         Ok(())
     }
 
+    /// Convenience helper: insert proof metadata directly from a canonical
+    /// ProofPack. The statement_hash is derived canonically from the
+    /// `statement` field.
+    pub fn insert_proof_from_pack(&self, pack: &CmProofPack, status: &str) -> Result<()> {
+        let row = ProofMetadataRow {
+            proof_id: pack.proof_id.clone(),
+            namespace_id: pack.namespace_id.clone(),
+            proof_type: pack.proof_type.clone(),
+            statement_hash: hash_string_sha256(&pack.statement),
+            public_inputs_hash: pack.public_inputs_hash.clone(),
+            verification_key_id: pack.verification_key_id.clone(),
+            status: status.to_string(),
+            receipt_refs: serde_json::to_value(&pack.receipt_refs).unwrap_or(serde_json::Value::Null),
+            blob_ref: pack.proof_ref.clone(),
+        };
+        self.insert_proof_metadata(&row)
+    }
+
     /// Insert a system-plane TraceEvent from canonical model
     pub fn insert_trace_event_from_model(&self, te: &CmTraceEvent) -> Result<()> {
+        let canonical = serde_json::to_string(te).unwrap_or("null".to_string());
+        let event_hash = hash_string_sha256(&canonical);
+
+        let prev_hash: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT event_hash FROM trace_events WHERE namespace_id=?1 AND event_hash IS NOT NULL ORDER BY id DESC LIMIT 1",
+                params![te.namespace_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+
         self.conn.execute(
-            "INSERT INTO trace_events (namespace_id, trace_id, ts, source, kind, actor, target, attrs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO trace_events (namespace_id, trace_id, ts, source, kind, event_hash, prev_hash, actor, target, attrs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 te.namespace_id,
                 te.trace_id,
                 Self::rfc3339_to_epoch(&te.ts),
                 format!("{:?}", te.source).to_uppercase(),
                 format!("{:?}", te.kind).to_uppercase(),
+                event_hash,
+                prev_hash,
                 serde_json::to_string(&te.actor).unwrap_or("null".to_string()),
                 serde_json::to_string(&te.target).unwrap_or("null".to_string()),
                 serde_json::to_string(&te.attrs).unwrap_or("null".to_string()),
@@ -634,6 +716,10 @@ impl IndexDb {
                         ppid: 0,
                         uid: 0,
                         gid: 0,
+                        comm_hash: None,
+                        exe_hash: None,
+                        comm: None,
+                        exe: None,
                         container_id: None,
                         service: None,
                         build_hash: None,
@@ -977,10 +1063,6 @@ impl IndexDb {
         Ok(None)
     }
 
-    /// Resolve the ML window that contains a given timestamp.
-    ///
-    /// This supports "export by time" UX where the user has a single incident timestamp and
-    /// wants the relevant window output without manually finding an ml_id.
     pub fn get_ml_containing_ts(&self, namespace_id: &str, ts: i64) -> Result<Option<MlWindowRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT ml_id, namespace_id, start_ts, end_ts, final_ml_score, explain, models
@@ -1003,6 +1085,148 @@ impl IndexDb {
             }));
         }
         Ok(None)
+    }
+
+    pub fn prune_before_ts(
+        &self,
+        namespace_id: Option<&str>,
+        cutoff_ts: i64,
+    ) -> Result<PruneStats> {
+        let mut stats = PruneStats {
+            cutoff_ts,
+            ..PruneStats::default()
+        };
+
+        match namespace_id {
+            Some(ns) => {
+                stats.trace_events_deleted = self.conn.execute(
+                    "DELETE FROM trace_events WHERE namespace_id = ?1 AND ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.events_deleted = self.conn.execute(
+                    "DELETE FROM events WHERE namespace_id = ?1 AND ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+
+                stats.window_summaries_deleted = self.conn.execute(
+                    "DELETE FROM window_summaries WHERE namespace_id = ?1 AND end_ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.ml_scores_deleted = self.conn.execute(
+                    "DELETE FROM ml_scores WHERE namespace_id = ?1 AND end_ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.runtime_dna_deleted = self.conn.execute(
+                    "DELETE FROM runtime_dna_chain WHERE namespace_id = ?1 AND end_ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.evidence_packs_deleted = self.conn.execute(
+                    "DELETE FROM evidence_packs WHERE namespace_id = ?1 AND created_ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.patterns_deleted = self.conn.execute(
+                    "DELETE FROM patterns WHERE namespace_id = ?1 AND last_seen < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.baselines_deleted = self.conn.execute(
+                    "DELETE FROM baselines WHERE namespace_id = ?1 AND updated_ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+                stats.tags_deleted = self.conn.execute(
+                    "DELETE FROM tags WHERE namespace_id = ?1 AND created_ts < ?2",
+                    params![ns, cutoff_ts],
+                )?;
+
+                stats.verdicts_deleted = self.conn.execute(
+                    "DELETE FROM verdicts WHERE namespace_id = ?1 AND event_id NOT IN (SELECT event_id FROM events WHERE namespace_id = ?1)",
+                    params![ns],
+                )?;
+
+                let mut receipts_deleted = 0usize;
+                receipts_deleted += self.conn.execute(
+                    "DELETE FROM receipts_ref WHERE namespace_id = ?1 AND event_id IS NOT NULL AND event_id NOT IN (SELECT event_id FROM events WHERE namespace_id = ?1)",
+                    params![ns],
+                )?;
+                receipts_deleted += self.conn.execute(
+                    "DELETE FROM receipts_ref WHERE namespace_id = ?1 AND verdict_id IS NOT NULL AND verdict_id NOT IN (SELECT verdict_id FROM verdicts WHERE namespace_id = ?1)",
+                    params![ns],
+                )?;
+                stats.receipts_deleted = receipts_deleted;
+
+                stats.attack_graph_edges_deleted = self.conn.execute(
+                    "DELETE FROM attack_graph_edges WHERE window_id NOT IN (SELECT window_id FROM window_summaries)",
+                    params![],
+                )?;
+            }
+            None => {
+                stats.trace_events_deleted = self
+                    .conn
+                    .execute("DELETE FROM trace_events WHERE ts < ?1", params![cutoff_ts])?;
+                stats.events_deleted = self
+                    .conn
+                    .execute("DELETE FROM events WHERE ts < ?1", params![cutoff_ts])?;
+                stats.window_summaries_deleted = self.conn.execute(
+                    "DELETE FROM window_summaries WHERE end_ts < ?1",
+                    params![cutoff_ts],
+                )?;
+                stats.ml_scores_deleted = self.conn.execute(
+                    "DELETE FROM ml_scores WHERE end_ts < ?1",
+                    params![cutoff_ts],
+                )?;
+                stats.runtime_dna_deleted = self.conn.execute(
+                    "DELETE FROM runtime_dna_chain WHERE end_ts < ?1",
+                    params![cutoff_ts],
+                )?;
+                stats.evidence_packs_deleted = self.conn.execute(
+                    "DELETE FROM evidence_packs WHERE created_ts < ?1",
+                    params![cutoff_ts],
+                )?;
+                stats.patterns_deleted = self.conn.execute(
+                    "DELETE FROM patterns WHERE last_seen < ?1",
+                    params![cutoff_ts],
+                )?;
+                stats.baselines_deleted = self.conn.execute(
+                    "DELETE FROM baselines WHERE updated_ts < ?1",
+                    params![cutoff_ts],
+                )?;
+                stats.tags_deleted = self
+                    .conn
+                    .execute("DELETE FROM tags WHERE created_ts < ?1", params![cutoff_ts])?;
+                stats.effective_config_deleted = self.conn.execute(
+                    "DELETE FROM effective_config WHERE ts < ?1",
+                    params![cutoff_ts],
+                )?;
+
+                stats.verdicts_deleted = self.conn.execute(
+                    "DELETE FROM verdicts WHERE event_id NOT IN (SELECT event_id FROM events)",
+                    params![],
+                )?;
+
+                let mut receipts_deleted = 0usize;
+                receipts_deleted += self.conn.execute(
+                    "DELETE FROM receipts_ref WHERE event_id IS NOT NULL AND event_id NOT IN (SELECT event_id FROM events)",
+                    params![],
+                )?;
+                receipts_deleted += self.conn.execute(
+                    "DELETE FROM receipts_ref WHERE verdict_id IS NOT NULL AND verdict_id NOT IN (SELECT verdict_id FROM verdicts)",
+                    params![],
+                )?;
+                stats.receipts_deleted = receipts_deleted;
+
+                stats.attack_graph_edges_deleted = self.conn.execute(
+                    "DELETE FROM attack_graph_edges WHERE window_id NOT IN (SELECT window_id FROM window_summaries)",
+                    params![],
+                )?;
+            }
+        }
+
+        Ok(stats)
+    }
+
+    pub fn compact(&self) -> Result<()> {
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);\nPRAGMA optimize;\nVACUUM;\n")?;
+        Ok(())
     }
 
     pub fn tag_commit(

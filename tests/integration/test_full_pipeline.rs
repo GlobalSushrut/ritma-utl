@@ -176,7 +176,7 @@ fn multiple_events_baseline_learning() {
     for i in 0..10 {
         let http_request = HttpRequestData {
             method: "GET".to_string(),
-            path: format!("/api/users/{}", i),
+            path: format!("/api/users/{i}"),
             headers: {
                 let mut h = HashMap::new();
                 h.insert("x-user-id".to_string(), "user_normal".to_string());
@@ -186,8 +186,8 @@ fn multiple_events_baseline_learning() {
             body_hash: None,
             remote_addr: Some("10.0.0.1".to_string()),
             user_agent: Some("NormalApp/1.0".to_string()),
-            request_id: Some(format!("req_{}", i)),
-            trace_id: Some(format!("trace_{}", i)),
+            request_id: Some(format!("req_{i}")),
+            trace_id: Some(format!("trace_{i}")),
         };
 
         let input = serde_json::to_vec(&http_request).expect("serialize");

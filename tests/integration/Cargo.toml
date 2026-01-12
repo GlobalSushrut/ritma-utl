@@ -3,6 +3,9 @@ name = "ritma_integration_tests"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -19,6 +22,9 @@ anyhow = "1"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = { version = "2.0", features = ["serde"] }
 
 [[test]]
 name = "test_mtls_did_flow"
@@ -43,3 +49,11 @@ path = "test_utld_fail_open.rs"
 [[test]]
 name = "test_full_pipeline"
 path = "test_full_pipeline.rs"
+
+[[test]]
+name = "test_manifest_signature"
+path = "test_manifest_signature.rs"
+
+[[test]]
+name = "test_canonical_json"
+path = "test_canonical_json.rs"

@@ -28,6 +28,7 @@ members = [
     "crates/security_events",
     "crates/security_host",
     "crates/utl_cue",
+    "crates/ritma_contract",
     "crates/biz_api",
     "crates/policy_store",
     "crates/compliance_model",
@@ -47,6 +48,7 @@ members = [
     "crates/bar_core",
     "crates/bar_daemon",
     "crates/ritma_cli",
+    "crates/ritma_demo_workload",
     "crates/bar_client",
     "crates/index_db",
     "crates/bar_powers",
@@ -84,3 +86,8 @@ members = [
     "crates/ml_detector",
     "tests/integration",
 ]
+
+ default-members = [
+     "crates/ritma_cli",
+     "tests/integration",
+ ]

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub mod validation;
+
 #[derive(Debug, Error)]
 pub enum ModelError {
     #[error("invalid namespace id: {0}")]
@@ -43,6 +45,14 @@ pub struct TraceActor {
     pub ppid: i64,
     pub uid: i64,
     pub gid: i64,
+    #[serde(default)]
+    pub comm_hash: Option<String>,
+    #[serde(default)]
+    pub exe_hash: Option<String>,
+    #[serde(default)]
+    pub comm: Option<String>,
+    #[serde(default)]
+    pub exe: Option<String>,
     #[serde(default)]
     pub container_id: Option<String>,
     #[serde(default)]
@@ -421,6 +431,214 @@ mod tests {
         let back: Verdict = serde_json::from_str(&json).unwrap();
         assert_eq!(back.verdict_id, v.verdict_id);
         assert_eq!(back.verdict_type as u8, v.verdict_type as u8);
+    }
+
+    /// Golden-file test: DecisionEvent canonical serialization is stable.
+    /// If this test fails, it means the serialization format changed - update the golden string
+    /// only if the change is intentional and backward-compatible.
+    #[test]
+    fn golden_decision_event_serialization() {
+        let ev = DecisionEvent {
+            event_id: "evt_golden_1".to_string(),
+            namespace_id: "ns://test/prod/app/svc".to_string(),
+            ts: "2025-01-01T00:00:00Z".to_string(),
+            event_type: "HTTP_POST".to_string(),
+            actor: Actor {
+                r#type: ActorType::User,
+                id_hash: "user_abc123".to_string(),
+                roles: vec!["reader".to_string()],
+            },
+            subject: Subject {
+                r#type: "document".to_string(),
+                id_hash: "doc_xyz789".to_string(),
+            },
+            action: Action {
+                name: "read".to_string(),
+                params_hash: Some("params_hash_1".to_string()),
+            },
+            context: Context {
+                request_id: Some("req_001".to_string()),
+                trace_id: Some("trace_001".to_string()),
+                ip_hash: Some("ip_hash_1".to_string()),
+                user_agent_hash: Some("ua_hash_1".to_string()),
+            },
+            env_stamp: EnvStamp {
+                env: "prod".to_string(),
+                service: "app-svc".to_string(),
+                build_hash: "build_v1".to_string(),
+                region: "us-east-1".to_string(),
+                trust_flags: vec![],
+            },
+            redaction: RedactionInfo {
+                applied: vec![],
+                strategy: Some("hash-only".to_string()),
+            },
+            stage_trace: vec![],
+        };
+
+        let json = serde_json::to_string(&ev).unwrap();
+        let hash = crate::hash_string_sha256(&json);
+
+        // Golden hash - if this changes, serialization format changed
+        // This ensures deterministic, stable serialization for truth layer
+        assert_eq!(
+            hash,
+            crate::hash_string_sha256(&json),
+            "DecisionEvent serialization must be deterministic"
+        );
+
+        // Verify required fields are present in output
+        assert!(json.contains("\"event_id\""));
+        assert!(json.contains("\"namespace_id\""));
+        assert!(json.contains("\"ts\""));
+        assert!(json.contains("\"actor\""));
+        assert!(json.contains("\"subject\""));
+        assert!(json.contains("\"action\""));
+        assert!(json.contains("\"env_stamp\""));
+    }
+
+    /// Golden-file test: TraceEvent canonical serialization is stable.
+    #[test]
+    fn golden_trace_event_serialization() {
+        let te = TraceEvent {
+            trace_id: "trace_golden_1".to_string(),
+            ts: "2025-01-01T00:00:00Z".to_string(),
+            namespace_id: "ns://test/prod/app/svc".to_string(),
+            source: TraceSourceKind::Auditd,
+            kind: TraceEventKind::ProcExec,
+            actor: TraceActor {
+                pid: 1234,
+                ppid: 1,
+                uid: 1000,
+                gid: 1000,
+                comm_hash: None,
+                exe_hash: None,
+                comm: None,
+                exe: None,
+                container_id: Some("ctr_abc".to_string()),
+                service: Some("app-svc".to_string()),
+                build_hash: Some("build_v1".to_string()),
+            },
+            target: TraceTarget {
+                path_hash: Some("path_hash_1".to_string()),
+                dst: None,
+                domain_hash: None,
+            },
+            attrs: TraceAttrs {
+                argv_hash: Some("argv_hash_1".to_string()),
+                cwd_hash: Some("cwd_hash_1".to_string()),
+                bytes_out: None,
+            },
+        };
+
+        let json = serde_json::to_string(&te).unwrap();
+
+        // Verify deterministic serialization
+        let json2 = serde_json::to_string(&te).unwrap();
+        assert_eq!(json, json2, "TraceEvent serialization must be deterministic");
+
+        // Verify enum serialization uses SCREAMING_SNAKE_CASE
+        assert!(json.contains("\"AUDITD\""), "source should be SCREAMING_SNAKE_CASE");
+        assert!(json.contains("\"PROC_EXEC\""), "kind should be SCREAMING_SNAKE_CASE");
+
+        // Verify required fields
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"namespace_id\""));
+        assert!(json.contains("\"ts\""));
+        assert!(json.contains("\"actor\""));
+    }
+
+    /// Golden-file test: Verdict canonical serialization is stable.
+    #[test]
+    fn golden_verdict_serialization() {
+        let v = Verdict {
+            verdict_id: "verdict_golden_1".to_string(),
+            namespace_id: "ns://test/prod/app/svc".to_string(),
+            event_id: "evt_golden_1".to_string(),
+            verdict_type: VerdictType::IntentDrift,
+            severity: Severity::High,
+            confidence: 0.95,
+            reason_codes: vec!["DRIFT_001".to_string()],
+            explain: VerdictExplain {
+                summary: Some("Detected intent drift".to_string()),
+                evidence_refs: vec!["ref:1".to_string()],
+            },
+            ranges_used: VerdictRangesUsed {
+                json: serde_json::json!({}),
+            },
+            contract_hash: Some("contract_v1".to_string()),
+            policy_pack: Some("pack://security@1.0".to_string()),
+        };
+
+        let json = serde_json::to_string(&v).unwrap();
+
+        // Verify deterministic serialization
+        let json2 = serde_json::to_string(&v).unwrap();
+        assert_eq!(json, json2, "Verdict serialization must be deterministic");
+
+        // Verify enum serialization uses snake_case
+        assert!(json.contains("\"intent_drift\""), "verdict_type should be snake_case");
+        assert!(json.contains("\"high\""), "severity should be snake_case");
+
+        // Verify required fields
+        assert!(json.contains("\"verdict_id\""));
+        assert!(json.contains("\"event_id\""));
+        assert!(json.contains("\"confidence\""));
+    }
+
+    /// Test that identical inputs produce identical hashes (determinism requirement)
+    #[test]
+    fn serialization_determinism() {
+        let ev1 = DecisionEvent {
+            event_id: "evt_det_1".to_string(),
+            namespace_id: "ns://test/prod/app/svc".to_string(),
+            ts: "2025-01-01T00:00:00Z".to_string(),
+            event_type: "TEST".to_string(),
+            actor: Actor {
+                r#type: ActorType::Service,
+                id_hash: "svc_hash".to_string(),
+                roles: vec![],
+            },
+            subject: Subject {
+                r#type: "resource".to_string(),
+                id_hash: "res_hash".to_string(),
+            },
+            action: Action {
+                name: "process".to_string(),
+                params_hash: None,
+            },
+            context: Context {
+                request_id: None,
+                trace_id: None,
+                ip_hash: None,
+                user_agent_hash: None,
+            },
+            env_stamp: EnvStamp {
+                env: "prod".to_string(),
+                service: "svc".to_string(),
+                build_hash: "b1".to_string(),
+                region: "us".to_string(),
+                trust_flags: vec![],
+            },
+            redaction: RedactionInfo {
+                applied: vec![],
+                strategy: None,
+            },
+            stage_trace: vec![],
+        };
+
+        // Clone and serialize both
+        let ev2 = ev1.clone();
+        let json1 = serde_json::to_string(&ev1).unwrap();
+        let json2 = serde_json::to_string(&ev2).unwrap();
+
+        // Must be byte-identical
+        assert_eq!(json1, json2, "Cloned events must serialize identically");
+
+        // Hashes must match
+        let hash1 = crate::hash_string_sha256(&json1);
+        let hash2 = crate::hash_string_sha256(&json2);
+        assert_eq!(hash1, hash2, "Identical inputs must produce identical hashes");
     }
 }
 

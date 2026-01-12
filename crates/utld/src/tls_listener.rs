@@ -1,6 +1,4 @@
 #[cfg(all(target_os = "linux", feature = "tls"))]
-use std::io::{Read, Write};
-#[cfg(all(target_os = "linux", feature = "tls"))]
 use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use std::sync::{Arc, Mutex};
@@ -12,7 +10,9 @@ use biz_api::BusinessPlugin;
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use policy_engine::PolicyEngine;
 #[cfg(all(target_os = "linux", feature = "tls"))]
-use security_os::{Did, MtlsConfig};
+use security_os::MtlsConfig;
+#[cfg(all(target_os = "linux", feature = "tls"))]
+use tokio_rustls::rustls;
 #[cfg(all(target_os = "linux", feature = "tls"))]
 use utld::UtlNode;
 
@@ -26,8 +26,8 @@ pub fn start_tls_listener(
     engine: Option<Arc<Mutex<PolicyEngine>>>,
     plugin: Option<Arc<dyn BusinessPlugin + Send + Sync>>,
 ) -> std::io::Result<()> {
-    let server_config = security_os::build_rustls_server_config_from_mtls(&cfg)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let server_config =
+        security_os::build_rustls_server_config_from_mtls(&cfg).map_err(std::io::Error::other)?;
 
     tracing::info!("utld TLS listening on {}", addr);
 
@@ -61,12 +61,9 @@ fn handle_tls_client(
     engine: Option<Arc<Mutex<PolicyEngine>>>,
     plugin: Option<Arc<dyn BusinessPlugin + Send + Sync>>,
 ) -> std::io::Result<()> {
-    use rustls::ServerConnection;
+    let conn = rustls::ServerConnection::new(server_config).map_err(std::io::Error::other)?;
 
-    let mut conn = ServerConnection::new(server_config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-
-    let mut tls_stream = rustls::StreamOwned::new(conn, stream);
+    let tls_stream = rustls::StreamOwned::new(conn, stream);
 
     // Extract DID from peer cert after handshake.
     let peer_did = tls_stream

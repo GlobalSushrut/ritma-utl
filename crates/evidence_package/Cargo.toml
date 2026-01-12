@@ -3,6 +3,9 @@ name = "evidence_package"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -12,6 +15,7 @@ hmac = "0.12"
 ed25519-dalek = { version = "2.0", features = ["serde"] }
 rand = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
+zeroize = "1.8"
 
 # Internal deps
 core_types = { path = "../core_types" }

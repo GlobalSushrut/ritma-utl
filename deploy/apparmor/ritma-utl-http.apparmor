@@ -1,0 +1,17 @@
+#include <tunables/global>
+
+profile ritma-utl-http /usr/local/bin/utl_http flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  capability,
+  network,
+
+  /usr/local/bin/utl_http mr,
+
+  /run/ritma/** rw,
+  /var/lib/ritma/** rw,
+  /etc/ssl/** r,
+
+  deny /etc/shadow r,
+}

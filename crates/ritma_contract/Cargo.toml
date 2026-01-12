@@ -1,0 +1,17 @@
+[package]
+name = "ritma_contract"
+version = "0.1.0"
+edition = "2021"
+
+license = "Apache-2.0"
+
+[dependencies]
+thiserror = "2.0"
+serde = { version = "1", features = ["derive"] }
+ciborium = "0.2"
+chrono = "0.4"
+zstd = "0.13"
+sha2 = "0.10"
+hex = "0.4"
+blake3 = "1.5"
+node_keystore = { path = "../node_keystore" }

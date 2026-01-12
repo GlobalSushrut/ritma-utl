@@ -153,7 +153,7 @@ mod tests {
         };
 
         let actions = engine.evaluate(&event);
-        println!("policy_engine actions: {:?}", actions);
+        println!("policy_engine actions: {actions:?}");
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0].action, Action::RequireDistilliumProof));
     }
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(actions.len(), 1);
         match &actions[0].action {
             Action::Deny { reason } => assert_eq!(reason, "high_threat_score"),
-            other => panic!("expected deny action, got {:?}", other),
+            other => panic!("expected deny action, got {other:?}"),
         }
     }
 }

@@ -217,7 +217,7 @@ async fn main() {
         .with_state(state);
 
     let addr: SocketAddr = std::env::var("BILLING_LISTEN_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8090".to_string())
+        .unwrap_or_else(|_| "127.0.0.1:8090".to_string())
         .parse()
         .expect("invalid BILLING_LISTEN_ADDR");
 

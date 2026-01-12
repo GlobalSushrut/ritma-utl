@@ -1,12 +1,17 @@
 # Multi-stage build for UTLD daemon
-FROM rust:1.83 AS builder
+FROM rust:1.88 AS builder
 WORKDIR /app
 COPY . .
 # Build only utld crate
 RUN cargo build -p utld --release
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/utld /usr/local/bin/utld
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* && \
+    groupadd -r ritma -g 1001 && \
+    useradd -r -g ritma -u 1001 -m -d /home/ritma -s /bin/false ritma && \
+    mkdir -p /var/lib/ritma /run/ritma/locks && \
+    chown -R ritma:ritma /var/lib/ritma /run/ritma
+COPY --from=builder --chown=ritma:ritma /app/target/release/utld /usr/local/bin/utld
+USER ritma
 EXPOSE 8088
 ENTRYPOINT ["/usr/local/bin/utld"]

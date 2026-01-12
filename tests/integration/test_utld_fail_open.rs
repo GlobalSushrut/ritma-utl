@@ -1,5 +1,5 @@
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -16,7 +16,7 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn wait_for_socket(path: &PathBuf, timeout_secs: u64) -> Result<bool> {
+fn wait_for_socket(path: &Path, timeout_secs: u64) -> Result<bool> {
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(timeout_secs) {
         if path.exists() {
@@ -27,7 +27,7 @@ fn wait_for_socket(path: &PathBuf, timeout_secs: u64) -> Result<bool> {
     Ok(false)
 }
 
-fn send_utld_request(sock: &PathBuf) -> Result<serde_json::Value> {
+fn send_utld_request(sock: &Path) -> Result<serde_json::Value> {
     let mut stream = UnixStream::connect(sock)?;
 
     let req = json!({

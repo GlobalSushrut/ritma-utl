@@ -1,0 +1,25 @@
+[Unit]
+Description=Ritma Retention Policy Runner
+Documentation=https://github.com/GlobalSushrut/ritma-utl
+After=ritma-tracer-sidecar.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ritma retention run --apply
+Environment=RITMA_BASE_DIR=/var/lib/ritma
+Environment=RITMA_SIDECAR_LOCK_DIR=/run/ritma/locks
+Environment=INDEX_DB_PATH=/var/lib/ritma/index_db.sqlite
+
+# Security hardening (match tracer sidecar)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/ritma /run/ritma
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

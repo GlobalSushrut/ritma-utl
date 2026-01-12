@@ -4,6 +4,7 @@ use crate::manifest::{EvidencePackageManifest, PackageSignature, SignatureType};
 use crate::{PackageError, PackageResult};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -12,6 +13,14 @@ pub enum SigningKey {
     HmacSha256(Vec<u8>),
     Ed25519(ed25519_dalek::SigningKey),
     None,
+}
+
+impl Drop for SigningKey {
+    fn drop(&mut self) {
+        if let SigningKey::HmacSha256(ref mut b) = self {
+            b.zeroize();
+        }
+    }
 }
 
 impl SigningKey {
@@ -24,16 +33,19 @@ impl SigningKey {
                 Ok(Self::HmacSha256(bytes))
             }
             "ed25519" => {
-                let bytes = hex::decode(hex)
+                let mut bytes = hex::decode(hex)
                     .map_err(|e| PackageError::InvalidSigningKey(format!("invalid hex: {e}")))?;
                 if bytes.len() != 32 {
+                    bytes.zeroize();
                     return Err(PackageError::InvalidSigningKey(
                         "ed25519 key must be 32 bytes".to_string(),
                     ));
                 }
                 let mut key_bytes = [0u8; 32];
                 key_bytes.copy_from_slice(&bytes);
+                bytes.zeroize();
                 let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+                key_bytes.zeroize();
                 Ok(Self::Ed25519(signing_key))
             }
             _ => Err(PackageError::InvalidSigningKey(format!(
@@ -74,17 +86,19 @@ impl PackageSigner {
 
     /// Load from environment variable
     pub fn from_env(env_var: &str, signer_id: String) -> PackageResult<Self> {
-        let key_spec = std::env::var(env_var).map_err(|_| PackageError::MissingSigningKey)?;
+        let mut key_spec = std::env::var(env_var).map_err(|_| PackageError::MissingSigningKey)?;
 
         // Format: "type:hex_key" e.g., "hmac:abcd1234" or "ed25519:..."
         let parts: Vec<&str> = key_spec.splitn(2, ':').collect();
         if parts.len() != 2 {
+            key_spec.zeroize();
             return Err(PackageError::InvalidSigningKey(
                 "expected format: type:hex_key".to_string(),
             ));
         }
 
         let key = SigningKey::from_hex(parts[0], parts[1])?;
+        key_spec.zeroize();
         Ok(Self::new(key, signer_id))
     }
 

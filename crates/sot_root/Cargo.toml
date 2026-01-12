@@ -3,6 +3,9 @@ name = "sot_root"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 core_types = { path = "../core_types" }
 serde = { version = "1", features = ["derive"] }

@@ -232,11 +232,11 @@ mod tests {
         let normalizer = ActionNormalizer::new();
         // Similar (typo) - Levenshtein distance of 1 char over 6 chars = 0.16
         let dist = normalizer.semantic_distance("delete", "delet");
-        assert!(dist < 0.25, "Expected distance < 0.25, got {}", dist);
+        assert!(dist < 0.25, "Expected distance < 0.25, got {dist}");
 
         // Two char difference over 6 chars = 0.33
         let dist = normalizer.semantic_distance("delete", "deleet");
-        assert!(dist < 0.4, "Expected distance < 0.4, got {}", dist);
+        assert!(dist < 0.4, "Expected distance < 0.4, got {dist}");
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
         let normalizer = ActionNormalizer::new();
         // Completely different
         let dist = normalizer.semantic_distance("delete", "read");
-        assert!(dist > 0.5, "Expected distance > 0.5, got {}", dist);
+        assert!(dist > 0.5, "Expected distance > 0.5, got {dist}");
     }
 
     #[test]
@@ -271,8 +271,7 @@ mod tests {
             assert_eq!(
                 normalizer.normalize(variant),
                 "delete",
-                "Failed for variant: {}",
-                variant
+                "Failed for variant: {variant}"
             );
         }
     }

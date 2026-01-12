@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+  # ark-relations 0.5.1 pulls tracing-subscriber 0.2.25; upgrading arkworks stack is out of scope.
+  "RUSTSEC-2025-0055",
+]

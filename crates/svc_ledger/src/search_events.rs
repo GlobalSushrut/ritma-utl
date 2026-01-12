@@ -433,7 +433,7 @@ mod tests {
         for i in 0..3 {
             let query = SecureSearchQuery {
                 caller_did: "did:ritma:user:alice".to_string(),
-                query: format!("query_{}", i),
+                query: format!("query_{i}"),
                 filters: HashMap::new(),
                 purpose: "Test".to_string(),
                 tenant_id: None,
@@ -447,7 +447,7 @@ mod tests {
         // Verify chain
         let result = gateway.verify_chain();
         if let Err(e) = &result {
-            eprintln!("Chain verification failed: {}", e);
+            eprintln!("Chain verification failed: {e}");
         }
         assert!(result.is_ok());
     }

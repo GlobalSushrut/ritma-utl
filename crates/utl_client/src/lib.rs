@@ -45,7 +45,8 @@ impl UtlClient {
 
     /// Create a client from the UTLD_SOCKET env var, or the default path.
     pub fn from_env() -> Self {
-        let path = std::env::var("UTLD_SOCKET").unwrap_or_else(|_| "/tmp/utld.sock".to_string());
+        let path = std::env::var("UTLD_SOCKET")
+            .unwrap_or_else(|_| "/run/ritma/utld.sock".to_string());
         Self::new(path)
     }
 

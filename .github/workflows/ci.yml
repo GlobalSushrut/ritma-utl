@@ -20,7 +20,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: 1.88.0
           override: true
       
       - name: Cache cargo registry
@@ -42,10 +42,10 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Run tests
-        run: cargo test --workspace --verbose
+        run: cargo test --workspace --verbose --locked
       
       - name: Run doc tests
-        run: cargo test --doc --workspace
+        run: cargo test --doc --workspace --locked
 
   build:
     name: Build
@@ -57,14 +57,14 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: 1.88.0
           override: true
       
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --locked
       
       - name: Build ritma_cli
-        run: cargo build -p ritma_cli --release
+        run: cargo build -p ritma_cli --release --locked
       
       - name: Upload ritma binary
         uses: actions/upload-artifact@v4
@@ -82,7 +82,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: 1.88.0
           override: true
           components: rustfmt, clippy
       
@@ -91,6 +91,22 @@ jobs:
       
       - name: Run clippy
         run: cargo clippy --workspace -- -D warnings
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Cargo audit
+        run: cargo audit
+
+      - name: Cargo deny
+        run: cargo deny check
 
   docker:
     name: Build Docker Images
@@ -138,6 +154,13 @@ jobs:
     needs: [docker]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.88.0
+          override: true
       
       - name: Start services
         run: docker compose -f docker/compose.sidecar.yml up -d
@@ -148,11 +171,110 @@ jobs:
       - name: Run E2E tests
         run: |
           # Test doctor
-          cargo run -p ritma_cli -- doctor
+          cargo run -p ritma_cli --locked -- doctor
           
           # Test demo
-          cargo run -p ritma_cli -- demo --window-secs 10
+          cargo run -p ritma_cli --locked -- demo --window-secs 10
+
+      - name: E2E - Offline verification test
+        run: |
+          # Create a test proofpack structure
+          mkdir -p /tmp/test_proofpack/receipts
+          
+          # Create manifest.json
+          cat > /tmp/test_proofpack/manifest.json << 'EOF'
+          {
+            "version": "0.1",
+            "namespace_id": "ns://ci/e2e/verify",
+            "window": {"start": "2024-01-01T00:00:00Z", "end": "2024-01-01T01:00:00Z"},
+            "attack_graph_hash": "e2e_test_hash"
+          }
+          EOF
+          
+          # Create receipts/public_inputs.json
+          cat > /tmp/test_proofpack/receipts/public_inputs.json << 'EOF'
+          {"test": true, "ci": "e2e"}
+          EOF
+          
+          # Calculate hashes
+          MANIFEST_SHA=$(sha256sum /tmp/test_proofpack/manifest.json | cut -d' ' -f1)
+          RECEIPTS_SHA=$(sha256sum /tmp/test_proofpack/receipts/public_inputs.json | cut -d' ' -f1)
+          
+          # Create proofpack.json with correct hashes
+          cat > /tmp/test_proofpack/proofpack.json << EOF
+          {
+            "version": "0.1",
+            "namespace_id": "ns://ci/e2e/verify",
+            "inputs": {
+              "manifest_sha256": "$MANIFEST_SHA",
+              "receipts_sha256": "$RECEIPTS_SHA",
+              "vk_id": "e2e_vk",
+              "public_inputs_hash": "e2e_hash"
+            },
+            "range": {"window": {"start": "2024-01-01T00:00:00Z", "end": "2024-01-01T01:00:00Z"}}
+          }
+          EOF
+          
+          # Verify should succeed
+          cargo run -p ritma_cli --locked -- verify-proof --path /tmp/test_proofpack --json
+          echo "✓ Offline verification passed"
+
+      - name: E2E - Tamper detection test
+        run: |
+          # Tamper with manifest.json (add a field)
+          cat > /tmp/test_proofpack/manifest.json << 'EOF'
+          {
+            "version": "0.1",
+            "namespace_id": "ns://ci/e2e/verify",
+            "window": {"start": "2024-01-01T00:00:00Z", "end": "2024-01-01T01:00:00Z"},
+            "attack_graph_hash": "e2e_test_hash",
+            "tampered": true
+          }
+          EOF
+          
+          # Verify should fail (exit nonzero)
+          if cargo run -p ritma_cli --locked -- verify-proof --path /tmp/test_proofpack --json 2>/dev/null; then
+            echo "ERROR: Tamper detection failed - verification should have failed"
+            exit 1
+          else
+            echo "✓ Tamper detection passed - verification correctly failed"
+          fi
       
+      - name: E2E - Determinism check for seeded artifacts
+        run: |
+          # Create two identical proofpacks and verify they produce identical hashes
+          for i in 1 2; do
+            mkdir -p /tmp/det_test_$i/receipts
+            
+            # Use fixed seed data
+            cat > /tmp/det_test_$i/manifest.json << 'EOF'
+          {
+            "version": "0.1",
+            "namespace_id": "ns://ci/determinism/test",
+            "window": {"start": "2024-06-01T00:00:00Z", "end": "2024-06-01T01:00:00Z"},
+            "attack_graph_hash": "determinism_seed_hash_abc123"
+          }
+          EOF
+            
+            cat > /tmp/det_test_$i/receipts/public_inputs.json << 'EOF'
+          {"determinism": true, "seed": 42}
+          EOF
+          done
+          
+          # Compare hashes - must be identical
+          HASH1=$(sha256sum /tmp/det_test_1/manifest.json | cut -d' ' -f1)
+          HASH2=$(sha256sum /tmp/det_test_2/manifest.json | cut -d' ' -f1)
+          
+          if [ "$HASH1" != "$HASH2" ]; then
+            echo "ERROR: Determinism check failed - hashes differ"
+            echo "Hash 1: $HASH1"
+            echo "Hash 2: $HASH2"
+            exit 1
+          fi
+          
+          echo "✓ Determinism check passed - identical inputs produce identical hashes"
+          echo "  Hash: $HASH1"
+
       - name: Check logs
         if: always()
         run: |

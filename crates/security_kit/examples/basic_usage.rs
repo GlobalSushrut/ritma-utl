@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Environment configured:");
     for line in env.to_env_lines() {
-        println!("  {}", line);
+        println!("  {line}");
     }
     println!();
 
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // 3. Build SecurityKit with connectors
-    let kit = SecurityKit::builder()
+    let _kit = SecurityKit::builder()
         .with_env(env)
         .with_rbac(rbac)
         .add_noop_connector("aws-prod", ConnectorKind::Aws)
@@ -146,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report_json = serde_json::to_string_pretty(&report)?;
 
     println!("Security Report (from params):");
-    println!("{}", report_json);
+    println!("{report_json}");
     println!();
 
     // 7. Try to generate full infra report (will be empty if no logs exist)
@@ -158,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Dig Coverage: {}", infra_report.dig_coverage.len());
         }
         Err(e) => {
-            println!("Infra report not available (logs not present): {}", e);
+            println!("Infra report not available (logs not present): {e}");
         }
     }
 

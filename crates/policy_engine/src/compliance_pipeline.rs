@@ -1,5 +1,8 @@
 // Multi-stage compliance pipeline with consensus and proof validation
 // Orchestrates policy evaluation, consensus, proofs, and evidence emission
+//
+// ⚠️  EXPERIMENTAL: This pipeline uses stubbed CUE configuration.
+// Stage execution returns simulated results until real integration is complete.
 
 use crate::consensus::{ConsensusEngine, ConsensusResult, ConsensusVote};
 use crate::cue_integration::{ComplianceStage, CueComplianceConfig};

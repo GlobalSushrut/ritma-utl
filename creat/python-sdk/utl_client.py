@@ -20,6 +20,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import time
+
 import requests
 
 
@@ -48,29 +50,72 @@ class EntropyResponse:
     local_entropy: float
 
 
+class UtlHttpError(RuntimeError):
+    def __init__(self, *, method: str, path: str, status_code: int, body: Any) -> None:
+        super().__init__(f"{method} {path} failed: {status_code} {body}")
+        self.method = method
+        self.path = path
+        self.status_code = status_code
+        self.body = body
+
+
 class UtlHttpClient:
     """HTTP client for UTL gateway.
 
     :param base_url: Override base URL (default from UTL_HTTP_BASE or http://127.0.0.1:8080).
     """
 
-    def __init__(self, base_url: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        *,
+        token: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        timeout_secs: float = 10.0,
+        retries: int = 2,
+    ) -> None:
         self.base_url = base_url or os.environ.get("UTL_HTTP_BASE", "http://127.0.0.1:8080")
-        self._token = os.environ.get("UTL_HTTP_TOKEN")
+        self._token = token if token is not None else os.environ.get("UTL_HTTP_TOKEN")
+        self._tenant_id = tenant_id if tenant_id is not None else os.environ.get("UTL_HTTP_TENANT_ID")
+        self._timeout_secs = timeout_secs
+        self._retries = retries
 
     def _request(self, method: str, path: str, json: Optional[Dict[str, Any]] = None) -> Any:
         url = self.base_url.rstrip("/") + path
         headers: Dict[str, str] = {}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        resp = requests.request(method, url, json=json, headers=headers)
-        try:
-            data = resp.json()
-        except ValueError:
-            data = resp.text
-        if not resp.ok:
-            raise RuntimeError(f"{method} {path} failed: {resp.status_code} {data}")
-        return data
+        if self._tenant_id:
+            headers["x-tenant-id"] = self._tenant_id
+
+        attempts = max(0, int(self._retries)) + 1
+        last_exc: Optional[Exception] = None
+        for i in range(attempts):
+            try:
+                resp = requests.request(method, url, json=json, headers=headers, timeout=self._timeout_secs)
+                try:
+                    data: Any = resp.json()
+                except ValueError:
+                    data = resp.text
+
+                if not resp.ok:
+                    retryable = method.upper() == "GET" and resp.status_code in (429, 502, 503, 504)
+                    if retryable and i + 1 < attempts:
+                        time.sleep(0.2 * (2 ** i))
+                        continue
+                    raise UtlHttpError(method=method.upper(), path=path, status_code=resp.status_code, body=data)
+                return data
+            except requests.RequestException as e:
+                last_exc = e
+                retryable = method.upper() == "GET"
+                if retryable and i + 1 < attempts:
+                    time.sleep(0.2 * (2 ** i))
+                    continue
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("request failed")
 
     # --- High-level methods -------------------------------------------------
 
@@ -89,11 +134,14 @@ class UtlHttpClient:
         tx_hook: Optional[int] = None,
         params: Optional[Dict[str, str]] = None,
     ) -> None:
+        merged_params = dict(params or {})
+        if self._tenant_id and "tenant_id" not in merged_params:
+            merged_params["tenant_id"] = self._tenant_id
         body = {
             "root_id": int(root_id),
             "root_hash": root_hash,
             "tx_hook": int(tx_hook) if tx_hook is not None else None,
-            "params": params or {},
+            "params": merged_params,
         }
         self._request("POST", "/roots", json=body)
 
@@ -110,6 +158,9 @@ class UtlHttpClient:
         wall: str,
         params: Optional[Dict[str, str]] = None,
     ) -> None:
+        merged_params = dict(params or {})
+        if self._tenant_id and "tenant_id" not in merged_params:
+            merged_params["tenant_id"] = self._tenant_id
         body = {
             "entity_id": int(entity_id),
             "root_id": int(root_id),
@@ -119,7 +170,7 @@ class UtlHttpClient:
             "hook_hash": hook_hash,
             "logic_ref": logic_ref,
             "wall": wall,
-            "params": params or {},
+            "params": merged_params,
         }
         self._request("POST", "/transitions", json=body)
 

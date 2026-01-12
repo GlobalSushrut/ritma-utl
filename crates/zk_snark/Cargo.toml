@@ -3,13 +3,16 @@ name = "zk_snark"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 core_types = { path = "../core_types" }
 ark-ff = "0.5"
 ark-ec = "0.5"
-ark-groth16 = "0.5"
+ark-groth16 = { version = "0.5", default-features = false, features = ["std"] }
 ark-bn254 = "0.5"
-ark-relations = "0.5"
+ark-relations = { version = "0.5", default-features = false, features = ["std"] }
+ark-snark = { version = "0.5", default-features = false }
 rand = "0.8"
-ark-crypto-primitives = "0.5"
 hex = "0.4"

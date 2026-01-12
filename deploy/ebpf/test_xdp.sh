@@ -27,7 +27,7 @@ fi
 
 # Compile BPF program
 echo "[1/7] Compiling BPF program..."
-clang -O2 -target bpf -c ritma_fw.c -o "$BPF_OBJ"
+clang -O2 -target bpf -c ritma_fw.c -o "$BPF_OBJ" -I./include
 
 # Load and pin
 echo "[2/7] Loading BPF program and pinning maps..."

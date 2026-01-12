@@ -15,6 +15,10 @@
 .DS_Store
 
 # Runtime / state files
+.ritma/
+RITMA_OUT/
+index_db.sqlite*
+.ritma_probe_*
 *.sock
 utld_roots.json
 dig/

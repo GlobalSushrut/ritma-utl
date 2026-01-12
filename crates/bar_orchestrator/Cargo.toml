@@ -3,13 +3,20 @@ name = "bar_orchestrator"
 version = "0.1.0"
 edition = "2021"
 
+
+license = "Apache-2.0"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
+libc = "0.2"
+sha2 = "0.10"
+ciborium = "0.2"
 common_models = { path = "../common_models" }
 index_db = { path = "../index_db" }
+ritma_contract = { path = "../ritma_contract" }
 proof_standards = { path = "../proof_standards" }
 security_interfaces = { path = "../security_interfaces" }
 ml_runner = { path = "../ml_runner" }

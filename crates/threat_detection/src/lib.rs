@@ -961,7 +961,7 @@ mod tests {
 
         // Check initial drift (should be low)
         let drift = engine.get_baseline_drift("ns://test/prod/app/svc");
-        assert!(drift < 0.1, "Initial drift should be low, got: {}", drift);
+        assert!(drift < 0.1, "Initial drift should be low, got: {drift}");
 
         // Add more of the SAME action (should increase drift very slightly)
         for _ in 0..5 {
@@ -973,7 +973,7 @@ mod tests {
 
         // Drift should still be very low (same action, just more frequency)
         let drift = engine.get_baseline_drift("ns://test/prod/app/svc");
-        assert!(drift < 0.1, "Drift should still be low, got: {}", drift);
+        assert!(drift < 0.1, "Drift should still be low, got: {drift}");
     }
 
     #[test]

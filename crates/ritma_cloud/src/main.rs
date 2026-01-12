@@ -2244,7 +2244,7 @@ async fn main() {
         .with_state(state);
 
     let addr: SocketAddr = std::env::var("RITMA_CLOUD_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8088".to_string())
+        .unwrap_or_else(|_| "127.0.0.1:8088".to_string())
         .parse()
         .expect("invalid RITMA_CLOUD_ADDR");
 

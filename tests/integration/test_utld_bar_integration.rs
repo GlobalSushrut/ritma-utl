@@ -1,5 +1,5 @@
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -16,7 +16,7 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn wait_for_socket(path: &PathBuf, timeout_secs: u64) -> Result<bool> {
+fn wait_for_socket(path: &Path, timeout_secs: u64) -> Result<bool> {
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(timeout_secs) {
         if path.exists() {
@@ -27,7 +27,7 @@ fn wait_for_socket(path: &PathBuf, timeout_secs: u64) -> Result<bool> {
     Ok(false)
 }
 
-fn send_utld_request(sock: &PathBuf, bar_decision: Option<&str>) -> Result<serde_json::Value> {
+fn send_utld_request(sock: &Path, bar_decision: Option<&str>) -> Result<serde_json::Value> {
     let mut stream = UnixStream::connect(sock)?;
 
     // Minimal NodeRequest::RecordTransition JSON that utld understands. The
@@ -146,8 +146,7 @@ fn test_utld_bar_observe_vs_enforce() -> Result<()> {
         .unwrap_or("");
     assert!(
         msg_observe.contains("unknown_root"),
-        "observe mode should see local unknown_root error, got: {}",
-        msg_observe
+        "observe mode should see local unknown_root error, got: {msg_observe}"
     );
 
     // 2) Enforce mode: with bar_decision=deny, utld should surface a BAR
@@ -167,8 +166,7 @@ fn test_utld_bar_observe_vs_enforce() -> Result<()> {
     // still fall back to the local handler and surface unknown_root.
     if msg_enforce.contains("unknown_root") {
         println!(
-            "Skipping enforce-mode BAR assertion: utld response suggests bar_governance is not enabled (got: {})",
-            msg_enforce
+            "Skipping enforce-mode BAR assertion: utld response suggests bar_governance is not enabled (got: {msg_enforce})"
         );
         let _ = bar_child.kill();
         return Ok(());
@@ -176,13 +174,11 @@ fn test_utld_bar_observe_vs_enforce() -> Result<()> {
 
     assert!(
         msg_enforce.contains("request denied by BAR governance"),
-        "enforce mode must deny via BAR governance, got: {}",
-        msg_enforce
+        "enforce mode must deny via BAR governance, got: {msg_enforce}"
     );
     assert!(
         !msg_enforce.contains("unknown_root"),
-        "enforce mode should not surface unknown_root, got: {}",
-        msg_enforce
+        "enforce mode should not surface unknown_root, got: {msg_enforce}"
     );
 
     let _ = bar_child.kill();
