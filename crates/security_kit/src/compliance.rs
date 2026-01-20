@@ -6,11 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use compliance_index::{append_records, ControlEvalRecord};
 use evidence_package::{
-    EvidencePackageManifest, PackageBuilder, PackageScope, PackageSigner, PackageVerifier, SigningKey,
+    EvidencePackageManifest, PackageBuilder, PackageScope, PackageSigner, PackageVerifier,
+    SigningKey,
 };
 use node_keystore::NodeKeystore;
-use zeroize::Zeroize;
 use security_events::{append_decision_event, DecisionEvent};
+use zeroize::Zeroize;
 
 use crate::{observability, Result, SecurityKitError};
 
@@ -327,26 +328,34 @@ impl EvidenceBuilder {
         })?;
 
         // Convert KeystoreKey to SigningKey based on key_type
-        let signing_key = if keystore_key.key_type == "hmac" || keystore_key.key_type == "hmac_sha256" {
-            let mut bytes = hex::decode(&keystore_key.key_material)
-                .map_err(|e| SecurityKitError::PipelineError(format!("invalid key material: {e}")))?;
-            SigningKey::HmacSha256(std::mem::take(&mut bytes))
-        } else if keystore_key.key_type == "ed25519" {
-            let mut bytes = hex::decode(&keystore_key.key_material)
-                .map_err(|e| SecurityKitError::PipelineError(format!("invalid key material: {e}")))?;
-            if bytes.len() != 32 {
+        let signing_key =
+            if keystore_key.key_type == "hmac" || keystore_key.key_type == "hmac_sha256" {
+                let mut bytes = hex::decode(&keystore_key.key_material).map_err(|e| {
+                    SecurityKitError::PipelineError(format!("invalid key material: {e}"))
+                })?;
+                SigningKey::HmacSha256(std::mem::take(&mut bytes))
+            } else if keystore_key.key_type == "ed25519" {
+                let mut bytes = hex::decode(&keystore_key.key_material).map_err(|e| {
+                    SecurityKitError::PipelineError(format!("invalid key material: {e}"))
+                })?;
+                if bytes.len() != 32 {
+                    bytes.zeroize();
+                    return Err(SecurityKitError::PipelineError(
+                        "ed25519 key must be 32 bytes".to_string(),
+                    ));
+                }
+                let mut key_bytes = [0u8; 32];
+                key_bytes.copy_from_slice(&bytes);
+                let sk = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+                key_bytes.zeroize();
                 bytes.zeroize();
-                return Err(SecurityKitError::PipelineError("ed25519 key must be 32 bytes".to_string()));
-            }
-            let mut key_bytes = [0u8; 32];
-            key_bytes.copy_from_slice(&bytes);
-            let sk = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
-            key_bytes.zeroize();
-            bytes.zeroize();
-            SigningKey::Ed25519(sk)
-        } else {
-            return Err(SecurityKitError::PipelineError(format!("unsupported key type: {}", keystore_key.key_type)));
-        };
+                SigningKey::Ed25519(sk)
+            } else {
+                return Err(SecurityKitError::PipelineError(format!(
+                    "unsupported key type: {}",
+                    keystore_key.key_type
+                )));
+            };
 
         self.build_and_sign(signing_key)
     }

@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: utld
+  namespace: ritma-system
+spec:
+  ports:
+  - port: 8088
+    targetPort: 8088
+  selector:
+    app: utld
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: utld
+  namespace: ritma-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: utld
+  template:
+    metadata:
+      labels:
+        app: utld
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/utld: localhost/ritma-utld
+    spec:
+      securityContext:
+        seLinuxOptions:
+          level: "s0"
+      containers:
+      - name: utld
+        image: ritma/utld:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+          appArmorProfile:
+            type: Localhost
+            localhostProfile: ritma-utld
+        ports:
+        - containerPort: 8088
+        env:
+        - name: NAMESPACE_ID
+          value: "ns://k8s/default"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        emptyDir: {}

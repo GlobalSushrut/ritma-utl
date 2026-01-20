@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 /// Micro window record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroWindow {
-    pub window_id: String,       // e.g., "w000", "w001"
+    pub window_id: String, // e.g., "w000", "w001"
     pub namespace_id: String,
     pub node_id: String,
     pub start_ts: i64,
@@ -271,12 +271,18 @@ impl ProofPackWriter {
         );
 
         // Write micro window file
-        let micro_path = self.hour_dir.join("micro").join(format!("{}.cbor", window_id));
+        let micro_path = self
+            .hour_dir
+            .join("micro")
+            .join(format!("{}.cbor", window_id));
         std::fs::write(&micro_path, micro.to_cbor())?;
 
         // Write signature file (unsigned placeholder)
         let sig = MicroSignature::unsigned(&window_id, micro.micro_root);
-        let sig_path = self.hour_dir.join("micro").join(format!("{}.sig", window_id));
+        let sig_path = self
+            .hour_dir
+            .join("micro")
+            .join(format!("{}.sig", window_id));
         std::fs::write(&sig_path, sig.to_cbor())?;
 
         self.micro_windows.push(micro);
@@ -355,7 +361,11 @@ fn merkle_root_sha256(leaves: &[[u8; 32]]) -> [u8; 32] {
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
-            let right = if i + 1 < level.len() { level[i + 1] } else { left };
+            let right = if i + 1 < level.len() {
+                level[i + 1]
+            } else {
+                left
+            };
 
             let mut h = Sha256::new();
             h.update(b"ritma-merkle-node@0.1");
@@ -433,11 +443,16 @@ mod tests {
         let mut writer = ProofPackWriter::new(&tmp, "node1", 1704067200).unwrap();
 
         // Add some micro windows
-        let leaves1: Vec<[u8; 32]> = vec![Sha256::digest(b"e1").into(), Sha256::digest(b"e2").into()];
-        writer.add_micro_window("ns1", 1000, 1500, 2, &leaves1).unwrap();
+        let leaves1: Vec<[u8; 32]> =
+            vec![Sha256::digest(b"e1").into(), Sha256::digest(b"e2").into()];
+        writer
+            .add_micro_window("ns1", 1000, 1500, 2, &leaves1)
+            .unwrap();
 
         let leaves2: Vec<[u8; 32]> = vec![Sha256::digest(b"e3").into()];
-        writer.add_micro_window("ns1", 1500, 2000, 1, &leaves2).unwrap();
+        writer
+            .add_micro_window("ns1", 1500, 2000, 1, &leaves2)
+            .unwrap();
 
         assert_eq!(writer.micro_count(), 2);
 

@@ -1,0 +1,29 @@
+version: "3.3"
+
+# SELinux overlay for compose.sidecar.yml
+#
+# Purpose:
+# - When SELinux is enforcing, bind mounts may be blocked unless they are relabeled.
+# - Use this file as an overlay:
+#     docker compose -f docker/compose.sidecar.yml -f docker/compose.sidecar.selinux.yml up -d
+#
+# Notes:
+# - ":Z" relabels the host path for exclusive container access.
+# - Some host mounts (e.g. /sys/kernel/tracing, /sys/fs/bpf) may still require policy changes.
+# - If you must bypass SELinux labeling for the tracer due to host kernel mounts, enable
+#   label=disable for that container only.
+
+services:
+  tracer:
+    volumes:
+      - /var/log/audit:/var/log/audit:ro,Z
+      - /var/lib/ritma:/var/lib/ritma:Z
+      - /run/ritma/locks:/run/ritma/locks:Z
+
+  orchestrator:
+    volumes:
+      - /var/lib/ritma:/var/lib/ritma:Z
+      - /run/ritma/locks:/run/ritma/locks:Z
+
+  utld:
+    volumes: []

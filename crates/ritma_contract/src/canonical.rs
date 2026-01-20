@@ -125,7 +125,13 @@ pub struct CanonicalEventAtom {
 
 impl CanonicalEventAtom {
     /// Create a thin event atom (no arg_hash, no payload_ref)
-    pub fn thin(t_delta: i64, etype: EventType, actor_id: u64, object_id: u64, flags_class: u32) -> Self {
+    pub fn thin(
+        t_delta: i64,
+        etype: EventType,
+        actor_id: u64,
+        object_id: u64,
+        flags_class: u32,
+    ) -> Self {
         Self {
             t_delta,
             etype: etype.to_u16(),

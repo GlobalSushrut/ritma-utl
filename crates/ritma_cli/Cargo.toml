@@ -2,9 +2,42 @@
 name = "ritma_cli"
 version = "0.1.0"
 edition = "2021"
-
-
+description = "Ritma - Court-grade forensic security observability platform"
+authors = ["Ritma Team <team@ritma.io>"]
+homepage = "https://ritma.io"
+repository = "https://github.com/ritma-io/ritma"
 license = "Apache-2.0"
+readme = "../../README.md"
+keywords = ["security", "forensics", "observability", "compliance", "audit"]
+categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.deb]
+name = "ritma"
+maintainer = "Ritma Team <team@ritma.io>"
+copyright = "2024-2026, Ritma Inc."
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Ritma is a court-grade forensic security observability platform that provides:
+- Real-time eBPF-based system tracing
+- Forensic ML with explainable verdicts  
+- Merkle-sealed evidence chains
+- RTSL (Ritma Transparency Security Log) proofpacks
+- Compliance automation (PIPEDA, SOX, HIPAA, PCI-DSS)
+"""
+depends = "$auto, libc6"
+section = "admin"
+priority = "optional"
+assets = [
+    ["target/release/ritma", "usr/bin/", "755"],
+    ["target/release/tracer_sidecar", "usr/bin/ritma-sidecar", "755"],
+    ["../../scripts/demo.sh", "usr/bin/ritma-demo", "755"],
+    ["../../README.md", "usr/share/doc/ritma/README.md", "644"],
+    ["../../docs/ritma_transparency_forensics.md", "usr/share/doc/ritma/forensics-spec.md", "644"],
+    ["debian/ritma-sidecar.service", "lib/systemd/system/", "644"],
+    ["debian/ritma.conf", "etc/ritma/", "644"],
+]
+conf-files = ["/etc/ritma/ritma.conf"]
+systemd-units = { unit-name = "ritma-sidecar", enable = false }
 
 [[bin]]
 name = "ritma"
@@ -39,7 +72,8 @@ mime_guess = "2.0"
 qrcode = { version = "0.12", features = ["image"] }
 image = { version = "0.24", default-features = false, features = ["png"] }
 hmac = "0.12"
-ed25519-dalek = { version = "2.0", features = ["serde"] }
+ed25519-dalek = { version = "2.0", features = ["serde", "rand_core"] }
+rand_core = "0.6"
 zeroize = "1.8"
 
 # Phase crates used by enhanced demo

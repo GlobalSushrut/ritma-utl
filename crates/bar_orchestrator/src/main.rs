@@ -20,7 +20,9 @@ fn env_truthy(name: &str) -> bool {
     }
 }
 
-fn acquire_single_instance_lock(contract: &StorageContract) -> Result<Option<File>, Box<dyn std::error::Error>> {
+fn acquire_single_instance_lock(
+    contract: &StorageContract,
+) -> Result<Option<File>, Box<dyn std::error::Error>> {
     if env_truthy("RITMA_ALLOW_MULTI_ORCHESTRATOR") {
         return Ok(None);
     }

@@ -1,0 +1,76 @@
+scenario:
+  name: ransomware-forensics
+  description: "Ransomware attack simulation with forensic capture"
+  duration_seconds: 120
+  seed: 42
+
+phases:
+  - name: normal_operations
+    start: 0
+    duration: 20
+    traffic:
+      type: normal
+      rps: 10
+      params:
+        user_actions: ["open_doc", "save_doc", "browse"]
+
+  - name: initial_access
+    start: 20
+    duration: 10
+    events:
+      - type: phishing_payload
+        target: workstation
+        payload: "invoice.pdf.exe"
+
+  - name: discovery
+    start: 30
+    duration: 20
+    events:
+      - type: reconnaissance
+        commands: ["whoami", "net user", "net share", "dir /s *.doc*"]
+
+  - name: lateral_movement
+    start: 50
+    duration: 20
+    events:
+      - type: lateral
+        src: workstation
+        dst: file-srv
+        method: smb_admin_share
+
+  - name: encryption
+    start: 70
+    duration: 30
+    events:
+      - type: ransomware_encryption
+        target: file-srv
+        file_count: 100
+        extensions: [".doc", ".xls", ".pdf"]
+        ransom_note: "README_DECRYPT.txt"
+
+  - name: backup_attempt
+    start: 100
+    duration: 20
+    events:
+      - type: backup_access_blocked
+        src: workstation
+        dst: backup
+        result: denied
+
+chaos:
+  - action: latency
+    target: node-api
+    start: 60
+    duration: 10
+    params:
+      latency_ms: 500
+
+assertions:
+  - type: event_count
+    filter: "kind=ProcExec"
+    min: 100
+  - type: event_count
+    filter: "kind=FileWrite"
+    min: 50
+  - type: timeline_reconstructable
+    description: "Full attack timeline can be reconstructed"

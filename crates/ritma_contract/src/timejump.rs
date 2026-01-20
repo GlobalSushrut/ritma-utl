@@ -91,11 +91,7 @@ impl TimeJumpIndex {
             })
             .collect();
 
-        let tuple = (
-            "ritma-timejump@0.2",
-            self.resolution_secs,
-            entries,
-        );
+        let tuple = ("ritma-timejump@0.2", self.resolution_secs, entries);
 
         let mut buf = Vec::new();
         ciborium::into_writer(&tuple, &mut buf).expect("CBOR encoding should not fail");
@@ -243,8 +239,7 @@ impl TimeJumpReader {
 }
 
 fn parse_timejump_index(data: &[u8], resolution_secs: u32) -> std::io::Result<TimeJumpIndex> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid timejump format"));
@@ -286,17 +281,15 @@ fn parse_timejump_index(data: &[u8], resolution_secs: u32) -> std::io::Result<Ti
             _ => continue,
         };
         let micro_root = match ea.get(4) {
-            Some(ciborium::value::Value::Text(s)) => {
-                hex::decode(s).ok().and_then(|b| {
-                    if b.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&b);
-                        Some(arr)
-                    } else {
-                        None
-                    }
-                })
-            }
+            Some(ciborium::value::Value::Text(s)) => hex::decode(s).ok().and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            }),
             _ => None,
         };
 
@@ -348,7 +341,12 @@ mod tests {
     fn timejump_range_query() {
         let mut index = TimeJumpIndex::new(10);
         for i in 0..10 {
-            index.add(TimeJumpEntry::new(1000 + i * 10, &format!("w{:03}", i), 0, i as u64 * 100));
+            index.add(TimeJumpEntry::new(
+                1000 + i * 10,
+                &format!("w{:03}", i),
+                0,
+                i as u64 * 100,
+            ));
         }
 
         let range = index.range(1020, 1060);

@@ -4,61 +4,175 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-release:
-    name: Build and publish release assets
+  build-deb:
+    name: Build Debian Package
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: 1.88.0
-          override: true
+          targets: ${{ matrix.target }}
 
-      - name: Install cross
-        uses: taiki-e/install-action@v2
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Install cross-compilation tools
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build release
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            cargo build --release -p ritma_cli -p tracer_sidecar --target ${{ matrix.target }}
+          else
+            cargo build --release -p ritma_cli -p tracer_sidecar
+          fi
+
+      - name: Build Debian package
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            cargo deb -p ritma_cli --no-build --target ${{ matrix.target }}
+          else
+            cargo deb -p ritma_cli --no-build
+          fi
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
         with:
-          tool: cross
+          name: ritma-${{ matrix.arch }}
+          path: target/*/debian/*.deb
 
-      - name: Build (release)
-        run: cross build -p ritma_cli --release --locked --target ${{ matrix.target }}
+  publish-apt:
+    name: Publish APT Repository
+    needs: build-deb
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Package asset
-        shell: bash
+      - name: Download all deb packages
+        uses: actions/download-artifact@v4
+        with:
+          path: debs/
+
+      - name: Setup APT repository
         run: |
-          set -euo pipefail
-          mkdir -p dist
-          BIN=target/${{ matrix.target }}/release/ritma
-          OUT=dist/ritma-${{ matrix.target }}.tar.gz
-          tar -C "$(dirname "$BIN")" -czf "$OUT" ritma
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils gnupg
 
-      - name: Generate checksums
-        shell: bash
+          # Create repo structure
+          mkdir -p apt-repo/pool/main
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+          mkdir -p apt-repo/dists/stable/main/binary-arm64
+
+          # Copy debs
+          find debs/ -name "*.deb" -exec cp {} apt-repo/pool/main/ \;
+
+          # Generate Packages files
+          cd apt-repo
+          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-arm64/Packages
+          gzip -k dists/stable/main/binary-amd64/Packages
+          gzip -k dists/stable/main/binary-arm64/Packages
+
+          # Create Release file
+          cat > dists/stable/Release << EOF
+          Origin: Ritma
+          Label: Ritma APT Repository
+          Suite: stable
+          Codename: stable
+          Version: 1.0
+          Architectures: amd64 arm64
+          Components: main
+          Description: Ritma - Court-grade forensic security observability
+          EOF
+
+      - name: Upload APT repo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo
+          path: apt-repo/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apt-repo
+          destination_dir: apt
+          keep_files: true
+
+  release:
+    name: Create GitHub Release
+    needs: build-deb
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release files
         run: |
-          set -euo pipefail
-          cd dist
-          sha256sum *.tar.gz > SHA256SUMS.txt
+          mkdir -p release
+          find artifacts/ -name "*.deb" -exec cp {} release/ \;
+          cd release
+          sha256sum *.deb > SHA256SUMS.txt
 
-      - name: Upload release assets
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.tar.gz
-            dist/SHA256SUMS.txt
+            release/*.deb
+            release/SHA256SUMS.txt
+          body: |
+            ## Installation
+            
+            ### Option 1: APT Repository (Recommended)
+            ```bash
+            # Add Ritma repository
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/setup-apt.sh | sudo bash
+            
+            # Install
+            sudo apt update
+            sudo apt install ritma
+            ```
+            
+            ### Option 2: Direct Download
+            ```bash
+            # Download and install .deb
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ritma_*.deb
+            sudo dpkg -i ritma_*.deb
+            ```
+            
+            ### Option 3: From Source
+            ```bash
+            git clone https://github.com/${{ github.repository }}
+            cd ritma
+            sudo ./install.sh
+            ```

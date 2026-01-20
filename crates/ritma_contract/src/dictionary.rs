@@ -59,10 +59,7 @@ pub trait DictionaryStore: Send + Sync {
     fn get_or_insert(&self, entry_type: DictEntryType, value: &str) -> std::io::Result<u64>;
 
     /// Batch get or insert multiple values (more efficient than individual calls)
-    fn get_or_insert_batch(
-        &self,
-        entries: &[(DictEntryType, &str)],
-    ) -> std::io::Result<Vec<u64>> {
+    fn get_or_insert_batch(&self, entries: &[(DictEntryType, &str)]) -> std::io::Result<Vec<u64>> {
         entries
             .iter()
             .map(|(t, v)| self.get_or_insert(*t, v))
@@ -196,10 +193,7 @@ impl DictionaryStore for InMemoryDictionary {
         Ok(id)
     }
 
-    fn get_or_insert_batch(
-        &self,
-        entries: &[(DictEntryType, &str)],
-    ) -> std::io::Result<Vec<u64>> {
+    fn get_or_insert_batch(&self, entries: &[(DictEntryType, &str)]) -> std::io::Result<Vec<u64>> {
         // Optimized batch insert: acquire write lock once
         let mut rev = self.reverse.write().unwrap();
         let mut ent = self.entries.write().unwrap();
@@ -320,10 +314,7 @@ impl DictionaryStore for LmdbDictionary {
         self.inner.get_or_insert(entry_type, value)
     }
 
-    fn get_or_insert_batch(
-        &self,
-        entries: &[(DictEntryType, &str)],
-    ) -> std::io::Result<Vec<u64>> {
+    fn get_or_insert_batch(&self, entries: &[(DictEntryType, &str)]) -> std::io::Result<Vec<u64>> {
         self.inner.get_or_insert_batch(entries)
     }
 
@@ -374,15 +365,9 @@ mod tests {
     #[test]
     fn in_memory_dict_get_or_insert() {
         let dict = InMemoryDictionary::new();
-        let id1 = dict
-            .get_or_insert(DictEntryType::String, "hello")
-            .unwrap();
-        let id2 = dict
-            .get_or_insert(DictEntryType::String, "hello")
-            .unwrap();
-        let id3 = dict
-            .get_or_insert(DictEntryType::String, "world")
-            .unwrap();
+        let id1 = dict.get_or_insert(DictEntryType::String, "hello").unwrap();
+        let id2 = dict.get_or_insert(DictEntryType::String, "hello").unwrap();
+        let id3 = dict.get_or_insert(DictEntryType::String, "world").unwrap();
 
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
@@ -401,12 +386,8 @@ mod tests {
     #[test]
     fn different_types_get_different_ids() {
         let dict = InMemoryDictionary::new();
-        let id1 = dict
-            .get_or_insert(DictEntryType::String, "test")
-            .unwrap();
-        let id2 = dict
-            .get_or_insert(DictEntryType::FilePath, "test")
-            .unwrap();
+        let id1 = dict.get_or_insert(DictEntryType::String, "test").unwrap();
+        let id2 = dict.get_or_insert(DictEntryType::FilePath, "test").unwrap();
         assert_ne!(id1, id2);
     }
 
@@ -431,7 +412,10 @@ mod tests {
         let dict = InMemoryDictionary::new();
         assert_eq!(dict.lookup(DictEntryType::String, "missing").unwrap(), None);
         let id = dict.get_or_insert(DictEntryType::String, "exists").unwrap();
-        assert_eq!(dict.lookup(DictEntryType::String, "exists").unwrap(), Some(id));
+        assert_eq!(
+            dict.lookup(DictEntryType::String, "exists").unwrap(),
+            Some(id)
+        );
     }
 
     #[test]
@@ -450,12 +434,16 @@ mod tests {
         let dict = InMemoryDictionary::new();
         dict.get_or_insert(DictEntryType::String, "hello").unwrap();
         dict.get_or_insert(DictEntryType::String, "world").unwrap();
-        dict.get_or_insert(DictEntryType::FilePath, "/bin/sh").unwrap();
+        dict.get_or_insert(DictEntryType::FilePath, "/bin/sh")
+            .unwrap();
 
         let stats = dict.stats().unwrap();
         assert_eq!(stats.total_entries, 3);
         assert_eq!(stats.entries_by_type.get(&DictEntryType::String), Some(&2));
-        assert_eq!(stats.entries_by_type.get(&DictEntryType::FilePath), Some(&1));
+        assert_eq!(
+            stats.entries_by_type.get(&DictEntryType::FilePath),
+            Some(&1)
+        );
         assert_eq!(stats.total_bytes, 5 + 5 + 7); // "hello" + "world" + "/bin/sh"
     }
 }

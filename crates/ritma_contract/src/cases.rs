@@ -150,7 +150,9 @@ impl FrozenWindowsList {
     }
 
     pub fn covers_timestamp(&self, ts: i64) -> bool {
-        self.windows.iter().any(|w| ts >= w.start_ts && ts < w.end_ts)
+        self.windows
+            .iter()
+            .any(|w| ts >= w.start_ts && ts < w.end_ts)
     }
 
     pub fn to_cbor(&self) -> Vec<u8> {
@@ -231,7 +233,12 @@ impl CaseManager {
     }
 
     /// Create a new case
-    pub fn create_case(&self, case_id: &str, title: &str, created_by: &str) -> std::io::Result<CaseHeader> {
+    pub fn create_case(
+        &self,
+        case_id: &str,
+        title: &str,
+        created_by: &str,
+    ) -> std::io::Result<CaseHeader> {
         let case_dir = self.cases_dir.join(case_id);
         std::fs::create_dir_all(&case_dir)?;
 
@@ -417,8 +424,7 @@ impl CaseManager {
 }
 
 fn parse_frozen_windows(data: &[u8]) -> std::io::Result<FrozenWindowsList> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid frozen windows format"));
@@ -452,17 +458,15 @@ fn parse_frozen_windows(data: &[u8]) -> std::io::Result<FrozenWindowsList> {
                 _ => continue,
             };
             let hour_root = match wa.get(2) {
-                Some(ciborium::value::Value::Text(s)) => {
-                    hex::decode(s).ok().and_then(|b| {
-                        if b.len() == 32 {
-                            let mut arr = [0u8; 32];
-                            arr.copy_from_slice(&b);
-                            Some(arr)
-                        } else {
-                            None
-                        }
-                    })
-                }
+                Some(ciborium::value::Value::Text(s)) => hex::decode(s).ok().and_then(|b| {
+                    if b.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&b);
+                        Some(arr)
+                    } else {
+                        None
+                    }
+                }),
                 _ => None,
             };
             let reason = match wa.get(3) {

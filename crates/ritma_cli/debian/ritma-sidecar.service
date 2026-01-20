@@ -1,0 +1,30 @@
+[Unit]
+Description=Ritma Forensic Security Sidecar
+Documentation=https://ritma.io/docs
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/ritma-sidecar
+Restart=on-failure
+RestartSec=5
+Environment=RITMA_NODE_ID=auto
+Environment=RITMA_BASE_DIR=/var/lib/ritma
+Environment=RITMA_OUT_ENABLE=1
+Environment=RITMA_CAS_ENABLE=1
+EnvironmentFile=-/etc/ritma/ritma.conf
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ritma /var/log/ritma
+PrivateTmp=true
+
+# eBPF requires these capabilities
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

@@ -52,7 +52,7 @@ impl EntityState {
         h.update(b"ritma-entity-state@0.1");
         h.update(self.entity_id.as_bytes());
         h.update([self.entity_type as u8]);
-        
+
         let mut keys: Vec<_> = self.attributes.keys().collect();
         keys.sort();
         for key in keys {
@@ -61,7 +61,7 @@ impl EntityState {
             h.update(self.attributes[key].as_bytes());
             h.update(b"\x00");
         }
-        
+
         h.update(self.version.to_le_bytes());
         h.finalize().into()
     }
@@ -270,7 +270,11 @@ impl SnapshotDiff {
             added_count: self.added.len(),
             removed_count: self.removed.len(),
             modified_count: self.modified.len(),
-            total_attribute_changes: self.modified.iter().map(|m| m.attribute_changes.len()).sum(),
+            total_attribute_changes: self
+                .modified
+                .iter()
+                .map(|m| m.attribute_changes.len())
+                .sum(),
         }
     }
 
@@ -340,7 +344,11 @@ impl SnapshotStore {
             .join(format!("{:02}", dt.day()));
         std::fs::create_dir_all(&day_dir)?;
 
-        let filename = format!("{}_{}.snapshot.cbor.zst", snapshot.timestamp, &snapshot.snapshot_id_hex()[..8]);
+        let filename = format!(
+            "{}_{}.snapshot.cbor.zst",
+            snapshot.timestamp,
+            &snapshot.snapshot_id_hex()[..8]
+        );
         let path = day_dir.join(filename);
 
         let cbor = snapshot.to_cbor();
@@ -370,7 +378,12 @@ impl SnapshotStore {
         Ok(paths)
     }
 
-    fn scan_snapshots(&self, dir: &Path, max_ts: i64, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    fn scan_snapshots(
+        &self,
+        dir: &Path,
+        max_ts: i64,
+        paths: &mut Vec<PathBuf>,
+    ) -> std::io::Result<()> {
         let rd = match std::fs::read_dir(dir) {
             Ok(r) => r,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -422,7 +435,11 @@ impl SnapshotStore {
     }
 
     /// Query state of a specific entity at a timestamp
-    pub fn query_entity_at(&self, entity_id: &str, timestamp: i64) -> std::io::Result<Option<EntityState>> {
+    pub fn query_entity_at(
+        &self,
+        entity_id: &str,
+        timestamp: i64,
+    ) -> std::io::Result<Option<EntityState>> {
         let snapshot = match self.find_snapshot_at(timestamp)? {
             Some(s) => s,
             None => return Ok(None),
@@ -432,7 +449,12 @@ impl SnapshotStore {
     }
 
     /// Get entity history (all versions)
-    pub fn entity_history(&self, entity_id: &str, start_ts: i64, end_ts: i64) -> std::io::Result<Vec<(i64, EntityState)>> {
+    pub fn entity_history(
+        &self,
+        entity_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> std::io::Result<Vec<(i64, EntityState)>> {
         let mut history = Vec::new();
         let paths = self.list_snapshots_before(end_ts)?;
 
@@ -454,8 +476,7 @@ impl SnapshotStore {
 }
 
 fn parse_snapshot(data: &[u8]) -> std::io::Result<StateSnapshot> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid snapshot format"));
@@ -466,20 +487,18 @@ fn parse_snapshot(data: &[u8]) -> std::io::Result<StateSnapshot> {
     }
 
     let snapshot_id = match arr.get(1) {
-        Some(ciborium::value::Value::Text(s)) => {
-            hex::decode(s)
-                .ok()
-                .and_then(|b| {
-                    if b.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&b);
-                        Some(arr)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or([0u8; 32])
-        }
+        Some(ciborium::value::Value::Text(s)) => hex::decode(s)
+            .ok()
+            .and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or([0u8; 32]),
         _ => [0u8; 32],
     };
 
@@ -541,7 +560,7 @@ mod tests {
         let mut e1_modified = EntityState::new("proc-1", GraphNodeType::Process);
         e1_modified.set_attribute("state", "stopped");
         e1_modified.set_attribute("extra", "data"); // Add another change to bump version to 3
-        // e1_modified.version is now 3, different from e1's version of 2
+                                                    // e1_modified.version is now 3, different from e1's version of 2
         to.add_entity(e1_modified);
         let mut e3 = EntityState::new("proc-3", GraphNodeType::Process);
         e3.set_attribute("pid", "3");
@@ -552,7 +571,7 @@ mod tests {
 
         assert_eq!(diff.added.len(), 1); // proc-3
         assert_eq!(diff.removed.len(), 1); // proc-2
-        // proc-1 is modified (version changed from 2 to 3 and attributes changed)
+                                           // proc-1 is modified (version changed from 2 to 3 and attributes changed)
         assert_eq!(diff.modified.len(), 1);
         assert!(!diff.is_empty());
     }

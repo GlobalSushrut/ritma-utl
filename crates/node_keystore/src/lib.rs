@@ -2,11 +2,16 @@ use std::fs;
 use std::path::Path;
 
 use ed25519_dalek::SigningKey;
+
+pub mod tpm;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use thiserror::Error;
+pub use tpm::{
+    AttestationBinding, AttestationResult, PcrBank, PcrSelection, TpmAttestor, TpmError, TpmQuote,
+};
 use zeroize::Zeroize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -27,7 +32,7 @@ impl Drop for KeyRecord {
 pub struct KeystoreKey {
     pub key_id: String,
     pub key_type: String,
-    #[serde(skip_serializing)]  // Don't serialize secrets
+    #[serde(skip_serializing)] // Don't serialize secrets
     pub key_material: String,
     pub metadata: HashMap<String, String>,
 }
@@ -44,6 +49,7 @@ pub struct KeyMetadata {
     pub key_id: String,
     pub key_hash: String,
     pub label: Option<String>,
+    pub public_key_hex: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -72,7 +78,6 @@ impl Drop for NodeKeystore {
     }
 }
 
-
 type HmacSha256 = Hmac<Sha256>;
 
 impl NodeKeystore {
@@ -92,11 +97,12 @@ impl NodeKeystore {
     pub fn list_metadata(&self) -> Result<Vec<KeyMetadata>, KeystoreError> {
         let mut out = Vec::new();
         for rec in &self.keys {
-            let hash = self.compute_key_hash(rec)?;
+            let (hash, public_key_hex) = self.compute_key_hash_and_pub(rec)?;
             out.push(KeyMetadata {
                 key_id: rec.key_id.clone(),
                 key_hash: hash,
                 label: rec.label.clone(),
+                public_key_hex,
             });
         }
         Ok(out)
@@ -108,11 +114,12 @@ impl NodeKeystore {
             .iter()
             .find(|k| k.key_id == key_id)
             .ok_or_else(|| KeystoreError::UnknownKey(key_id.to_string()))?;
-        let hash = self.compute_key_hash(rec)?;
+        let (hash, public_key_hex) = self.compute_key_hash_and_pub(rec)?;
         Ok(KeyMetadata {
             key_id: rec.key_id.clone(),
             key_hash: hash,
             label: rec.label.clone(),
+            public_key_hex,
         })
     }
 
@@ -124,7 +131,7 @@ impl NodeKeystore {
             .ok_or_else(|| KeystoreError::UnknownKey(key_id.to_string()))?;
 
         let alg = rec.alg.to_lowercase();
-        
+
         Ok(KeystoreKey {
             key_id: rec.key_id.clone(),
             key_type: alg.clone(),
@@ -177,7 +184,10 @@ impl NodeKeystore {
         Err(KeystoreError::InvalidKey(rec.key_id.clone()))
     }
 
-    fn compute_key_hash(&self, rec: &KeyRecord) -> Result<String, KeystoreError> {
+    fn compute_key_hash_and_pub(
+        &self,
+        rec: &KeyRecord,
+    ) -> Result<(String, Option<String>), KeystoreError> {
         let mut bytes = hex::decode(&rec.secret_hex)
             .map_err(|_| KeystoreError::InvalidKey(rec.key_id.clone()))?;
         let alg = rec.alg.to_lowercase();
@@ -194,15 +204,16 @@ impl NodeKeystore {
             let mut hasher = Sha256::new();
             hasher.update(verifying.to_bytes());
             let digest = hasher.finalize();
+            let pub_hex = hex::encode(verifying.to_bytes());
             key_bytes.zeroize();
             bytes.zeroize();
-            return Ok(hex::encode(digest));
+            return Ok((hex::encode(digest), Some(pub_hex)));
         }
 
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let digest = hasher.finalize();
         bytes.zeroize();
-        Ok(hex::encode(digest))
+        Ok((hex::encode(digest), None))
     }
 }

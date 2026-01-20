@@ -1,0 +1,39 @@
+[package]
+name = "ritma_lab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ritma-lab"
+path = "src/main.rs"
+
+[dependencies]
+ritma_lab_proto = { path = "../ritma_lab_proto" }
+ritma_contract = { workspace = true }
+common_models = { workspace = true }
+index_db = { workspace = true }
+bar_orchestrator = { workspace = true }
+security_interfaces = { workspace = true }
+forensic_ml = { workspace = true }
+snapshotter = { workspace = true }
+proof_standards = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+ciborium = { workspace = true }
+sha2 = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+async-trait = { workspace = true }
+hex = { workspace = true }

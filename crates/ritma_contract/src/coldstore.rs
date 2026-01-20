@@ -320,10 +320,8 @@ pub struct ColdStoreStats {
     pub by_type: std::collections::HashMap<PayloadType, (u32, u64)>,
 }
 
-
 fn parse_payload_ref(data: &[u8]) -> std::io::Result<PayloadRef> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid payload ref format"));
@@ -356,20 +354,18 @@ fn parse_payload_ref(data: &[u8]) -> std::io::Result<PayloadRef> {
     };
 
     let manifest_root = match arr.get(3) {
-        Some(ciborium::value::Value::Text(s)) => {
-            hex::decode(s)
-                .ok()
-                .and_then(|b| {
-                    if b.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&b);
-                        Some(arr)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or([0u8; 32])
-        }
+        Some(ciborium::value::Value::Text(s)) => hex::decode(s)
+            .ok()
+            .and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or([0u8; 32]),
         _ => [0u8; 32],
     };
 
@@ -411,7 +407,10 @@ mod tests {
 
     #[test]
     fn payload_type_retention() {
-        assert!(PayloadType::BinarySample.retention_days() > PayloadType::PacketCapture.retention_days());
+        assert!(
+            PayloadType::BinarySample.retention_days()
+                > PayloadType::PacketCapture.retention_days()
+        );
     }
 
     #[test]
@@ -442,11 +441,17 @@ mod tests {
         assert_eq!(payload_ref.total_size, data.len() as u64);
 
         // Retrieve payload
-        let retrieved = store.retrieve_payload(&payload_ref.payload_id).unwrap().unwrap();
+        let retrieved = store
+            .retrieve_payload(&payload_ref.payload_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved, data);
 
         // Get reference
-        let ref_back = store.get_payload_ref(&payload_ref.payload_id).unwrap().unwrap();
+        let ref_back = store
+            .get_payload_ref(&payload_ref.payload_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(ref_back.payload_id, payload_ref.payload_id);
 
         // List payloads

@@ -410,6 +410,157 @@ pub mod zksnark {
     }
 }
 
+/// TPM-attested proof backend
+/// Wraps another backend and adds TPM attestation binding
+pub mod tpm_attested {
+    use super::*;
+    use node_keystore::{AttestationBinding, TpmAttestor, TpmQuote};
+    use std::path::PathBuf;
+
+    /// TPM-attested proof pack (proof + attestation binding)
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TpmAttestedProof {
+        /// The underlying proof
+        pub proof: ProofPack,
+        /// TPM attestation binding
+        pub attestation: Option<AttestationBinding>,
+        /// Full quote (optional, for verification)
+        pub quote: Option<TpmQuote>,
+    }
+
+    /// TPM-attested proof backend wrapper
+    pub struct TpmAttestedBackend {
+        inner: Box<dyn ProofBackend>,
+        attestor: Option<TpmAttestor>,
+        include_quote: bool,
+    }
+
+    impl TpmAttestedBackend {
+        /// Create a new TPM-attested backend wrapping another backend
+        pub fn new(inner: Box<dyn ProofBackend>) -> Self {
+            let attestor = Self::try_create_attestor();
+            Self {
+                inner,
+                attestor,
+                include_quote: false,
+            }
+        }
+
+        /// Include full quote in attested proofs (for remote verification)
+        pub fn with_full_quote(mut self) -> Self {
+            self.include_quote = true;
+            self
+        }
+
+        fn try_create_attestor() -> Option<TpmAttestor> {
+            let node_id = std::env::var("RITMA_NODE_ID").unwrap_or_else(|_| "node0".to_string());
+            let work_dir = std::env::var("RITMA_TPM_WORK_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| std::env::temp_dir().join("ritma_tpm"));
+
+            TpmAttestor::new(&node_id, &work_dir).ok()
+        }
+
+        /// Generate proof with TPM attestation
+        pub fn generate_attested_proof(
+            &mut self,
+            circuit: &ProofCircuit,
+        ) -> Result<TpmAttestedProof, ProofError> {
+            // Generate the underlying proof
+            let proof = self.inner.generate_proof(circuit)?;
+
+            // Generate TPM attestation
+            let (attestation, quote) = if let Some(ref mut attestor) = self.attestor {
+                // Use proof hash as attestation data
+                let proof_data = serde_json::to_vec(&proof)
+                    .map_err(|e| ProofError::SerializationError(e.to_string()))?;
+
+                match attestor.attest(&proof_data) {
+                    Ok(result) if result.success => {
+                        let quote = result.quote;
+                        let binding = quote.as_ref().map(AttestationBinding::from_quote);
+                        (binding, if self.include_quote { quote } else { None })
+                    }
+                    Ok(_) => (None, None),
+                    Err(_) => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+            Ok(TpmAttestedProof {
+                proof,
+                attestation,
+                quote,
+            })
+        }
+
+        /// Verify attested proof
+        pub fn verify_attested_proof(
+            &self,
+            attested: &TpmAttestedProof,
+        ) -> Result<bool, ProofError> {
+            // Verify underlying proof
+            let proof_valid = self.inner.verify_proof(&attested.proof)?;
+            if !proof_valid {
+                return Ok(false);
+            }
+
+            // If quote is present, verify it
+            if let (Some(ref attestor), Some(ref quote)) = (&self.attestor, &attested.quote) {
+                let proof_data = serde_json::to_vec(&attested.proof)
+                    .map_err(|e| ProofError::SerializationError(e.to_string()))?;
+
+                // Compute expected nonce from proof data
+                use sha2::{Digest, Sha256};
+                let mut nonce_h = Sha256::new();
+                nonce_h.update(&proof_data);
+                let nonce = nonce_h.finalize();
+
+                match attestor.verify_quote(quote, &nonce) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(false),
+                    Err(e) => {
+                        return Err(ProofError::VerificationFailed(format!(
+                            "TPM quote verification failed: {e}"
+                        )))
+                    }
+                }
+            }
+
+            Ok(true)
+        }
+
+        /// Check if TPM attestation is available
+        pub fn is_tpm_available(&mut self) -> bool {
+            self.attestor
+                .as_mut()
+                .map(|a| a.is_tpm_available())
+                .unwrap_or(false)
+        }
+    }
+
+    impl ProofBackend for TpmAttestedBackend {
+        fn generate_proof(&self, circuit: &ProofCircuit) -> Result<ProofPack, ProofError> {
+            // For trait compatibility, just generate inner proof
+            // Use generate_attested_proof for full attestation
+            self.inner.generate_proof(circuit)
+        }
+
+        fn verify_proof(&self, proof: &ProofPack) -> Result<bool, ProofError> {
+            self.inner.verify_proof(proof)
+        }
+
+        fn backend_name(&self) -> &str {
+            "tpm_attested"
+        }
+
+        fn is_available(&self) -> bool {
+            self.inner.is_available()
+        }
+    }
+}
+
 // Feature-gated Distillium backend
 #[cfg(feature = "distillium")]
 pub mod distillium {

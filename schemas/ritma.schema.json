@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ritma.io/schemas/ritma.schema.json",
+  "title": "Ritma Configuration",
+  "description": "Configuration schema for Ritma forensic security platform",
+  "type": "object",
+  "required": ["version", "namespace"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["1.0"],
+      "description": "Schema version"
+    },
+    "namespace": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Unique namespace identifier for this deployment"
+    },
+    "node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Node identifier (auto-generated if not set)"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Key-value labels for this node"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "base_dir": {
+          "type": "string",
+          "default": "/var/lib/ritma",
+          "description": "Base directory for Ritma data"
+        },
+        "out_dir": {
+          "type": "string",
+          "description": "Output directory for proofpacks"
+        },
+        "cas_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable content-addressed storage"
+        },
+        "retention_days": {
+          "type": "integer",
+          "default": 90,
+          "description": "Days to retain sealed data"
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "properties": {
+        "window_seconds": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 10,
+          "maximum": 3600,
+          "description": "Window duration in seconds"
+        },
+        "privacy_mode": {
+          "type": "string",
+          "enum": ["full", "redacted", "minimal"],
+          "default": "full",
+          "description": "Privacy level for captured data"
+        },
+        "watch_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "File paths to watch for changes"
+        },
+        "watch_processes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Process names to watch"
+        },
+        "exclude_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Paths to exclude from capture"
+        }
+      }
+    },
+    "ml": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable forensic ML analysis"
+        },
+        "threshold": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Alert threshold for ML score"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["anomaly", "behavior", "threat", "compliance"]
+          },
+          "default": ["anomaly", "behavior"],
+          "description": "ML models to enable"
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["webhook", "email", "slack", "pagerduty"]
+              },
+              "url": { "type": "string" },
+              "email": { "type": "string" },
+              "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+                "default": "high"
+              }
+            }
+          }
+        }
+      }
+    },
+    "compliance": {
+      "type": "object",
+      "properties": {
+        "frameworks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["pipeda", "sox", "hipaa", "pci-dss", "gdpr", "law25"]
+          },
+          "description": "Compliance frameworks to enforce"
+        },
+        "audit_log": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable custody audit log"
+        }
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["standalone", "kubernetes", "docker", "systemd"],
+          "default": "systemd"
+        },
+        "replicas": {
+          "type": "integer",
+          "default": 1
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "memory": { "type": "string", "default": "256Mi" },
+            "cpu": { "type": "string", "default": "100m" }
+          }
+        }
+      }
+    }
+  }
+}

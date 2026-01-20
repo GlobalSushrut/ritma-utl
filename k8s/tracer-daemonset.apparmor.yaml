@@ -37,6 +37,9 @@ spec:
           allowPrivilegeEscalation: false
           seccompProfile:
             type: RuntimeDefault
+          appArmorProfile:
+            type: Localhost
+            localhostProfile: ritma-tracer-sidecar
           capabilities:
             drop: ["ALL"]
             add: ["SYS_ADMIN", "BPF", "PERFMON"]

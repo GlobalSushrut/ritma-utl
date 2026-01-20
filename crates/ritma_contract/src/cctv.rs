@@ -185,7 +185,7 @@ pub fn standard_kernel_coverage() -> Vec<KernelEventCoverage> {
 pub struct ActorRecord {
     pub actor_id: [u8; 32],
     pub pid: i64,
-    pub start_time_ns: u64,  // Monotonic, for pid reuse protection
+    pub start_time_ns: u64, // Monotonic, for pid reuse protection
     pub ppid: i64,
     pub uid: u32,
     pub gid: u32,
@@ -314,7 +314,14 @@ impl ActorRecord {
             self.namespace_ids.user_ns,
         );
 
-        let tuple = (identity, creds, exec_info, container_info, ns, self.created_ts);
+        let tuple = (
+            identity,
+            creds,
+            exec_info,
+            container_info,
+            ns,
+            self.created_ts,
+        );
 
         let mut buf = Vec::new();
         ciborium::into_writer(&tuple, &mut buf).expect("CBOR encoding should not fail");
@@ -329,9 +336,9 @@ impl ActorRecord {
 /// Dual-clock timestamp for temporal integrity
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DualTimestamp {
-    pub monotonic_ns: u64,  // Monotonic clock for ordering
-    pub wall_time_ns: i64,  // Wall clock for human reference
-    pub boot_id: u64,       // Boot ID for cross-reboot ordering
+    pub monotonic_ns: u64, // Monotonic clock for ordering
+    pub wall_time_ns: i64, // Wall clock for human reference
+    pub boot_id: u64,      // Boot ID for cross-reboot ordering
 }
 
 impl DualTimestamp {
@@ -566,7 +573,11 @@ impl AppendOnlyEntry {
         }
     }
 
-    fn compute_entry_hash(sequence: u64, prev_hash: &[u8; 32], payload_hash: &[u8; 32]) -> [u8; 32] {
+    fn compute_entry_hash(
+        sequence: u64,
+        prev_hash: &[u8; 32],
+        payload_hash: &[u8; 32],
+    ) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(b"ritma-append@0.1");
         h.update(sequence.to_le_bytes());

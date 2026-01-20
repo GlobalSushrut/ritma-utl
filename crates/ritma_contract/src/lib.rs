@@ -6,6 +6,8 @@ use thiserror::Error;
 use sha2::Digest;
 
 pub mod accounting;
+pub mod ai_audit;
+pub mod alerting;
 pub mod anchors;
 pub mod canonical;
 pub mod cas;
@@ -13,16 +15,43 @@ pub mod cases;
 pub mod catalog;
 pub mod cctv;
 pub mod coldstore;
+pub mod cose;
 pub mod ctgf;
 pub mod dictionary;
 pub mod graph;
+pub mod hazard;
+pub mod investigation;
+pub mod k8s_metadata;
+pub mod l7_tracing;
+pub mod merkle_advanced;
+pub mod migration;
 pub mod pipeline;
+pub mod process_lifecycle;
 pub mod proofpack;
+pub mod provenance;
+pub mod readiness;
 pub mod replay;
+pub mod rtsl;
+pub mod siem_export;
 pub mod timejump;
+pub mod timestamping;
+pub mod tracing_policy;
 pub mod triggers;
+pub mod tsa;
 pub mod verify;
-pub use accounting::{AccountingAccumulator, ExtendedAccounting, ExtendedAccountingWriter, TopTalker};
+pub mod versioning;
+pub use accounting::{
+    AccountingAccumulator, ExtendedAccounting, ExtendedAccountingWriter, TopTalker,
+};
+pub use ai_audit::{
+    AiAuditLog, AiDecisionRecord, DecisionExplanation, DecisionInput, DecisionOutput, DecisionType,
+    ExplanationType, HumanOverride, InputType, ModelIdentity, ModelType,
+};
+pub use alerting::{
+    builtin_rules, Alert, AlertContainer, AlertFile, AlertHandler, AlertNetwork, AlertProcess,
+    AlertSeverity, AlertStatus, ConsoleAlertHandler, Detection, DetectionRule, EventData,
+    FileAlertHandler, LogSource, MitreMapping, RuleEngine, Selection, SelectionValue,
+};
 pub use anchors::{AnchorConfig, AnchorManager, AnchorType, DailyAnchor};
 pub use canonical::{CanonicalEventAtom, CaptureMode, EventType, ProofRecord, RunMeta};
 pub use cas::{CasStore, ChunkManifest, ChunkRef};
@@ -33,12 +62,73 @@ pub use coldstore::{ColdStore, PayloadRef, PayloadType};
 pub use ctgf::{ConeInstantiation, ConeLibrary, ConePattern, InstantiationBlockWriter};
 pub use dictionary::{DictionaryEntry, DictionaryStore};
 pub use graph::{Edge, EdgeType, GraphReader, HourlyEdgeWriter};
+pub use hazard::{
+    HazardEntry, HazardEntryType, HazardLevel, HazardReceipt, HazardRingBuffer, HazardTracer,
+    RingBufferHeader, SealReceipt, WitnessAck, WitnessCommitment, WitnessEndpoint, WitnessType,
+};
+pub use investigation::{
+    BlastRadius, EdgeType as InvestigationEdgeType, Finding, FindingSeverity, InvestigationAnchor,
+    InvestigationBuilder, InvestigationEdge, InvestigationGraph, InvestigationNode,
+    InvestigationReport, InvestigationScope, Neighborhood, NodeType, TimelineEntry,
+};
+pub use k8s_metadata::{
+    parse_container_id_from_cgroup, parse_pod_uid_from_cgroup, ContainerState, ContainerStatus,
+    DownwardApiReader, K8sMetadataProvider, K8sTraceContext, NamespaceMetadata, OwnerReference,
+    PodMetadata, ServiceMetadata, ServicePort,
+};
+pub use l7_tracing::{
+    HttpMethod, HttpParser, HttpRequest, HttpResponse, HttpTransaction, L7Direction, L7Event,
+    L7Protocol, L7TransactionTracker, SensitiveDataDetector,
+};
+pub use merkle_advanced::{
+    CausalWrite, ConsistencyProof, DagCborEncoder, MerkleMountainRange, MerkleTile, MmrProof,
+    MultiWriterCoordinator, ProllyChunker, RecordProof, SparseMerkleProof, SparseMerkleTree,
+    TiledMerkleTree, VectorClock, TILE_HEIGHT, TILE_WIDTH,
+};
+pub use migration::{
+    ArchiveResult, DiscrepancySeverity, DiscrepancyType, LegacyDisabler, MigrationManager,
+    MigrationMode, MigrationPhase, MigrationState, MigrationStatus, ParityDiscrepancy,
+    ParityResult, ParityVerifier,
+};
 pub use pipeline::{HourPipelineStatus, MicroWindowData, PipelineStage, SealingPipeline};
+pub use process_lifecycle::{
+    signal_name, ProcExitScanner, ProcessExit, ProcessLifecycleEvent, ProcessLifecycleEventType,
+    ProcessLifecycleTracker, ProcessNode, ProcessState, ProcessTree,
+};
 pub use proofpack::{ChainRecord, HourRoot, MicroWindow, ProofPackWriter};
+pub use provenance::{
+    BuildDefinition, BuildMetadata, BuilderInfo, ComponentType, DeploymentRecord, ProvenanceChain,
+    ProvenanceVerification, ResourceDescriptor, RunDetails, RuntimeAttestation, Sbom,
+    SbomComponent, SbomFormat, SlsaLevel, SlsaProvenance,
+};
+pub use readiness::{
+    CheckCategory, CheckSeverity, CourtExportPack, CustodyAction, CustodyRecord, EvidenceItem,
+    EvidenceType, OverallStatus, ReadinessCheck, ReadinessChecker, ReadinessConfig,
+    ReadinessReport,
+};
 pub use replay::{EntityState, SnapshotDiff, SnapshotStore, StateSnapshot};
+pub use rtsl::{CausalRecord, RtslLedger, WindowReceipt};
+pub use siem_export::{
+    CefExporter, EcsEvent, EcsExporter, LeefExporter, SiemEvent, SiemExportWriter, SiemFormat,
+    SiemSeverity, SyslogExporter,
+};
 pub use timejump::{TimeJumpEntry, TimeJumpIndex, TimeJumpReader, TimeJumpWriter};
+pub use timestamping::{
+    Accuracy, ChainVerification, ConstraintType, DelegationChain, DelegationConstraint,
+    DelegationRecord, DelegationScope, MessageImprint, Principal, PrincipalType,
+    TimestampAuthority, TimestampToken, TrustLevel,
+};
+pub use tracing_policy::{
+    builtin_policies, ArgSpec, ArgType, EventContext, FileOperation, FileWatchRule, Filter,
+    FilterOperator, K8sSelector, NetworkRule, PolicyAction, PolicyManager, PortSpec, ProcessEvent,
+    ProcessRule, Severity, SyscallRule, TracingPolicy,
+};
 pub use triggers::{TriggerAuditLog, TriggerEvent, TriggerPolicy, TriggerType};
 pub use verify::{BundleExporter, OfflineVerifier, VerificationResult};
+pub use versioning::{
+    ChainedSnapshot, EntityVersion, EventLog, LamportClock, StateEvent, StateEventType,
+    StateMachine, VersionVector, VersioningEngine,
+};
 
 /// Accounting summary for a day (0.5)
 #[derive(Debug, Clone, Default)]
@@ -67,7 +157,10 @@ impl AccountingSummary {
     pub fn total_savings(&self) -> u64 {
         self.total_bytes_raw
             .saturating_sub(self.total_bytes_compressed)
-            .saturating_add(self.total_bytes_raw.saturating_sub(self.total_bytes_deduped))
+            .saturating_add(
+                self.total_bytes_raw
+                    .saturating_sub(self.total_bytes_deduped),
+            )
     }
 }
 
@@ -121,6 +214,13 @@ pub struct ResolveOpts {
     pub require_absolute_paths: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputFormat {
+    Legacy,
+    Rtsl,
+    Dual,
+}
+
 impl Default for ResolveOpts {
     fn default() -> Self {
         Self {
@@ -131,6 +231,17 @@ impl Default for ResolveOpts {
 }
 
 impl StorageContract {
+    fn output_format_from_env() -> OutputFormat {
+        match std::env::var("RITMA_OUT_FORMAT") {
+            Ok(v) => match v.trim().to_lowercase().as_str() {
+                "rtsl" => OutputFormat::Rtsl,
+                "dual" => OutputFormat::Dual,
+                _ => OutputFormat::Legacy,
+            },
+            Err(_) => OutputFormat::Legacy,
+        }
+    }
+
     pub fn resolve(opts: ResolveOpts) -> Result<Self, ContractError> {
         let node_id = resolve_node_id(opts.require_node_id)?;
         let base_dir = resolve_base_dir();
@@ -203,6 +314,12 @@ impl StorageContract {
             "accounting",
             "cases",
             "exports",
+            "ledger/v2",
+            "ledger/v2/shards",
+            "ledger/v2/chain",
+            "ledger/v2/_meta",
+            "ledger/v2/_meta/keys",
+            "ledger/v2/_meta/schema",
         ] {
             std::fs::create_dir_all(root.join(rel))?;
         }
@@ -210,6 +327,90 @@ impl StorageContract {
         // Initialize all _meta/ artifacts (2.1)
         self.ensure_meta_artifacts()?;
         Ok(())
+    }
+
+    pub fn write_window_output(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+        total_events: u64,
+        leaf_hashes: &[[u8; 32]],
+    ) -> std::io::Result<()> {
+        let fmt = Self::output_format_from_env();
+        if env_truthy("RITMA_OUT_ENFORCE_RTSL") && fmt != OutputFormat::Rtsl {
+            return Err(std::io::Error::other(
+                "RTSL output is enforced (RITMA_OUT_ENFORCE_RTSL=1); set RITMA_OUT_FORMAT=rtsl",
+            ));
+        }
+
+        match fmt {
+            OutputFormat::Legacy => {
+                let _ = self.write_micro_window_proof(
+                    namespace_id,
+                    start_ts,
+                    end_ts,
+                    total_events,
+                    leaf_hashes,
+                )?;
+                Ok(())
+            }
+            OutputFormat::Rtsl => {
+                let _ = crate::rtsl::write_window_as_rtsl_record(
+                    self,
+                    namespace_id,
+                    start_ts,
+                    end_ts,
+                    total_events,
+                    leaf_hashes,
+                )?;
+                Ok(())
+            }
+            OutputFormat::Dual => {
+                let legacy_micro_path = self.write_micro_window_proof(
+                    namespace_id,
+                    start_ts,
+                    end_ts,
+                    total_events,
+                    leaf_hashes,
+                )?;
+                let _rtsl_segment_path = crate::rtsl::write_window_as_rtsl_record(
+                    self,
+                    namespace_id,
+                    start_ts,
+                    end_ts,
+                    total_events,
+                    leaf_hashes,
+                )?;
+
+                if env_truthy("RITMA_OUT_PARITY_VERIFY") {
+                    let expected_root = merkle_root_sha256(leaf_hashes);
+                    let bytes = std::fs::read(&legacy_micro_path)?;
+                    let v = ciborium::from_reader::<ciborium::value::Value, _>(&bytes[..])
+                        .map_err(std::io::Error::other)?;
+
+                    let Some(micro_root_hex) = parse_micro_root_hex(&v) else {
+                        return Err(std::io::Error::other(format!(
+                            "parity verify failed: could not parse micro_root from {}",
+                            legacy_micro_path.display()
+                        )));
+                    };
+                    let Some(legacy_root) = decode_32(&micro_root_hex) else {
+                        return Err(std::io::Error::other(format!(
+                            "parity verify failed: invalid micro_root hex in {}",
+                            legacy_micro_path.display()
+                        )));
+                    };
+                    if legacy_root != expected_root {
+                        return Err(std::io::Error::other(
+                            "parity verify failed: legacy micro_root != expected merkle_root_sha256(leaves)",
+                        ));
+                    }
+                }
+
+                Ok(())
+            }
+        }
     }
 
     fn append_daily_catalog_stub(
@@ -260,6 +461,34 @@ impl StorageContract {
         f.write_all(&len.to_le_bytes())?;
         f.write_all(&compressed)?;
         Ok(p)
+    }
+
+    fn cases_for_range(&self, start_ts: i64, end_ts: i64) -> Vec<String> {
+        let cases_dir = self.out_dir.join("cases");
+        let rd = match std::fs::read_dir(&cases_dir) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut case_ids: Vec<String> = Vec::new();
+        for entry in rd.flatten() {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let manifest = entry.path().join("manifest.cbor");
+            let Ok(data) = std::fs::read(&manifest) else {
+                continue;
+            };
+            let Ok(v) = ciborium::from_reader::<ciborium::value::Value, _>(&data[..]) else {
+                continue;
+            };
+            if self.manifest_covers_window(&v, start_ts, end_ts) {
+                if let Some(name) = entry.file_name().to_str() {
+                    case_ids.push(name.to_string());
+                }
+            }
+        }
+        case_ids
     }
 
     pub fn write_micro_window_stub(
@@ -343,10 +572,30 @@ impl StorageContract {
         );
         ciborium::into_writer(&tuple, f).map_err(std::io::Error::other)?;
 
+        let leaves_path = hour_dir
+            .join("micro")
+            .join(format!("{name}.leaves.cbor.zst"));
+        let leaf_hex: Vec<String> = leaf_hashes.iter().map(hex::encode).collect();
+        let leaves_tuple = (
+            "ritma-micro-leaves@0.1",
+            namespace_id,
+            self.node_id.as_str(),
+            start_ts,
+            end_ts,
+            name.as_str(),
+            leaf_hex,
+        );
+        let mut leaves_buf: Vec<u8> = Vec::new();
+        ciborium::into_writer(&leaves_tuple, &mut leaves_buf).map_err(std::io::Error::other)?;
+        let leaves_compressed =
+            zstd::encode_all(&leaves_buf[..], 0).map_err(std::io::Error::other)?;
+        std::fs::write(&leaves_path, leaves_compressed)?;
+
         self.write_sig_file(&sig_path, "ritma-micro-sig@0.1", &micro_root)?;
 
-        let hour_root = self.compute_hour_root_from_micro(&hour_dir)?;
-        let chain_hash = self.write_hour_root_files(start_ts, &hour_dir, &hour_root)?;
+        let (micro_roots, hour_root) = self.compute_hour_root_from_micro(&hour_dir)?;
+        let chain_hash =
+            self.write_hour_root_files(start_ts, &hour_dir, &hour_root, &micro_roots)?;
 
         let _ = self.append_timejump_index(
             &hour_dir,
@@ -442,8 +691,13 @@ impl StorageContract {
         std::fs::create_dir_all(&day_dir)?;
         let p = day_dir.join("day.cbor.zst");
 
+        let mut case_ids = self.cases_for_range(start_ts, end_ts);
+        case_ids.sort();
+        case_ids.dedup();
+        let retention_lock = !case_ids.is_empty();
+
         let entry = (
-            "ritma-catalog@0.2",
+            "ritma-catalog@0.3",
             namespace_id,
             self.node_id.as_str(),
             start_ts,
@@ -454,6 +708,8 @@ impl StorageContract {
             hex::encode(micro_root),
             hex::encode(hour_root),
             hex::encode(chain_hash),
+            retention_lock,
+            case_ids,
         );
 
         let bytes = {
@@ -504,19 +760,27 @@ impl StorageContract {
         }
 
         // Collect public keys from keystore if available
-        let keys: Vec<(String, String, String)> = match node_keystore::NodeKeystore::from_env() {
-            Ok(ks) => ks
-                .list_metadata()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| (m.key_id, m.key_hash, m.label.unwrap_or_default()))
-                .collect(),
-            Err(_) => vec![],
-        };
+        let keys: Vec<(String, String, String, Option<String>)> =
+            match node_keystore::NodeKeystore::from_env() {
+                Ok(ks) => ks
+                    .list_metadata()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| {
+                        (
+                            m.key_id,
+                            m.key_hash,
+                            m.label.unwrap_or_default(),
+                            m.public_key_hex,
+                        )
+                    })
+                    .collect(),
+                Err(_) => vec![],
+            };
 
         let f = std::fs::File::create(&pubkeys_path)?;
         let tuple = (
-            "ritma-pubkeys@0.1",
+            "ritma-pubkeys@0.2",
             self.node_id.as_str(),
             chrono::Utc::now().timestamp(),
             keys,
@@ -564,7 +828,11 @@ impl StorageContract {
                     ("object", "u64", "object dictionary ID"),
                     ("flags_class", "u32", "packed flags + classification"),
                     ("arg_hash", "Option<[u8;32]>", "argument hash"),
-                    ("payload_ref", "Option<String>", "CAS reference for thick/full"),
+                    (
+                        "payload_ref",
+                        "Option<String>",
+                        "CAS reference for thick/full",
+                    ),
                 ],
             );
             ciborium::into_writer(&tuple, f).map_err(std::io::Error::other)?;
@@ -722,7 +990,12 @@ impl StorageContract {
         false
     }
 
-    fn manifest_covers_window(&self, v: &ciborium::value::Value, start_ts: i64, end_ts: i64) -> bool {
+    fn manifest_covers_window(
+        &self,
+        v: &ciborium::value::Value,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> bool {
         let ciborium::value::Value::Array(arr) = v else {
             return false;
         };
@@ -734,8 +1007,10 @@ impl StorageContract {
             let ciborium::value::Value::Array(pair) = r else {
                 continue;
             };
-            let (Some(ciborium::value::Value::Integer(ws)), Some(ciborium::value::Value::Integer(we))) =
-                (pair.get(0), pair.get(1))
+            let (
+                Some(ciborium::value::Value::Integer(ws)),
+                Some(ciborium::value::Value::Integer(we)),
+            ) = (pair.get(0), pair.get(1))
             else {
                 continue;
             };
@@ -931,12 +1206,17 @@ impl StorageContract {
         Ok(())
     }
 
-    fn compute_hour_root_from_micro(&self, hour_dir: &Path) -> std::io::Result<[u8; 32]> {
+    fn compute_hour_root_from_micro(
+        &self,
+        hour_dir: &Path,
+    ) -> std::io::Result<(Vec<[u8; 32]>, [u8; 32])> {
         let micro_dir = hour_dir.join("micro");
         let mut entries: Vec<(String, PathBuf)> = Vec::new();
         let rd = match std::fs::read_dir(&micro_dir) {
             Ok(r) => r,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(merkle_root_sha256(&[])),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), merkle_root_sha256(&[])))
+            }
             Err(e) => return Err(e),
         };
         for ent in rd.flatten() {
@@ -968,7 +1248,8 @@ impl StorageContract {
             roots.push(root);
         }
 
-        Ok(merkle_root_sha256(&roots))
+        let hour_root = merkle_root_sha256(&roots);
+        Ok((roots, hour_root))
     }
 
     fn write_hour_root_files(
@@ -976,26 +1257,31 @@ impl StorageContract {
         start_ts: i64,
         hour_dir: &Path,
         hour_root: &[u8; 32],
+        micro_roots: &[[u8; 32]],
     ) -> std::io::Result<[u8; 32]> {
         let proofs = hour_dir.join("proofs");
         std::fs::create_dir_all(&proofs)?;
 
         let p = proofs.join("hour_root.cbor");
         let f = std::fs::File::create(&p)?;
+        let micro_roots_hex: Vec<String> = micro_roots.iter().map(hex::encode).collect();
         let tuple = (
             "ritma-hour-root@0.2",
             self.node_id.as_str(),
             start_ts,
             hex::encode(hour_root),
+            micro_roots_hex,
         );
         ciborium::into_writer(&tuple, f).map_err(std::io::Error::other)?;
 
         let sig = proofs.join("hour_root.sig");
         self.write_sig_file(&sig, "ritma-hour-root-sig@0.1", hour_root)?;
 
-        let prev = self
-            .find_prev_hour_root_by_ts(start_ts)
-            .unwrap_or_else(|| "GENESIS".to_string());
+        let prev = self.find_prev_hour_root_by_ts(start_ts).unwrap_or_else(|| {
+            use sha2::Digest;
+            let h = sha2::Sha256::digest(b"GENESIS");
+            hex::encode(h)
+        });
         let chain_hash = compute_chain_hash(&prev, hour_root);
 
         let chain = proofs.join("chain.cbor");
@@ -1012,6 +1298,44 @@ impl StorageContract {
 
         let chain_sig = proofs.join("chain.sig");
         self.write_sig_file(&chain_sig, "ritma-chain-sig@0.1", &chain_hash)?;
+
+        let require_tpm = env_truthy("RITMA_OUT_REQUIRE_TPM");
+        if let Ok(mut attestor) = node_keystore::TpmAttestor::from_env() {
+            match attestor.attest(&chain_hash) {
+                Ok(res) if res.success => {
+                    if let Some(quote) = res.quote {
+                        let binding = node_keystore::AttestationBinding::from_quote(&quote);
+                        let q_path = proofs.join("tpm_quote.cbor");
+                        let b_path = proofs.join("tpm_binding.cbor");
+
+                        let qf = std::fs::File::create(q_path)?;
+                        ciborium::into_writer(&quote, qf).map_err(std::io::Error::other)?;
+
+                        let bf = std::fs::File::create(b_path)?;
+                        let b_tuple = (
+                            "ritma-tpm-binding@0.1",
+                            binding.quote_hash,
+                            binding.pcr_digest,
+                            binding.hardware_tpm,
+                            binding.timestamp,
+                            binding.node_id,
+                        );
+                        ciborium::into_writer(&b_tuple, bf).map_err(std::io::Error::other)?;
+                    } else if require_tpm {
+                        return Err(std::io::Error::other("TPM attestation missing quote"));
+                    }
+                }
+                Ok(_) if require_tpm => {
+                    return Err(std::io::Error::other("TPM attestation failed"));
+                }
+                Err(e) if require_tpm => {
+                    return Err(std::io::Error::other(format!("TPM attestation error: {e}")));
+                }
+                _ => {}
+            }
+        } else if require_tpm {
+            return Err(std::io::Error::other("TPM attestor unavailable"));
+        }
 
         Ok(chain_hash)
     }
@@ -1053,7 +1377,9 @@ impl StorageContract {
                     Ok(sig) => (k.key_type.clone(), sig),
                     Err(e) => {
                         if require {
-                            return Err(std::io::Error::other(format!("keystore sign failed: {e}")));
+                            return Err(std::io::Error::other(format!(
+                                "keystore sign failed: {e}"
+                            )));
                         }
                         ("none".to_string(), String::new())
                     }
@@ -1175,15 +1501,11 @@ fn compute_chain_hash(prev_hour_root: &str, hour_root: &[u8; 32]) -> [u8; 32] {
     let mut h = sha2::Sha256::new();
     h.update(b"ritma-chain-hash@0.1");
 
-    if let Some(prev) = decode_32(prev_hour_root) {
-        h.update(b"prev=hex32");
-        h.update(prev);
-    } else {
-        h.update(b"prev=text");
-        h.update(prev_hour_root.as_bytes());
-    }
-
-    h.update(b"hour=");
+    let prev = decode_32(prev_hour_root).unwrap_or_else(|| {
+        use sha2::Digest;
+        sha2::Sha256::digest(prev_hour_root.as_bytes()).into()
+    });
+    h.update(prev);
     h.update(hour_root);
     h.finalize().into()
 }
@@ -1259,7 +1581,7 @@ fn parse_accounting_entry(v: &ciborium::value::Value) -> Option<(u64, u64, u64, 
     Some((events, bytes_raw, bytes_compressed, bytes_deduped))
 }
 
-fn merkle_root_sha256(leaves: &[[u8; 32]]) -> [u8; 32] {
+pub(crate) fn merkle_root_sha256(leaves: &[[u8; 32]]) -> [u8; 32] {
     if leaves.is_empty() {
         let mut h = sha2::Sha256::new();
         h.update(b"ritma-merkle-empty@0.1");
@@ -1271,7 +1593,11 @@ fn merkle_root_sha256(leaves: &[[u8; 32]]) -> [u8; 32] {
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
-            let right = if i + 1 < level.len() { level[i + 1] } else { left };
+            let right = if i + 1 < level.len() {
+                level[i + 1]
+            } else {
+                left
+            };
             let mut h = sha2::Sha256::new();
             h.update(b"ritma-merkle-node@0.1");
             h.update(left);
@@ -1291,10 +1617,7 @@ fn resolve_path_env_or_default(
     for n in names {
         if let Some(v) = env_nonempty(n) {
             if v.len() > 4096 {
-                return Err(ContractError::InvalidEnv(
-                    n,
-                    "too long".to_string(),
-                ));
+                return Err(ContractError::InvalidEnv(n, "too long".to_string()));
             }
             if v.contains('\0') {
                 return Err(ContractError::InvalidEnv(

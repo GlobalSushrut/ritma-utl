@@ -1,9 +1,11 @@
 [Unit]
 Description=Ritma Tracer Sidecar (CCTV Agent)
 After=network.target
+ConditionSecurity=apparmor
 
 [Service]
 Type=simple
+ExecStartPre=/sbin/apparmor_parser -r -W /etc/apparmor.d/ritma-tracer-sidecar.apparmor
 ExecStart=/usr/local/bin/tracer_sidecar
 Restart=always
 RestartSec=2

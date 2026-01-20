@@ -260,8 +260,8 @@ pub struct DailyCatalogWriter {
 impl DailyCatalogWriter {
     pub fn new(catalog_dir: &Path, date: &str, node_id: &str) -> std::io::Result<Self> {
         let day_dir = catalog_dir
-            .join(&date[0..4])  // YYYY
-            .join(&date[5..7])  // MM
+            .join(&date[0..4]) // YYYY
+            .join(&date[5..7]) // MM
             .join(&date[8..10]); // DD
         std::fs::create_dir_all(&day_dir)?;
 
@@ -282,7 +282,10 @@ impl DailyCatalogWriter {
 
     /// Record a process execution for top-N tracking
     pub fn record_process(&mut self, process_name: &str) {
-        *self.process_counts.entry(process_name.to_string()).or_insert(0) += 1;
+        *self
+            .process_counts
+            .entry(process_name.to_string())
+            .or_insert(0) += 1;
         self.catalog.sketches.event_counts.proc_exec += 1;
     }
 
@@ -320,10 +323,18 @@ impl DailyCatalogWriter {
     /// Finalize and write the catalog
     pub fn finalize(&mut self, top_n: usize) -> std::io::Result<PathBuf> {
         // Build top-N lists
-        self.catalog.sketches.set_top_processes(self.top_n(&self.process_counts, top_n));
-        self.catalog.sketches.set_top_outbound_ips(self.top_n(&self.ip_counts, top_n));
-        self.catalog.sketches.set_top_files(self.top_n(&self.file_counts, top_n));
-        self.catalog.sketches.set_top_users(self.top_n(&self.user_counts, top_n));
+        self.catalog
+            .sketches
+            .set_top_processes(self.top_n(&self.process_counts, top_n));
+        self.catalog
+            .sketches
+            .set_top_outbound_ips(self.top_n(&self.ip_counts, top_n));
+        self.catalog
+            .sketches
+            .set_top_files(self.top_n(&self.file_counts, top_n));
+        self.catalog
+            .sketches
+            .set_top_users(self.top_n(&self.user_counts, top_n));
 
         // Write compressed catalog
         let path = self.catalog_dir.join("day.cbor.zst");
@@ -403,7 +414,12 @@ impl DailyCatalogReader {
         Ok(())
     }
 
-    fn scan_months(&self, year_dir: &Path, year: &str, dates: &mut Vec<String>) -> std::io::Result<()> {
+    fn scan_months(
+        &self,
+        year_dir: &Path,
+        year: &str,
+        dates: &mut Vec<String>,
+    ) -> std::io::Result<()> {
         for month_entry in std::fs::read_dir(year_dir)?.flatten() {
             if !month_entry.file_type()?.is_dir() {
                 continue;
@@ -417,7 +433,13 @@ impl DailyCatalogReader {
         Ok(())
     }
 
-    fn scan_days(&self, month_dir: &Path, year: &str, month: &str, dates: &mut Vec<String>) -> std::io::Result<()> {
+    fn scan_days(
+        &self,
+        month_dir: &Path,
+        year: &str,
+        month: &str,
+        dates: &mut Vec<String>,
+    ) -> std::io::Result<()> {
         for day_entry in std::fs::read_dir(month_dir)?.flatten() {
             if !day_entry.file_type()?.is_dir() {
                 continue;
@@ -435,8 +457,7 @@ impl DailyCatalogReader {
 }
 
 fn parse_catalog(data: &[u8]) -> std::io::Result<DailyCatalog> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid catalog format"));

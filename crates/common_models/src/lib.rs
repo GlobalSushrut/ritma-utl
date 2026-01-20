@@ -2,7 +2,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub mod causal;
+pub mod coverage;
+pub mod dns;
+pub mod proofpack;
 pub mod validation;
+
+pub use causal::{
+    compare_events, sort_events_causally, CausalMetadata, CausalOrder, CausalTracer, LamportClock,
+    VectorClock,
+};
 
 #[derive(Debug, Error)]
 pub enum ModelError {
@@ -28,7 +37,7 @@ pub enum TraceSourceKind {
     Runtime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TraceEventKind {
     ProcExec,
@@ -37,6 +46,26 @@ pub enum TraceEventKind {
     DnsQuery,
     Auth,
     PrivChange,
+    /// Sensor tamper detected (e.g. eBPF probe detached and reattached)
+    SensorTamper,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsQueryTarget {
+    #[serde(default)]
+    pub query_name: Option<String>,
+    #[serde(default)]
+    pub query_name_hash: Option<String>,
+    #[serde(default)]
+    pub query_type: Option<String>,
+    #[serde(default)]
+    pub response_ips: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_ips_hash: Option<String>,
+    #[serde(default)]
+    pub resolver: Option<String>,
+    #[serde(default)]
+    pub resolver_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +74,22 @@ pub struct TraceActor {
     pub ppid: i64,
     pub uid: i64,
     pub gid: i64,
+    #[serde(default)]
+    pub net_ns: Option<u64>,
+    #[serde(default)]
+    pub auid: Option<i64>,
+    #[serde(default)]
+    pub ses: Option<i64>,
+    #[serde(default)]
+    pub tty: Option<String>,
+    #[serde(default)]
+    pub euid: Option<i64>,
+    #[serde(default)]
+    pub suid: Option<i64>,
+    #[serde(default)]
+    pub fsuid: Option<i64>,
+    #[serde(default)]
+    pub egid: Option<i64>,
     #[serde(default)]
     pub comm_hash: Option<String>,
     #[serde(default)]
@@ -69,6 +114,20 @@ pub struct TraceTarget {
     pub dst: Option<String>,
     #[serde(default)]
     pub domain_hash: Option<String>,
+    #[serde(default)]
+    pub protocol: Option<String>,
+    #[serde(default)]
+    pub src: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub dns: Option<DnsQueryTarget>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub inode: Option<u64>,
+    #[serde(default)]
+    pub file_op: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +138,14 @@ pub struct TraceAttrs {
     pub cwd_hash: Option<String>,
     #[serde(default)]
     pub bytes_out: Option<i64>,
+    #[serde(default)]
+    pub argv: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub bytes_in: Option<i64>,
+    #[serde(default)]
+    pub env_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +160,15 @@ pub struct TraceEvent {
     pub actor: TraceActor,
     pub target: TraceTarget,
     pub attrs: TraceAttrs,
+    /// Causal ordering: Lamport timestamp for this event
+    #[serde(default)]
+    pub lamport_ts: Option<u64>,
+    /// Causal ordering: Parent event trace_id (if causally dependent)
+    #[serde(default)]
+    pub causal_parent: Option<String>,
+    /// Causal ordering: Vector clock state (node_id -> logical_time)
+    #[serde(default)]
+    pub vclock: Option<std::collections::BTreeMap<String, u64>>,
 }
 
 // ML advisory score
@@ -511,6 +587,14 @@ mod tests {
                 ppid: 1,
                 uid: 1000,
                 gid: 1000,
+                net_ns: None,
+                auid: None,
+                ses: None,
+                tty: None,
+                euid: None,
+                suid: None,
+                fsuid: None,
+                egid: None,
                 comm_hash: None,
                 exe_hash: None,
                 comm: None,
@@ -523,23 +607,46 @@ mod tests {
                 path_hash: Some("path_hash_1".to_string()),
                 dst: None,
                 domain_hash: None,
+                protocol: None,
+                src: None,
+                state: None,
+                dns: None,
+                path: None,
+                inode: None,
+                file_op: None,
             },
             attrs: TraceAttrs {
                 argv_hash: Some("argv_hash_1".to_string()),
                 cwd_hash: Some("cwd_hash_1".to_string()),
                 bytes_out: None,
+                argv: None,
+                cwd: None,
+                bytes_in: None,
+                env_hash: None,
             },
+            lamport_ts: None,
+            causal_parent: None,
+            vclock: None,
         };
 
         let json = serde_json::to_string(&te).unwrap();
 
         // Verify deterministic serialization
         let json2 = serde_json::to_string(&te).unwrap();
-        assert_eq!(json, json2, "TraceEvent serialization must be deterministic");
+        assert_eq!(
+            json, json2,
+            "TraceEvent serialization must be deterministic"
+        );
 
         // Verify enum serialization uses SCREAMING_SNAKE_CASE
-        assert!(json.contains("\"AUDITD\""), "source should be SCREAMING_SNAKE_CASE");
-        assert!(json.contains("\"PROC_EXEC\""), "kind should be SCREAMING_SNAKE_CASE");
+        assert!(
+            json.contains("\"AUDITD\""),
+            "source should be SCREAMING_SNAKE_CASE"
+        );
+        assert!(
+            json.contains("\"PROC_EXEC\""),
+            "kind should be SCREAMING_SNAKE_CASE"
+        );
 
         // Verify required fields
         assert!(json.contains("\"trace_id\""));
@@ -577,7 +684,10 @@ mod tests {
         assert_eq!(json, json2, "Verdict serialization must be deterministic");
 
         // Verify enum serialization uses snake_case
-        assert!(json.contains("\"intent_drift\""), "verdict_type should be snake_case");
+        assert!(
+            json.contains("\"intent_drift\""),
+            "verdict_type should be snake_case"
+        );
         assert!(json.contains("\"high\""), "severity should be snake_case");
 
         // Verify required fields
@@ -638,7 +748,10 @@ mod tests {
         // Hashes must match
         let hash1 = crate::hash_string_sha256(&json1);
         let hash2 = crate::hash_string_sha256(&json2);
-        assert_eq!(hash1, hash2, "Identical inputs must produce identical hashes");
+        assert_eq!(
+            hash1, hash2,
+            "Identical inputs must produce identical hashes"
+        );
     }
 }
 
@@ -721,6 +834,378 @@ pub fn verify_receipt_chain(receipts: &[Receipt]) -> bool {
     }
 
     true
+}
+
+// =============================================================================
+// Ritma v2 Forensic Page Standard (Normative)
+// =============================================================================
+
+/// Window Page v2 - The canonical signed statement for a one-minute window.
+/// This is the SCITT-like statement that everything else references.
+///
+/// Encoding: Deterministic CBOR (RFC 8949 §4.2)
+/// Map key ordering: Lexicographic by UTF-8 bytes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageV2 {
+    /// Page format version (always 2)
+    pub v: u32,
+    /// Namespace URI
+    pub ns: String,
+    /// Window boundaries
+    pub win: WindowPageWindow,
+    /// Sensor identity
+    pub sensor: WindowPageSensor,
+    /// Configuration hashes
+    pub cfg: WindowPageConfig,
+    /// Event counts for quick triage
+    pub counts: WindowPageCounts,
+    /// Trace evidence commitment
+    pub trace: WindowPageTrace,
+    /// BAR outputs commitment
+    pub bar: WindowPageBar,
+    /// SHA-256 of manifest.cbor
+    pub manifest_hash: String,
+    /// SHA-256 of custody_log.cbor
+    pub custody_log_hash: String,
+    /// RTSL commitment
+    pub rtsl: WindowPageRtsl,
+    /// Timestamps
+    pub time: WindowPageTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageWindow {
+    /// Window UUID
+    pub id: String,
+    /// Window start (RFC3339)
+    pub start: String,
+    /// Window end (RFC3339)
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageSensor {
+    /// Node identifier (RITMA_NODE_ID)
+    pub node_id: String,
+    /// tracer_sidecar version
+    pub tracer_ver: String,
+    /// bar_orchestrator version
+    pub bar_ver: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageConfig {
+    /// Effective config hash
+    pub config_hash: String,
+    /// Policy pack hash
+    pub policy_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageCounts {
+    /// trace_events count
+    pub events: u64,
+    /// attack_graph edges count
+    pub edges: u64,
+    /// evidence artifacts count
+    pub artifacts: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageTrace {
+    /// Privacy mode: "full" or "hash_only"
+    pub mode: String,
+    /// SHA-256 of trace_events.cbor
+    pub trace_cbor_hash: String,
+    /// Last event_hash in window (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_chain_head: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageBar {
+    /// SHA-256 of features.cbor
+    pub features_hash: String,
+    /// SHA-256 of attack_graph.cbor
+    pub graph_hash: String,
+    /// SHA-256 of ml_result.cbor
+    pub ml_hash: String,
+    /// SHA-256 of verdict.cbor
+    pub verdict_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageRtsl {
+    /// CT-style leaf hash
+    pub leaf_hash: String,
+    /// Position in log (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf_index: Option<u64>,
+    /// STH hash reference
+    pub sth_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPageTime {
+    /// Seal timestamp (RFC3339)
+    pub sealed_ts: String,
+    /// RFC 3161 token hash (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tsa_token_hash: Option<String>,
+}
+
+impl WindowPageV2 {
+    /// Compute SHA-256 hash of the canonical CBOR encoding of this page.
+    /// This is the value committed to RTSL.
+    pub fn compute_page_hash(&self) -> String {
+        let cbor_bytes = self.to_canonical_cbor();
+        hash_bytes_sha256(&cbor_bytes)
+    }
+
+    /// Serialize to deterministic CBOR bytes.
+    /// Keys are sorted lexicographically per RFC 8949 §4.2.
+    pub fn to_canonical_cbor(&self) -> Vec<u8> {
+        // Use ciborium with sorted keys for deterministic encoding
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf).expect("CBOR serialization failed");
+        buf
+    }
+}
+
+/// RTSL Leaf Payload v2 - Minimal routing envelope for transparency log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RtslLeafPayloadV2 {
+    /// RTSL version (always 2)
+    pub v: u32,
+    /// Namespace
+    pub ns: String,
+    /// Window UUID
+    pub win_id: String,
+    /// Window start (unix timestamp seconds)
+    pub start: i64,
+    /// Window end (unix timestamp seconds)
+    pub end: i64,
+    /// SHA-256 of window_page.cbor
+    pub page_hash: String,
+}
+
+impl RtslLeafPayloadV2 {
+    /// Compute CT-style leaf hash with domain separation.
+    /// leaf_hash = SHA-256(0x00 || canonical_cbor(self))
+    pub fn compute_leaf_hash(&self) -> String {
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf).expect("CBOR serialization failed");
+
+        let mut hasher = Sha256::new();
+        hasher.update([0x00]); // Leaf domain separator per RFC 9162 §2.1
+        hasher.update(&buf);
+        hex::encode(hasher.finalize())
+    }
+
+    /// Serialize to deterministic CBOR bytes.
+    pub fn to_canonical_cbor(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf).expect("CBOR serialization failed");
+        buf
+    }
+}
+
+/// Signed Tree Head (STH) for RTSL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedTreeHeadV2 {
+    /// STH version (always 2)
+    pub v: u32,
+    /// Log identity (hash of log public key)
+    pub log_id: String,
+    /// Number of leaves
+    pub tree_size: u64,
+    /// Merkle root hash
+    pub root_hash: String,
+    /// STH timestamp (RFC3339)
+    pub timestamp: String,
+    /// COSE_Sign1 detached signature (base64)
+    pub signature: String,
+}
+
+/// RTSL Receipt with inclusion proof.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RtslReceiptV2 {
+    /// Version (always 2)
+    pub v: u32,
+    /// Leaf index in the log
+    pub leaf_index: u64,
+    /// Leaf hash
+    pub leaf_hash: String,
+    /// Inclusion proof path
+    pub inclusion_path: Vec<InclusionPathNode>,
+    /// Signed Tree Head
+    pub sth: SignedTreeHeadV2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InclusionPathNode {
+    /// "L" or "R" indicating sibling position
+    pub side: String,
+    /// Sibling hash
+    pub hash: String,
+}
+
+impl RtslReceiptV2 {
+    /// Verify the inclusion proof against the STH root.
+    pub fn verify_inclusion(&self) -> bool {
+        let mut current_hash = hex::decode(&self.leaf_hash).unwrap_or_default();
+
+        for node in &self.inclusion_path {
+            let sibling = hex::decode(&node.hash).unwrap_or_default();
+            let mut hasher = Sha256::new();
+            hasher.update([0x01]); // Node domain separator
+
+            if node.side == "L" {
+                hasher.update(&sibling);
+                hasher.update(&current_hash);
+            } else {
+                hasher.update(&current_hash);
+                hasher.update(&sibling);
+            }
+            current_hash = hasher.finalize().to_vec();
+        }
+
+        hex::encode(&current_hash) == self.sth.root_hash
+    }
+}
+
+/// Manifest v2 for proofpack artifacts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestV2 {
+    /// Version (always 2)
+    pub v: u32,
+    /// List of artifacts
+    pub artifacts: Vec<ManifestArtifact>,
+    /// Privacy settings
+    pub privacy: ManifestPrivacy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestArtifact {
+    /// File name
+    pub name: String,
+    /// SHA-256 hash
+    pub sha256: String,
+    /// Size in bytes
+    pub size: u64,
+    /// Optional CAS reference path
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cas_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestPrivacy {
+    /// Privacy mode: "full", "hash_only", or "hybrid"
+    pub mode: String,
+    /// List of redaction types applied
+    pub redactions: Vec<String>,
+}
+
+/// Custody Log Entry v2 (court/audit friendly).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustodyLogEntryV2 {
+    /// RFC 3339 timestamp
+    pub ts: String,
+    /// Actor identifier (node_id / user / service)
+    pub actor_id: String,
+    /// Session identifier (ties actions within process lifetime)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Tool that performed the action
+    pub tool: String,
+    /// Action type
+    pub action: String,
+    /// Namespace (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace_id: Option<String>,
+    /// Window ID (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+    /// Hash of affected data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_hash: Option<String>,
+    /// Details (CBOR-encoded for canonicalization)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+    /// Previous log entry hash (for chain)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prev_log_hash: Option<String>,
+    /// Hash of this entry
+    pub log_hash: String,
+}
+
+/// Custody Log Export v2 for proofpack.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustodyLogExportV2 {
+    /// Version (always 2)
+    pub v: u32,
+    /// Log entries for this window
+    pub entries: Vec<CustodyLogEntryV2>,
+    /// Whether the chain is valid
+    pub chain_valid: bool,
+}
+
+/// Prune tombstone details for audit trail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneTombstone {
+    /// Deleted range
+    pub deleted_range: DeletedRange,
+    /// Hash of deleted events
+    pub deleted_events_hash: String,
+    /// RTSL leaf hash that sealed this window
+    pub sealed_leaf_hash: String,
+    /// STH hash at time of seal
+    pub sth_hash: String,
+    /// Hash of the tombstone itself
+    pub tombstone_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedRange {
+    /// Namespace
+    pub ns: String,
+    /// Start timestamp (unix seconds)
+    pub start: i64,
+    /// End timestamp (unix seconds)
+    pub end: i64,
+    /// Number of events deleted
+    pub count: u64,
+}
+
+impl PruneTombstone {
+    /// Compute the tombstone hash from the deleted range.
+    pub fn compute_tombstone_hash(range: &DeletedRange, deleted_events_hash: &str) -> String {
+        let payload = serde_json::json!({
+            "ns": range.ns,
+            "start": range.start,
+            "end": range.end,
+            "count": range.count,
+            "deleted_events_hash": deleted_events_hash
+        });
+        hash_string_sha256(&payload.to_string())
+    }
+}
+
+/// Compute SHA-256 hash of raw bytes, returned as lowercase hex string.
+pub fn hash_bytes_sha256(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+/// Compute Merkle node hash with domain separation.
+/// node_hash = SHA-256(0x01 || left || right)
+pub fn merkle_node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update([0x01]); // Node domain separator
+    hasher.update(left);
+    hasher.update(right);
+    hasher.finalize().into()
 }
 
 #[cfg(test)]

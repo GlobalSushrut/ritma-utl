@@ -1,0 +1,65 @@
+# Ritma Configuration
+# See https://ritma.io/docs/config for full documentation
+
+version: "1.0"
+namespace: my-app-prod
+
+node:
+  id: node-001
+  labels:
+    environment: production
+    region: us-east-1
+    team: security
+
+storage:
+  base_dir: /var/lib/ritma
+  out_dir: /var/lib/ritma/out
+  cas_enabled: true
+  retention_days: 90
+
+capture:
+  window_seconds: 300
+  privacy_mode: full
+  watch_paths:
+    - /etc/passwd
+    - /etc/shadow
+    - /var/log/auth.log
+    - /home/*/.ssh/authorized_keys
+  watch_processes:
+    - sshd
+    - sudo
+    - docker
+  exclude_paths:
+    - /var/lib/ritma
+    - /tmp
+
+ml:
+  enabled: true
+  threshold: 0.7
+  models:
+    - anomaly
+    - behavior
+    - threat
+
+alerts:
+  enabled: true
+  channels:
+    - type: webhook
+      url: https://hooks.slack.com/services/xxx
+      severity: high
+    - type: email
+      email: security@company.com
+      severity: critical
+
+compliance:
+  frameworks:
+    - pipeda
+    - sox
+  audit_log: true
+
+deploy:
+  type: kubernetes
+  replicas: 3
+  resources:
+    memory: 512Mi
+    cpu: 200m

@@ -1,0 +1,32 @@
+scenario:
+  name: baseline-traffic
+  description: "Normal traffic baseline for 60 seconds"
+  duration_seconds: 60
+  seed: 42
+
+phases:
+  - name: warmup
+    start: 0
+    duration: 15
+    traffic:
+      type: normal
+      rps: 10
+
+  - name: steady
+    start: 15
+    duration: 30
+    traffic:
+      type: normal
+      rps: 20
+
+  - name: cooldown
+    start: 45
+    duration: 15
+    traffic:
+      type: normal
+      rps: 5
+
+assertions:
+  - type: event_count
+    filter: "kind=HttpRequest"
+    min: 500

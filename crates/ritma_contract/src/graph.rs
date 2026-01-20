@@ -82,11 +82,11 @@ impl EdgeFlags {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
     pub edge_type: EdgeType,
-    pub src_id: u64,      // Dictionary ID of source node
-    pub dst_id: u64,      // Dictionary ID of destination node
-    pub timestamp: i64,   // Unix timestamp (seconds)
+    pub src_id: u64,    // Dictionary ID of source node
+    pub dst_id: u64,    // Dictionary ID of destination node
+    pub timestamp: i64, // Unix timestamp (seconds)
     pub flags: EdgeFlags,
-    pub weight: u32,      // Edge weight/count for aggregation
+    pub weight: u32, // Edge weight/count for aggregation
 }
 
 impl Edge {
@@ -226,7 +226,9 @@ impl HourlyEdgeWriter {
     }
 
     fn write_edge_segment(&self, edge_type: EdgeType, edges: &[Edge]) -> std::io::Result<PathBuf> {
-        let path = self.hour_dir.join(format!("{}.edges.cbor.zst", edge_type.name()));
+        let path = self
+            .hour_dir
+            .join(format!("{}.edges.cbor.zst", edge_type.name()));
 
         // Build adjacency lists grouped by src_id
         let mut adj_map: HashMap<u64, AdjacencyList> = HashMap::new();
@@ -265,11 +267,7 @@ impl HourlyEdgeWriter {
         std::fs::create_dir_all(window_index_dir)?;
         let path = window_index_dir.join("edge_refs.cbor");
 
-        let edge_types: Vec<&str> = self
-            .edges_by_type
-            .keys()
-            .map(|t| t.name())
-            .collect();
+        let edge_types: Vec<&str> = self.edges_by_type.keys().map(|t| t.name()).collect();
 
         let tuple = (
             "ritma-edge-refs@0.1",

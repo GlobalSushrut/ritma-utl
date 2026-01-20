@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "ritma_lab",
+    "ritma_lab_proto",
+    "ritma_lab_node",
+]
+
+# Link to main Ritma workspace crates
+[patch.crates-io]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Real Ritma from main workspace - use the SAME pipeline as tracer_sidecar + bar_orchestrator
+ritma_contract = { path = "../../crates/ritma_contract" }
+common_models = { path = "../../crates/common_models" }
+index_db = { path = "../../crates/index_db" }
+bar_orchestrator = { path = "../../crates/bar_orchestrator" }
+security_interfaces = { path = "../../crates/security_interfaces" }
+forensic_ml = { path = "../../crates/forensic_ml" }
+snapshotter = { path = "../../crates/snapshotter" }
+proof_standards = { path = "../../crates/proof_standards" }
+
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+ciborium = "0.2"
+sha2 = "0.10"
+blake3 = "1.5"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4", "v7"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+async-trait = "0.1"
+hex = "0.4"

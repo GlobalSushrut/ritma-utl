@@ -1,0 +1,71 @@
+scenario:
+  name: financial-transaction-audit
+  description: "Trading workflow with authorization, execution, and fraud detection"
+  duration_seconds: 120
+  seed: 42
+
+phases:
+  - name: normal_trading
+    start: 0
+    duration: 40
+    traffic:
+      type: trading
+      rps: 25
+      params:
+        traders:
+          - user: trader_1
+            orders_per_minute: 10
+            instruments: ["AAPL", "GOOGL", "MSFT"]
+          - user: trader_2
+            orders_per_minute: 15
+            instruments: ["AMZN", "META"]
+
+  - name: large_order_authorization
+    start: 40
+    duration: 20
+    events:
+      - type: large_order
+        user: trader_1
+        instrument: "AAPL"
+        quantity: 10000
+        amount: 1000000
+        requires_authorization: true
+        authorizer: supervisor_1
+        dual_control: true
+
+  - name: suspicious_pattern
+    start: 60
+    duration: 30
+    traffic:
+      type: trading
+      rps: 40
+      params:
+        patterns:
+          - type: potential_wash_trade
+            user: trader_3
+            counterparty: trader_3_alt
+            instrument: "TSLA"
+
+  - name: fraud_detection
+    start: 90
+    duration: 30
+    events:
+      - type: fraud_alert
+        signal: wash_trade
+        confidence: 0.85
+        related_orders: ["ord_123", "ord_124"]
+        action: block_and_review
+
+assertions:
+  - type: event_count
+    filter: "kind=OrderSubmitted"
+    min: 1000
+  - type: event_count
+    filter: "kind=TradeExecuted"
+    min: 800
+  - type: event_count
+    filter: "kind=OrderAuthorized AND dual_control=true"
+    min: 1
+  - type: event_count
+    filter: "kind=FraudSignal"
+    min: 1

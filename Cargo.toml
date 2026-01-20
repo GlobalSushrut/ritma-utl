@@ -1,91 +1,124 @@
 [workspace]
 resolver = "2"
 members = [
+    # Core types and utilities
     "crates/core_types",
-    "crates/sot_root",
     "crates/clock",
-    "crates/handshake",
-    "crates/tata",
-    "crates/dig_mem",
-    "crates/utld",
-    "crates/entropy_tree",
-    "crates/tracer",
-    "crates/distillium",
-    "crates/trust_container",
-    "crates/truthscript",
-    "crates/policy_engine",
-    "crates/zk_snark",
-    "crates/utl_client",
-    "crates/utl_core",
-    "crates/utl_cli",
-    "crates/utl_http",
-    "crates/tenant_policy",
+    "crates/common_models",
+    
+    # Security and forensics core
+    "crates/security_interfaces",
+    "crates/security_events",
+    "crates/security_kit",
     "crates/security_os",
     "crates/security_tools",
-    "crates/dig_index",
-    "crates/utl_forensics",
-    "crates/forensics_store",
-    "crates/security_events",
     "crates/security_host",
-    "crates/utl_cue",
+    
+    # Index and storage
+    "crates/index_db",
     "crates/ritma_contract",
-    "crates/biz_api",
+    "crates/forensics_store",
+    "crates/evidence_package",
+    "crates/node_keystore",
+    
+    # BAR pipeline
+    "crates/bar_core",
+    "crates/bar_config",
+    "crates/bar_pipeline",
+    "crates/bar_powers",
+    "crates/bar_orchestrator",
+    "crates/bar_daemon",
+    "crates/bar_client",
+    
+    # ML and detection
+    "crates/ml_runner",
+    "crates/ml_anomaly",
+    "crates/ml_detector",
+    "crates/forensic_ml",
+    "crates/threat_detection",
+    "crates/attack_graph",
+    "crates/fileless_detector",
+    "crates/apt_tracker",
+    
+    # Policy and compliance
+    "crates/policy_engine",
     "crates/policy_store",
     "crates/compliance_model",
     "crates/compliance_engine",
     "crates/compliance_index",
-    "crates/compliance_rulepacks",
-    "crates/svc_ledger",
-    "crates/security_kit",
-    "crates/node_keystore",
-    "crates/evidence_package",
-    "crates/common_models",
-    "crates/ritma_cloud",
-    "crates/billing_daemon",
-    "crates/payment_client",
-    "crates/compliance_console_api",
-    "crates/node_controller_api",
-    "crates/bar_core",
-    "crates/bar_daemon",
-    "crates/ritma_cli",
-    "crates/ritma_demo_workload",
-    "crates/bar_client",
-    "crates/index_db",
-    "crates/bar_powers",
-    "crates/bar_pipeline",
-    "crates/namespaces",
-    "crates/contracts",
-    "crates/cyber_funnel",
-    "crates/redis_queue",
-    "crates/intent_power",
-    "crates/proof_standards",
-    "crates/middleware_adapters",
-    "crates/bar_config",
-    "crates/threat_detection",
     "crates/compliance_packs",
-    "crates/security_interfaces",
-    "crates/ml_runner",
-    "crates/bar_orchestrator",
-    "crates/tracer_sidecar",
-    "crates/ritma",
-    "crates/window_summarizer",
-    "crates/attack_graph",
-    "crates/snapshotter",
-    "crates/trust_hardening",
+    "crates/compliance_rulepacks",
+    "crates/tenant_policy",
     "crates/judge_contracts",
-    "crates/privacy_engine",
+    "crates/proof_standards",
+    
+    # Tracing and capture
+    "crates/tracer",
+    "crates/tracer_sidecar",
+    "crates/snapshotter",
+    "crates/window_summarizer",
     "crates/ebpf_provider",
-    "crates/observability",
-    "crates/fileless_detector",
     "crates/ebpf_hardening",
-    "crates/apt_tracker",
+    "crates/xdp_capture",
+    "crates/observability",
+    
+    # Container and K8s
     "crates/container_security",
+    "crates/container_hooks",
+    "crates/k8s_admission",
+    
+    # Advanced forensics
     "crates/memory_forensics",
     "crates/network_analysis",
     "crates/hardware_monitor",
-    "crates/ml_detector",
+    "crates/privacy_engine",
+    "crates/time_travel",
+    
+    # Infrastructure
+    "crates/namespaces",
+    "crates/contracts",
+    "crates/cyber_funnel",
+    "crates/intent_power",
+    "crates/middleware_adapters",
+    "crates/distributed_consensus",
+    "crates/trust_hardening",
+    "crates/trust_container",
+    
+    # Legacy/UTL (keep for now)
+    "crates/sot_root",
+    "crates/handshake",
+    "crates/tata",
+    "crates/dig_mem",
+    "crates/dig_index",
+    "crates/entropy_tree",
+    "crates/distillium",
+    "crates/truthscript",
+    "crates/zk_snark",
+    "crates/utl_forensics",
+    "crates/svc_ledger",
+    
+    # CLI and demo
+    "crates/ritma_cli",
+    "crates/ritma",
+    "crates/ritma_demo_workload",
+    
+    # Tests
     "tests/integration",
 ]
+
+# Removed (UI/billing/cloud - not needed for core):
+# - billing_daemon
+# - payment_client  
+# - ritma_cloud
+# - compliance_console_api
+# - node_controller_api
+# - biz_api
+# - utld
+# - utl_client
+# - utl_cli
+# - utl_http
+# - utl_cue
+# - redis_queue
 
  default-members = [
      "crates/ritma_cli",

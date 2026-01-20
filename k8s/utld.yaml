@@ -24,11 +24,20 @@ spec:
     metadata:
       labels:
         app: utld
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/utld: localhost/ritma-utld
     spec:
       containers:
       - name: utld
         image: ritma/utld:latest
         imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+          appArmorProfile:
+            type: Localhost
+            localhostProfile: ritma-utld
         ports:
         - containerPort: 8088
         env:

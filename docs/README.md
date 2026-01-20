@@ -6,18 +6,18 @@ This page is the canonical index of documentation intended for GitHub.
 
 ---
 
-## Public / OSS docs (recommended)
+## Public docs (recommended)
 
-- `ARCHITECTURE.md` — what exists now, data flows, and boundaries
-- `CLI_REFERENCE.md` — current `ritma`/`ritma_cli` commands
-- `EVIDENCE_AND_ATTESTATION.md` — artifacts produced today and how to verify them
-- `PILOT_READINESS_CHECKLIST.md` — pilot-ready runbooks (5 wedges) + institutional hardening checklist
-- `UX_GATE.md` — UX acceptance checklist / contract
-- `RITMA_UX_CONTRACT_30_COMMANDS.md` — command tree contract
+- `index.md` — landing page (used by GitHub Pages)
+- `ARCHITECTURE.md` — architecture overview and data flows
+- `production_setup.md` — installation and production deployment
+- `CLI_REFERENCE.md` — current `ritma` commands
+- `ritma_transparency_forensics.md` — forensic page standard
+- `RTSL_SPEC.md` — RTSL specification
+- `EEC_SPEC.md` — EEC specification
 
 ---
 
-## Internal / legacy / deployment-heavy docs
+## Notes
 
-The repo historically contained additional deployment/pilot/enterprise planning documents.
-For GitHub cleanliness, those have been moved into `.local_archive/` and are intentionally not pushed.
+Older internal planning documents were moved out of `docs/` to keep the public surface area clean.

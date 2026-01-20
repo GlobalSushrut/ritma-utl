@@ -218,8 +218,8 @@ impl Default for TriggerPolicy {
     fn default() -> Self {
         Self {
             enabled_triggers: TriggerType::all().iter().copied().collect(),
-            thick_duration_secs: 300,  // 5 minutes
-            full_duration_secs: 3600,  // 1 hour
+            thick_duration_secs: 300, // 5 minutes
+            full_duration_secs: 3600, // 1 hour
             secrets_paths: vec![
                 "/etc/shadow".to_string(),
                 "/etc/passwd".to_string(),
@@ -373,8 +373,7 @@ impl TriggerAuditLog {
 }
 
 fn parse_trigger_event(data: &[u8]) -> std::io::Result<TriggerEvent> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid trigger format"));

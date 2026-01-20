@@ -3,9 +3,20 @@ use common_models::{
     WindowRange,
 };
 use privacy_engine::PrivacyEngine;
+use ritma_contract::cas::CasStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::process::Command;
+
+fn env_truthy(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSnapshot {
@@ -205,14 +216,64 @@ pub struct CyberTrace {
 pub struct Snapshotter {
     privacy: PrivacyEngine,
     fileless_detector: fileless_detector::FilelessDetector,
+    cas: Option<CasStore>,
 }
 
 impl Snapshotter {
     pub fn new(namespace_id: &str) -> Self {
+        // Initialize CAS if RITMA_CAS_DISABLE is not set
+        // CAS path: $RITMA_OUT_DIR/cas or $RITMA_BASE_DIR/cas
+        let cas = if !env_truthy("RITMA_CAS_DISABLE") {
+            let cas_dir = std::env::var("RITMA_OUT_DIR")
+                .or_else(|_| std::env::var("RITMA_BASE_DIR"))
+                .map(|d| std::path::PathBuf::from(d).join("cas"))
+                .unwrap_or_else(|_| std::path::PathBuf::from("/var/lib/ritma/cas"));
+            CasStore::open(&cas_dir).ok()
+        } else {
+            None
+        };
+
         Self {
             privacy: PrivacyEngine::new(namespace_id),
             fileless_detector: fileless_detector::FilelessDetector::new(),
+            cas,
         }
+    }
+
+    /// Store artifact bytes to CAS and return the root hash.
+    /// Returns None if CAS is disabled or store fails.
+    fn store_to_cas(&self, data: &[u8]) -> Option<String> {
+        self.cas
+            .as_ref()
+            .and_then(|cas| cas.store_data(data).ok().map(|m| hex::encode(m.root_hash)))
+    }
+
+    /// Serialize data to CBOR, compute hash, optionally store to CAS, return ArtifactMeta.
+    fn serialize_and_store<T: serde::Serialize>(
+        &self,
+        name: &str,
+        data: &T,
+    ) -> Option<ArtifactMeta> {
+        let mut cbor_buf = Vec::new();
+        if ciborium::into_writer(data, &mut cbor_buf).is_err() {
+            return None;
+        }
+        let hash = self.hash_content_bytes(&cbor_buf);
+
+        // Store to CAS if enabled (per spec §4 - evidence store)
+        let _cas_ref = self.store_to_cas(&cbor_buf);
+
+        Some(ArtifactMeta {
+            name: name.to_string(),
+            sha256: hash,
+            size: cbor_buf.len() as u64,
+        })
+    }
+
+    fn hash_content_bytes(&self, content: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        hex::encode(hasher.finalize())
     }
 
     /// Get fileless malware alerts
@@ -244,7 +305,7 @@ impl Snapshotter {
             let trace_hash = self.hash_content(&trace_json);
 
             artifacts.push(ArtifactMeta {
-                name: "cyber_trace.json".to_string(),
+                name: "cyber_trace.cbor".to_string(),
                 sha256: trace_hash,
                 size: trace_json.len() as u64,
             });
@@ -256,7 +317,7 @@ impl Snapshotter {
             let topo_hash = self.hash_content(&topo_json);
 
             artifacts.push(ArtifactMeta {
-                name: "network_topology.json".to_string(),
+                name: "network_topology.cbor".to_string(),
                 sha256: topo_hash,
                 size: topo_json.len() as u64,
             });
@@ -270,7 +331,7 @@ impl Snapshotter {
             let mod_hash = self.hash_content(&mod_json);
 
             artifacts.push(ArtifactMeta {
-                name: "kernel_modules.json".to_string(),
+                name: "kernel_modules.cbor".to_string(),
                 sha256: mod_hash,
                 size: mod_json.len() as u64,
             });
@@ -287,7 +348,7 @@ impl Snapshotter {
             let proc_hash = self.hash_content(&proc_json);
 
             artifacts.push(ArtifactMeta {
-                name: "process_tree.json".to_string(),
+                name: "process_tree.cbor".to_string(),
                 sha256: proc_hash,
                 size: proc_json.len() as u64,
             });
@@ -304,7 +365,7 @@ impl Snapshotter {
             let sock_hash = self.hash_content(&sock_json);
 
             artifacts.push(ArtifactMeta {
-                name: "sockets.json".to_string(),
+                name: "sockets.cbor".to_string(),
                 sha256: sock_hash,
                 size: sock_json.len() as u64,
             });
@@ -319,7 +380,7 @@ impl Snapshotter {
             let tls_hash = self.hash_content(&tls_json);
 
             artifacts.push(ArtifactMeta {
-                name: "tls_connections.json".to_string(),
+                name: "tls_connections.cbor".to_string(),
                 sha256: tls_hash,
                 size: tls_json.len() as u64,
             });
@@ -338,7 +399,7 @@ impl Snapshotter {
                         let dump_hash = self.hash_content(&dump_json);
 
                         artifacts.push(ArtifactMeta {
-                            name: format!("memory_dump_{}.json", event.actor.pid),
+                            name: format!("memory_dump_{}.cbor", event.actor.pid),
                             sha256: dump_hash,
                             size: dump_json.len() as u64,
                         });
@@ -358,7 +419,7 @@ impl Snapshotter {
             let cont_hash = self.hash_content(&cont_json);
 
             artifacts.push(ArtifactMeta {
-                name: "containers.json".to_string(),
+                name: "containers.cbor".to_string(),
                 sha256: cont_hash,
                 size: cont_json.len() as u64,
             });
@@ -371,7 +432,7 @@ impl Snapshotter {
         let trace_hash = self.hash_content(&trace_json);
 
         artifacts.push(ArtifactMeta {
-            name: "trace_excerpt.json".to_string(),
+            name: "trace_excerpt.cbor".to_string(),
             sha256: trace_hash,
             size: trace_json.len() as u64,
         });
@@ -552,10 +613,15 @@ impl Snapshotter {
         if !pid.to_string().chars().all(|c| c.is_ascii_digit()) {
             return Err("Invalid PID format".to_string());
         }
-        
+
         // Sanitize dump_path - no shell metacharacters
-        let safe_dump_path = dump_path.replace(['$', '`', '\\', '"', '\'', ';', '&', '|', '<', '>', '(', ')', '{', '}', '\n', '\r'], "");
-        
+        let safe_dump_path = dump_path.replace(
+            [
+                '$', '`', '\\', '"', '\'', ';', '&', '|', '<', '>', '(', ')', '{', '}', '\n', '\r',
+            ],
+            "",
+        );
+
         let output = Command::new("gcore")
             .args(["-o", &safe_dump_path, &pid.to_string()])
             .output();
@@ -1115,17 +1181,20 @@ impl Snapshotter {
     ) -> Result<(String, String, String, Vec<CertificateInfo>), String> {
         // Use openssl s_client to get TLS info (simplified - in production use eBPF)
         // Validate server_ip format to prevent injection
-        if !server_ip.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':') {
+        if !server_ip
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ':')
+        {
             return Err("Invalid server IP format".to_string());
         }
-        
+
         let output = Command::new("timeout")
             .args([
                 "1",
                 "openssl",
                 "s_client",
                 "-connect",
-                &format!("{}:443", server_ip),
+                &format!("{server_ip}:443"),
                 "-servername",
                 server_ip,
             ])

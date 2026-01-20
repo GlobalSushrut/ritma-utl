@@ -1,0 +1,52 @@
+version: "1.0"
+metadata:
+  name: three-tier-demo
+  description: "Web → API → DB demo topology"
+  seed: 42
+
+nodes:
+  - id: node-web
+    role: frontend
+    resources:
+      memory: "256m"
+      cpu: "0.3"
+    ritma:
+      enabled: true
+      tier: 1
+      capture:
+        - http_access_logs
+        - application_logs
+
+  - id: node-api
+    role: backend
+    resources:
+      memory: "384m"
+      cpu: "0.4"
+    ritma:
+      enabled: true
+      tier: 2
+      capture:
+        - http_access_logs
+        - application_logs
+        - database_queries
+
+  - id: node-db
+    role: database
+    resources:
+      memory: "512m"
+      cpu: "0.5"
+    ritma:
+      enabled: true
+      tier: 1
+      capture:
+        - database_queries
+        - file_access
+
+networks:
+  - name: lab-internal
+    driver: bridge
+    nodes: [node-web, node-api, node-db]
+
+aggregator:
+  window_seconds: 5
+  export_path: "./output"

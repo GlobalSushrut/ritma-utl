@@ -113,25 +113,53 @@ impl ExtendedAccounting {
         let top_processes: Vec<(&str, &str, u64, u64)> = self
             .top_processes
             .iter()
-            .map(|t| (t.identifier.as_str(), t.talker_type.name(), t.event_count, t.bytes_generated))
+            .map(|t| {
+                (
+                    t.identifier.as_str(),
+                    t.talker_type.name(),
+                    t.event_count,
+                    t.bytes_generated,
+                )
+            })
             .collect();
 
         let top_services: Vec<(&str, &str, u64, u64)> = self
             .top_services
             .iter()
-            .map(|t| (t.identifier.as_str(), t.talker_type.name(), t.event_count, t.bytes_generated))
+            .map(|t| {
+                (
+                    t.identifier.as_str(),
+                    t.talker_type.name(),
+                    t.event_count,
+                    t.bytes_generated,
+                )
+            })
             .collect();
 
         let top_containers: Vec<(&str, &str, u64, u64)> = self
             .top_containers
             .iter()
-            .map(|t| (t.identifier.as_str(), t.talker_type.name(), t.event_count, t.bytes_generated))
+            .map(|t| {
+                (
+                    t.identifier.as_str(),
+                    t.talker_type.name(),
+                    t.event_count,
+                    t.bytes_generated,
+                )
+            })
             .collect();
 
         let top_users: Vec<(&str, &str, u64, u64)> = self
             .top_users
             .iter()
-            .map(|t| (t.identifier.as_str(), t.talker_type.name(), t.event_count, t.bytes_generated))
+            .map(|t| {
+                (
+                    t.identifier.as_str(),
+                    t.talker_type.name(),
+                    t.event_count,
+                    t.bytes_generated,
+                )
+            })
             .collect();
 
         let category = (
@@ -201,21 +229,30 @@ impl AccountingAccumulator {
     pub fn record_process_event(&mut self, process: &str, bytes: u64) {
         self.total_events += 1;
         self.bytes_raw += bytes;
-        let entry = self.process_stats.entry(process.to_string()).or_insert((0, 0));
+        let entry = self
+            .process_stats
+            .entry(process.to_string())
+            .or_insert((0, 0));
         entry.0 += 1;
         entry.1 += bytes;
     }
 
     /// Record an event from a service
     pub fn record_service_event(&mut self, service: &str, bytes: u64) {
-        let entry = self.service_stats.entry(service.to_string()).or_insert((0, 0));
+        let entry = self
+            .service_stats
+            .entry(service.to_string())
+            .or_insert((0, 0));
         entry.0 += 1;
         entry.1 += bytes;
     }
 
     /// Record an event from a container
     pub fn record_container_event(&mut self, container: &str, bytes: u64) {
-        let entry = self.container_stats.entry(container.to_string()).or_insert((0, 0));
+        let entry = self
+            .container_stats
+            .entry(container.to_string())
+            .or_insert((0, 0));
         entry.0 += 1;
         entry.1 += bytes;
     }
@@ -254,7 +291,8 @@ impl AccountingAccumulator {
     pub fn finalize(self, top_n: usize) -> ExtendedAccounting {
         let top_processes = self.top_n_talkers(&self.process_stats, TalkerType::Process, top_n);
         let top_services = self.top_n_talkers(&self.service_stats, TalkerType::Service, top_n);
-        let top_containers = self.top_n_talkers(&self.container_stats, TalkerType::Container, top_n);
+        let top_containers =
+            self.top_n_talkers(&self.container_stats, TalkerType::Container, top_n);
         let top_users = self.top_n_talkers(&self.user_stats, TalkerType::User, top_n);
 
         ExtendedAccounting {
@@ -352,8 +390,7 @@ impl ExtendedAccountingWriter {
 use chrono::Datelike;
 
 fn parse_extended_accounting(data: &[u8]) -> std::io::Result<ExtendedAccounting> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid extended accounting format"));

@@ -17,11 +17,20 @@ spec:
     metadata:
       labels:
         app: utl-http
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/utl-http: localhost/ritma-utl-http
     spec:
       containers:
         - name: utl-http
           image: ghcr.io/your-org/utl-http:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: ritma-utl-http
           env:
             - name: UTLD_SOCKET
               value: /run/ritma/utld.sock

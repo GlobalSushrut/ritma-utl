@@ -13,6 +13,7 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 libc = "0.2"
 sha2 = "0.10"
+hex = "0.4"
 ciborium = "0.2"
 common_models = { path = "../common_models" }
 index_db = { path = "../index_db" }
@@ -20,6 +21,7 @@ ritma_contract = { path = "../ritma_contract" }
 proof_standards = { path = "../proof_standards" }
 security_interfaces = { path = "../security_interfaces" }
 ml_runner = { path = "../ml_runner" }
+forensic_ml = { path = "../forensic_ml" }
 window_summarizer = { path = "../window_summarizer" }
 attack_graph = { path = "../attack_graph" }
 judge_contracts = { path = "../judge_contracts" }

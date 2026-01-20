@@ -1,0 +1,44 @@
+{
+  "name": "@ritma/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Ritma forensic security platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src --ext .ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ritma",
+    "security",
+    "forensics",
+    "observability",
+    "compliance",
+    "audit"
+  ],
+  "author": "Ritma Team <team@ritma.io>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ritma-io/ritma.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://ritma.io",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

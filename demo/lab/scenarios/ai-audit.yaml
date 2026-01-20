@@ -1,0 +1,61 @@
+scenario:
+  name: ai-audit-trail
+  description: "AI inference with guardrails and model updates"
+  duration_seconds: 120
+  seed: 42
+
+phases:
+  - name: normal_inference
+    start: 0
+    duration: 30
+    traffic:
+      type: ai_inference
+      rps: 20
+      params:
+        model: "loan-approval-v1"
+        decision_distribution:
+          approve: 0.7
+          reject: 0.25
+          escalate: 0.05
+
+  - name: guardrail_triggers
+    start: 30
+    duration: 30
+    traffic:
+      type: ai_inference
+      rps: 30
+      params:
+        model: "loan-approval-v1"
+        inject_violations:
+          pii_leak: 0.1
+          jailbreak_attempt: 0.05
+
+  - name: model_update
+    start: 60
+    duration: 10
+    events:
+      - type: model_deployment
+        model_id: "loan-approval"
+        old_version: "v1"
+        new_version: "v2"
+        deployer: "ml-ops-bot"
+
+  - name: post_update_inference
+    start: 70
+    duration: 50
+    traffic:
+      type: ai_inference
+      rps: 25
+      params:
+        model: "loan-approval-v2"
+
+assertions:
+  - type: event_count
+    filter: "kind=InferenceRequest"
+    min: 2000
+  - type: event_count
+    filter: "kind=GuardrailTrigger"
+    min: 50
+  - type: event_count
+    filter: "kind=ModelVersionChange"
+    equals: 1

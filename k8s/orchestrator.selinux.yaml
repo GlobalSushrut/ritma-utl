@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bar-orchestrator
+  namespace: ritma-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bar-orchestrator
+  template:
+    metadata:
+      labels:
+        app: bar-orchestrator
+    spec:
+      securityContext:
+        seLinuxOptions:
+          level: "s0"
+      containers:
+      - name: orchestrator
+        image: ritma/bar_orchestrator:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+          appArmorProfile:
+            type: RuntimeDefault
+        env:
+        - name: NAMESPACE_ID
+          value: "ns://k8s/default"
+        - name: RITMA_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: INDEX_DB_PATH
+          value: "/var/lib/ritma/index_db.sqlite"
+        - name: RITMA_BASE_DIR
+          value: "/var/lib/ritma"
+        - name: RITMA_OUT_DIR
+          value: "/var/lib/ritma/RITMA_OUT"
+        - name: RITMA_SIDECAR_LOCK_DIR
+          value: "/run/ritma/locks"
+        - name: TICK_SECS
+          value: "60"
+        - name: UTLD_URL
+          value: "http://utld:8088"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/ritma
+        - name: locks
+          mountPath: /run/ritma/locks
+      volumes:
+      - name: data
+        hostPath:
+          path: /var/lib/ritma
+          type: DirectoryOrCreate
+      - name: locks
+        hostPath:
+          path: /run/ritma/locks
+          type: DirectoryOrCreate

@@ -1,154 +1,88 @@
-# Ritma / Universal Truth Layer (UTL)
+# Ritma
 
-Ritma is an experimental **Universal Truth Layer (UTL)**: an **evidence-first runtime forensics fabric**.
-It turns runtime behavior into **diffable, exportable, verifiable artifacts** — like Git, but for forensic truth.
+Ritma is a **court-grade forensic security observability platform**.
 
-This repo is CLI-first. The fastest way to “get it” is: run a demo, generate an attestation, then diff two windows.
+It captures runtime activity, seals it into cryptographic evidence, and exports auditor-verifiable proofpacks.
 
----
+## Quick start
 
-## 60-Second Quick Start (grounded demo + attestation)
+### Install
 
-```bash
-# 1) Build
-cargo build
-
-# 2) Grounded 8-phase demo (real crate APIs; no hidden live hooks)
-cargo run -p ritma_cli -- demo-enhanced
-
-# 3) Attest a directory/repo tree (verifiable artifact + receipt hash)
-cargo run -p ritma_cli -- attest \
-  --path . \
-  --namespace ns://demo/dev/hello/world
-```
-
-The demo prints an **Evidence Pack** with:
-
-- `namespace_id`, `window_id`
-- `attack_graph_hash`
-- `evidence_pack_path` (JSON written to disk)
-- `receipt_hash` (sha256 of the payload)
-- `proof_status` (generated/skipped)
-
----
-
-## Verify (offline, local)
-
-1. Read the JSON: `cat <evidence_pack_path>/demo_evidence.json`
-2. Verify the receipt hash:
-
-   - `sha256sum <evidence_pack_path>/demo_evidence.json | cut -d' ' -f1`
-   - Compare to the printed `receipt_hash`
-
-Ritma’s claims should always be checkable from the produced artifacts.
-
----
-
-## What exists in this repo (today)
-
-- CLI (`ritma`) that produces and exports **verifiable forensic artifacts**
-- Evidence + Index layer (SQLite/JSONL) used by audit/export flows
-- 8 grounded detection phases as composable crates
-- BAR policy pipeline (**safe by default**: observe-only unless operator wires enforcement)
-- Some older UTL components still exist (e.g., `utld`, DigFiles), but the modern UX is **CLI-first**.
-
----
-
-## Runtime DNA (continuous forensic chain)
-
-Runtime DNA is a per-namespace **hash-chained commit log** derived from windows and evidence hashes (non-custodial: hashes only).
+If you’re installing from packages:
 
 ```bash
-# Build/extend the chain for a time range
-cargo run -p ritma_cli -- dna build \
-  --namespace ns://demo/dev/hello/world \
-  --start <unix_seconds> \
-  --end <unix_seconds>
-
-# Beginner-friendly status
-cargo run -p ritma_cli -- dna status \
-  --namespace ns://demo/dev/hello/world
-
-# Trace last N commits
-cargo run -p ritma_cli -- dna trace \
-  --namespace ns://demo/dev/hello/world \
-  --since 10
+curl -fsSL https://raw.githubusercontent.com/GlobalSushrut/ritma-utl/main/scripts/setup-apt.sh | sudo bash
+sudo apt install ritma
 ```
 
-Quick “what changed?” between the last two windows:
+For development builds:
 
 ```bash
-cargo run -p ritma_cli -- investigate diff --last \
-  --namespace ns://demo/dev/hello/world
+cargo build --release -p ritma_cli -p tracer_sidecar
 ```
 
----
-
-## Truthful-by-Default Policy
-
-- Evidence-first output; avoids threat-actor naming by default
-- Reports classification as: cluster ID, template match, TTP bundle (MITRE ATT&CK), confidence + rationale
-- Predictive language is conservative (e.g., “ransomware-like risk” + horizon) and never overstates certainty
-
----
-
-## Module Map (high-level)
-
-Detectors (8 phases):
-
-- `fileless_detector`, `ebpf_hardening`, `apt_tracker`, `container_security`,
-  `memory_forensics`, `network_analysis`, `hardware_monitor`, `ml_detector`
-
-BAR core:
-
-- `bar_core`, `bar_orchestrator`, `bar_pipeline`, `bar_daemon`
-
-Evidence + Index:
-
-- `evidence_package`, `forensics_store`, `dig_index`, `index_db`
-
-Keys + Identity:
-
-- `node_keystore`, `handshake`
-
-Compliance (alpha):
-
-- `compliance_engine`, `compliance_index`, `compliance_packs`
-
-CLI:
-
-- `ritma_cli` (demo-enhanced, attest, export, dna, investigate)
-
----
-
-## Working with real windows (IndexDb)
-
-Some commands require an `index_db.sqlite` that already contains windows and summaries.
+### Run a demo proof (no live capture required)
 
 ```bash
-cargo run -p ritma_cli -- investigate list \
-  --namespace ns://demo/dev/hello/world \
-  --limit 10
+ritma demo --namespace ns://demo/basic --window-secs 10
 ```
 
-Export an auditor-readable HTML report:
+Verify the exported ProofPack:
 
 ```bash
-cargo run -p ritma_cli -- export report \
-  --namespace ns://demo/dev/hello/world \
-  --start <unix_seconds> \
-  --end <unix_seconds> \
-  --out ./ritma-report
+ritma verify-proof --path <proofpack-folder>
 ```
 
----
+### Capture real events (sidecar)
 
-## Docs
+Run the sidecar (systemd is recommended for production):
 
-- `docs/README.md` (docs index)
-- `docs/ARCHITECTURE.md` (overview, boundaries, integration points)
-- `docs/CLI_REFERENCE.md` (current CLI commands)
-- `docs/EVIDENCE_AND_ATTESTATION.md` (artifacts + verification)
-- `docs/PILOT_READINESS_CHECKLIST.md` (pilot runbooks + institutional readiness checklist)
-- `docs/UX_GATE.md` (UX contract / acceptance checklist)
-- `demo/README.md` (node console demo)
+```bash
+sudo systemctl enable ritma-sidecar
+sudo systemctl start ritma-sidecar
+sudo systemctl status ritma-sidecar
+```
+
+Sanity-check capture:
+
+```bash
+ritma doctor --index-db /var/lib/ritma/index_db.sqlite --namespace ns://acme/prod/app
+```
+
+### Seal and export a ProofPack v2 (real data)
+
+Seal a window:
+
+```bash
+ritma seal-window --namespace ns://acme/prod/app --start <unix_seconds> --end <unix_seconds> --strict
+```
+
+Export the forensic ProofPack v2 for that time range:
+
+```bash
+ritma export window --namespace ns://acme/prod/app --start <start> --end <end> --out ./proofpacks/window
+ritma verify-proof --path ./proofpacks/window
+```
+
+## Documentation
+
+- `docs/README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/production_setup.md`
+- `docs/CLI_REFERENCE.md`
+- `docs/ritma_transparency_forensics.md`
+- `docs/RTSL_SPEC.md`
+- `docs/EEC_SPEC.md`
+
+## SDKs
+
+- `sdk/python/` (Python)
+- `sdk/typescript/` (TypeScript/Node)
+
+## Repository structure (high-level)
+
+- `crates/tracer_sidecar` (capture)
+- `crates/index_db` (local evidence store)
+- `crates/bar_orchestrator` (seal/export pipeline)
+- `crates/forensic_ml` (4-layer ML)
+- `crates/ritma_cli` (the `ritma` CLI)

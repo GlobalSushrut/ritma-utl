@@ -1,15 +1,22 @@
 use attack_graph::AttackGraphBuilder;
-use common_models::{MLScore, ProofPack, SnapshotAction, TriggerVerdict, Verdict, WindowRange};
-use index_db::{AttackGraphEdgeRow, IndexDb, ProofMetadataRow, WindowSummaryRow};
+use common_models::{
+    hash_string_sha256, MLScore, ProofPack, SnapshotAction, TriggerVerdict, Verdict, WindowRange,
+};
+use forensic_ml::{ForensicMLEngine, MLNotary};
+use index_db::{
+    AttackGraphEdgeRow, CustodyAction, IndexDb, ProofMetadataRow, SealedWindowRow, WindowSummaryRow,
+};
 use judge_contracts::ContractJudge;
 use ml_runner::SimpleCpuMl;
 use proof_standards::ProofManager;
-use ritma_contract::StorageContract;
+use ritma_contract::{StorageContract, VersioningEngine};
 use security_interfaces::{
     BarEngine, MlRunner, PipelineOrchestrator, Result as IfResult, SecIfError,
 };
 use snapshotter::Snapshotter;
 use window_summarizer::WindowSummarizer;
+
+const BAR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn env_truthy(name: &str) -> bool {
     match std::env::var(name) {
@@ -29,6 +36,7 @@ fn kind_code(k: &common_models::TraceEventKind) -> u8 {
         common_models::TraceEventKind::DnsQuery => 4,
         common_models::TraceEventKind::Auth => 5,
         common_models::TraceEventKind::PrivChange => 6,
+        common_models::TraceEventKind::SensorTamper => 7,
     }
 }
 
@@ -43,9 +51,8 @@ fn source_code(s: &common_models::TraceSourceKind) -> u8 {
 
 fn canonical_leaf_hash(ev: &common_models::TraceEvent) -> [u8; 32] {
     use ciborium::value::{Integer, Value};
-    let v_text_opt = |v: Option<&str>| -> Value {
-        v.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null)
-    };
+    let v_text_opt =
+        |v: Option<&str>| -> Value { v.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null) };
     let v_i64 = |n: i64| -> Value { Value::Integer(Integer::from(n)) };
     let v_i64_opt = |v: Option<i64>| -> Value {
         v.map(|n| Value::Integer(Integer::from(n)))
@@ -81,6 +88,51 @@ fn canonical_leaf_hash(ev: &common_models::TraceEvent) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// Pipeline stress configuration for extreme load handling
+#[derive(Debug, Clone)]
+pub struct PipelineStressConfig {
+    /// Maximum pending windows before backpressure kicks in
+    pub max_pending_windows: usize,
+    /// Maximum events per window before splitting
+    pub max_events_per_window: u64,
+    /// Batch size for RTSL writes
+    pub rtsl_batch_size: usize,
+    /// Enable async CAS writes
+    pub async_cas_writes: bool,
+    /// Retry count for transient failures
+    pub retry_count: u32,
+    /// Backoff base in milliseconds
+    pub backoff_base_ms: u64,
+}
+
+impl Default for PipelineStressConfig {
+    fn default() -> Self {
+        Self {
+            max_pending_windows: std::env::var("RITMA_MAX_PENDING_WINDOWS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100),
+            max_events_per_window: std::env::var("RITMA_MAX_EVENTS_PER_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100_000),
+            rtsl_batch_size: std::env::var("RITMA_RTSL_BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(64),
+            async_cas_writes: env_truthy("RITMA_ASYNC_CAS"),
+            retry_count: std::env::var("RITMA_RETRY_COUNT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3),
+            backoff_base_ms: std::env::var("RITMA_BACKOFF_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100),
+        }
+    }
+}
+
 pub struct Orchestrator {
     index: IndexDb,
     proofs: ProofManager,
@@ -88,6 +140,10 @@ pub struct Orchestrator {
     /// If true, synthetic receipts and noop proofs are allowed (for demos/testing).
     /// In production (demo_mode=false), no fabricated chain continuity is inserted.
     demo_mode: bool,
+    /// Optional state versioning engine for audit trail
+    versioning: Option<std::sync::Mutex<VersioningEngine>>,
+    /// Stress configuration for pipeline resilience
+    stress_config: PipelineStressConfig,
 }
 
 impl Orchestrator {
@@ -104,12 +160,211 @@ impl Orchestrator {
 
     /// Create an Orchestrator with explicit demo mode flag.
     pub fn new_with_mode(index: IndexDb, demo_mode: bool) -> Self {
+        // Try to initialize versioning engine if RITMA_VERSIONING_DIR is set
+        let versioning = std::env::var("RITMA_VERSIONING_DIR").ok().and_then(|dir| {
+            let node_id = std::env::var("RITMA_NODE_ID").unwrap_or_else(|_| "node0".to_string());
+            match VersioningEngine::open(std::path::Path::new(&dir), &node_id) {
+                Ok(engine) => Some(std::sync::Mutex::new(engine)),
+                Err(e) => {
+                    eprintln!("bar_orchestrator: failed to open versioning engine: {e}");
+                    None
+                }
+            }
+        });
+
         Self {
             index,
             proofs: ProofManager::with_noop_backend(),
             ml: SimpleCpuMl::new(),
             demo_mode,
+            versioning,
+            stress_config: PipelineStressConfig::default(),
         }
+    }
+
+    /// Get stress configuration
+    pub fn stress_config(&self) -> &PipelineStressConfig {
+        &self.stress_config
+    }
+
+    /// Check if pipeline has backpressure (too many pending windows)
+    /// Stress-resilient: conservative false on any error
+    pub fn has_backpressure(&self) -> bool {
+        // Simple heuristic based on environment variable for manual throttling
+        // In production, integrate with actual queue depth monitoring
+        env_truthy("RITMA_BACKPRESSURE_ACTIVE")
+    }
+
+    /// Execute with retry and exponential backoff for stress resilience
+    fn with_retry<T, F>(&self, operation: &str, mut f: F) -> IfResult<T>
+    where
+        F: FnMut() -> IfResult<T>,
+    {
+        let mut last_err = None;
+        for attempt in 0..self.stress_config.retry_count {
+            match f() {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let backoff = self.stress_config.backoff_base_ms * (1 << attempt);
+                    eprintln!(
+                        "bar_orchestrator: {} failed (attempt {}/{}), retrying in {}ms: {}",
+                        operation,
+                        attempt + 1,
+                        self.stress_config.retry_count,
+                        backoff,
+                        e
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(backoff));
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| SecIfError::Other("unknown error".into())))
+    }
+
+    /// Run Forensic ML analysis and notarization (required before seal)
+    /// Per spec: No data can be sealed without ML notarization
+    fn run_forensic_ml(
+        &self,
+        namespace_id: &str,
+        window: &WindowRange,
+        _features: &serde_json::Value,
+    ) -> IfResult<forensic_ml::MLNotarizedResult> {
+        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+
+        // Get events for this window
+        let events = self
+            .index
+            .list_trace_events_range(namespace_id, start_ts, end_ts)
+            .unwrap_or_default();
+
+        // Get attack graph
+        let window_id = format!("window:{}:{}", window.start, window.end);
+        let attack_graph =
+            self.index
+                .get_attack_graph_edges(namespace_id, start_ts, end_ts)
+                .map(|edges| {
+                    let edges_json: Vec<serde_json::Value> = edges.iter().map(|e| {
+                    serde_json::json!({
+                        "type": e.edge_type,
+                        "src": e.src,
+                        "dst": e.dst,
+                        "score": e.attrs.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                    })
+                }).collect();
+                    serde_json::json!({ "edges": edges_json })
+                })
+                .unwrap_or_else(|_| serde_json::json!({ "edges": [] }));
+
+        // Run 4-layer forensic ML analysis
+        let engine = ForensicMLEngine::with_defaults();
+        let result = engine
+            .analyze(namespace_id, &window_id, &events, &attack_graph)
+            .map_err(|e| SecIfError::Other(format!("forensic ML failed: {e}")))?;
+
+        // Notarize the result (cryptographic attestation)
+        let node_id = std::env::var("RITMA_NODE_ID").unwrap_or_else(|_| "bar_node".to_string());
+        let notary = MLNotary::new(&node_id);
+        let notarized = notary
+            .notarize(&result)
+            .map_err(|e| SecIfError::Other(format!("ML notarization failed: {e}")))?;
+
+        // Store notarized ML result to CAS if enabled
+        if env_truthy("RITMA_CAS_ENABLE") || !env_truthy("RITMA_CAS_DISABLE") {
+            if let Ok(cbor) = notarized.to_cbor() {
+                let cas_dir = std::env::var("RITMA_OUT_DIR")
+                    .or_else(|_| std::env::var("RITMA_BASE_DIR").map(|d| format!("{d}/out")))
+                    .unwrap_or_else(|_| "/var/lib/ritma/cas".to_string());
+                if let Ok(cas) = ritma_contract::CasStore::open(std::path::Path::new(&cas_dir)) {
+                    let _ = cas.store_data(&cbor);
+                }
+            }
+        }
+
+        // Log forensic ML custody event
+        let details = serde_json::json!({
+            "forensic_ml": {
+                "result_id": result.result_id,
+                "forensic_score": result.forensic_score,
+                "verdict": result.layer_d.verdict.as_str(),
+                "claim": result.forensic_assertion.claim,
+                "confidence": result.forensic_assertion.confidence,
+                "indicators": result.forensic_assertion.indicators.len(),
+                "explainability_score": result.explanation.explainability_score
+            },
+            "notarization": {
+                "hash": notarized.notarization_hash,
+                "signed": notarized.signature.is_some()
+            },
+            "provenance": {
+                "engine_hash": result.provenance.engine_hash,
+                "model_hash": result.provenance.model_hash,
+                "feature_hash": result.provenance.feature_hash
+            }
+        });
+        let _ = self.index.log_custody_event(
+            &node_id,
+            None,
+            "bar_orchestrator",
+            CustodyAction::Seal, // ML_NOTARIZE action
+            Some(namespace_id),
+            Some(&window_id),
+            Some(&notarized.notarization_hash),
+            Some(details),
+        );
+
+        Ok(notarized)
+    }
+
+    /// Record a window seal event in the versioning engine
+    fn record_window_seal(&self, namespace_id: &str, window: &WindowRange, proof_hash: &str) {
+        if let Some(ref versioning_mutex) = self.versioning {
+            if let Ok(mut engine) = versioning_mutex.lock() {
+                let entity_id = format!("window:{}:{}:{}", namespace_id, window.start, window.end);
+
+                // Create entity for this window
+                if let Err(e) = engine.create_entity(&entity_id) {
+                    eprintln!("bar_orchestrator: versioning create_entity failed: {e}");
+                    return;
+                }
+
+                // Set attributes
+                let _ = engine.set_attribute(&entity_id, "namespace_id", namespace_id);
+                let _ = engine.set_attribute(&entity_id, "start", &window.start);
+                let _ = engine.set_attribute(&entity_id, "end", &window.end);
+                let _ = engine.set_attribute(&entity_id, "proof_hash", proof_hash);
+                let _ =
+                    engine.set_attribute(&entity_id, "sealed_at", &chrono::Utc::now().to_rfc3339());
+            }
+        }
+    }
+
+    /// Take a versioned snapshot (if versioning is enabled)
+    pub fn take_versioned_snapshot(&self) -> Option<ritma_contract::ChainedSnapshot> {
+        if let Some(ref versioning_mutex) = self.versioning {
+            if let Ok(mut engine) = versioning_mutex.lock() {
+                match engine.take_snapshot() {
+                    Ok(snap) => return Some(snap),
+                    Err(e) => eprintln!("bar_orchestrator: versioning snapshot failed: {e}"),
+                }
+            }
+        }
+        None
+    }
+
+    /// Get current state hash from versioning engine
+    pub fn versioned_state_hash(&self) -> Option<[u8; 32]> {
+        if let Some(ref versioning_mutex) = self.versioning {
+            if let Ok(engine) = versioning_mutex.lock() {
+                return Some(engine.state_hash());
+            }
+        }
+        None
     }
 
     /// Returns true if running in demo mode (synthetic receipts allowed).
@@ -254,7 +509,17 @@ impl BarEngine for Orchestrator {
             return Ok(None);
         }
         let snap = Snapshotter::new(&trigger.namespace_id);
-        match snap.capture_snapshot(trigger, &[]) {
+        let start_ts = chrono::DateTime::parse_from_rfc3339(&trigger.window.start)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let end_ts = chrono::DateTime::parse_from_rfc3339(&trigger.window.end)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let trace_excerpt = self
+            .index
+            .list_trace_events_range(&trigger.namespace_id, start_ts, end_ts)
+            .unwrap_or_default();
+        match snap.capture_snapshot(trigger, &trace_excerpt) {
             Ok(m) => Ok(Some(m)),
             Err(e) => {
                 eprintln!("snapshot failed: {e}");
@@ -337,6 +602,10 @@ impl PipelineOrchestrator for Orchestrator {
         let (trigger, verdict) = self.judge(namespace_id, window, &ml, &serde_json::json!({}))?;
         // Stage 6: Snapshot
         let evidence = self.maybe_snapshot(&trigger)?;
+
+        // Stage 6.5: Forensic ML Analysis + Notarization (required before seal)
+        let forensic_ml_result = self.run_forensic_ml(namespace_id, window, &features)?;
+
         // Stage 7: Seal (use verdict attestation proof)
         let proof = self
             .proofs
@@ -344,6 +613,17 @@ impl PipelineOrchestrator for Orchestrator {
             .map_err(|e| SecIfError::Other(e.to_string()))?;
         // Stage 8-9: Index + Signal
         self.index_and_signal(None, &verdict, &ml, evidence.as_ref(), &proof)?;
+
+        // Record window seal in versioning engine (if enabled)
+        self.record_window_seal(namespace_id, window, &proof.public_inputs_hash);
+
+        // Parse window timestamps (needed for RTSL output and sealed window registration)
+        let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
+        let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end)
+            .map(|t| t.timestamp())
+            .unwrap_or(0);
 
         let out_enabled = std::env::var("RITMA_OUT_ENABLE")
             .ok()
@@ -353,12 +633,6 @@ impl PipelineOrchestrator for Orchestrator {
             })
             .unwrap_or(false);
         if out_enabled {
-            let start_ts = chrono::DateTime::parse_from_rfc3339(&window.start)
-                .map(|t| t.timestamp())
-                .unwrap_or(0);
-            let end_ts = chrono::DateTime::parse_from_rfc3339(&window.end)
-                .map(|t| t.timestamp())
-                .unwrap_or(0);
             let c = StorageContract::resolve_best_effort();
 
             let strict = env_truthy("RITMA_OUT_STRICT");
@@ -371,7 +645,9 @@ impl PipelineOrchestrator for Orchestrator {
                 .collect();
             leaf_hashes.sort_unstable();
 
-            if let Err(e) = c.write_micro_window_proof(namespace_id, start_ts, end_ts, total_events, &leaf_hashes) {
+            if let Err(e) =
+                c.write_window_output(namespace_id, start_ts, end_ts, total_events, &leaf_hashes)
+            {
                 if strict {
                     return Err(SecIfError::Other(format!("RITMA_OUT write failed: {e}")));
                 }
@@ -386,7 +662,7 @@ impl PipelineOrchestrator for Orchestrator {
             if let Ok(prev) = self.index.get_last_receipt(namespace_id) {
                 let next_tip = prev.map(|(_, _, tip)| tip + 1).unwrap_or(1);
                 let receipt_id = format!("noop_r_{}", uuid::Uuid::new_v4());
-                let receipt_hash = common_models::hash_string_sha256(&proof.public_inputs_hash);
+                let receipt_hash = hash_string_sha256(&proof.public_inputs_hash);
                 let _ = self.index.insert_receipt_ref(
                     namespace_id,
                     &receipt_id,
@@ -398,8 +674,140 @@ impl PipelineOrchestrator for Orchestrator {
             }
         }
 
+        // Stage 11: Register sealed window and log custody event (v2 forensic standard)
+        let window_id = format!("w_{start_ts}_{end_ts}");
+        let merkle_root = hash_string_sha256(&proof.public_inputs_hash);
+        let seal_ts = chrono::Utc::now().timestamp();
+
+        let sealed_row = SealedWindowRow {
+            namespace_id: namespace_id.to_string(),
+            window_id: window_id.clone(),
+            start_ts,
+            end_ts,
+            merkle_root: merkle_root.clone(),
+            seal_ts,
+            rtsl_segment_id: None,
+            exported: false,
+            pruned: false,
+        };
+        let _ = self.index.register_sealed_window(&sealed_row);
+
+        // Log SEAL custody event
+        let node_id = std::env::var("RITMA_NODE_ID").unwrap_or_else(|_| "unknown".to_string());
+        let details = serde_json::json!({
+            "window": {
+                "start": window.start,
+                "end": window.end,
+                "id": window_id
+            },
+            "counts": {
+                "events": total_events,
+                "edges": features.get("TOTAL_EDGES").and_then(|v| v.as_u64()).unwrap_or(0)
+            },
+            "merkle_root": merkle_root,
+            "proof_id": proof.proof_id,
+            "forensic_ml": {
+                "notarization_hash": forensic_ml_result.notarization_hash,
+                "verdict": forensic_ml_result.verdict,
+                "score": forensic_ml_result.scores.forensic_score
+            },
+            "bar_ver": BAR_VERSION
+        });
+        let _ = self.index.log_custody_event(
+            &node_id,
+            None, // session_id
+            "bar_orchestrator",
+            CustodyAction::Seal,
+            Some(namespace_id),
+            Some(&window_id),
+            Some(&merkle_root),
+            Some(details),
+        );
+
+        // Stage 12: RTSL Proofpack Generation (proof-of-custody standard)
+        // Write RTSL record with page_hash as leaf (v2 forensic standard)
+        if out_enabled {
+            let c = StorageContract::resolve_best_effort();
+
+            // Compute page_hash for RTSL leaf
+            let page_hash = compute_page_hash(
+                namespace_id,
+                &window_id,
+                start_ts,
+                end_ts,
+                &merkle_root,
+                &forensic_ml_result.notarization_hash,
+            );
+
+            // Write RTSL record with v2 format
+            if let Err(e) = ritma_contract::rtsl::write_window_v2_as_rtsl_record(
+                &c,
+                namespace_id,
+                &window_id,
+                start_ts,
+                end_ts,
+                &page_hash,
+                total_events,
+            ) {
+                if env_truthy("RITMA_OUT_STRICT") {
+                    return Err(SecIfError::Other(format!("RTSL write failed: {e}")));
+                }
+                eprintln!("bar_orchestrator: RTSL write failed: {e}");
+            }
+        }
+
+        // Stage 13: Auto-prune IndexDB after successful seal (data now in RITMA_OUT)
+        // Only prune if RITMA_AUTO_PRUNE_AFTER_SEAL is enabled
+        if env_truthy("RITMA_AUTO_PRUNE_AFTER_SEAL") {
+            // Mark window as exported first (required by prune guardrails)
+            let _ = self.index.mark_window_exported(namespace_id, &window_id);
+
+            // Prune the sealed window (moves data lifecycle from IndexDB to RITMA_OUT)
+            match self
+                .index
+                .prune_sealed_window(&node_id, namespace_id, &window_id)
+            {
+                Ok(result) => {
+                    eprintln!(
+                        "bar_orchestrator: pruned {} events from window {} (data_hash: {})",
+                        result.events_deleted, window_id, result.data_hash
+                    );
+                }
+                Err(e) => {
+                    // Non-fatal: prune can fail due to guardrails (min age, etc.)
+                    eprintln!("bar_orchestrator: prune skipped: {e}");
+                }
+            }
+        }
+
         Ok(proof)
     }
+}
+
+/// Compute page_hash for RTSL leaf (v2 forensic standard)
+fn compute_page_hash(
+    namespace_id: &str,
+    window_id: &str,
+    start_ts: i64,
+    end_ts: i64,
+    merkle_root: &str,
+    ml_notary_hash: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"ritma-page-v2:");
+    h.update(namespace_id.as_bytes());
+    h.update(b":");
+    h.update(window_id.as_bytes());
+    h.update(b":");
+    h.update(start_ts.to_le_bytes());
+    h.update(b":");
+    h.update(end_ts.to_le_bytes());
+    h.update(b":");
+    h.update(merkle_root.as_bytes());
+    h.update(b":");
+    h.update(ml_notary_hash.as_bytes());
+    hex::encode(h.finalize())
 }
 
 #[cfg(test)]
@@ -492,7 +900,9 @@ mod tests {
     /// Determinism test: same input events => same graph hash
     #[test]
     fn correlation_determinism() {
-        use common_models::{TraceActor, TraceAttrs, TraceEvent, TraceEventKind, TraceSourceKind, TraceTarget};
+        use common_models::{
+            TraceActor, TraceAttrs, TraceEvent, TraceEventKind, TraceSourceKind, TraceTarget,
+        };
 
         let namespace = "ns://test/det/app/svc";
         let window = WindowRange {
@@ -513,6 +923,14 @@ mod tests {
                     ppid: 1,
                     uid: 1000,
                     gid: 1000,
+                    net_ns: None,
+                    auid: None,
+                    ses: None,
+                    tty: None,
+                    euid: None,
+                    suid: None,
+                    fsuid: None,
+                    egid: None,
                     comm_hash: None,
                     exe_hash: None,
                     comm: None,
@@ -525,11 +943,22 @@ mod tests {
                     path_hash: Some("path_hash_1".to_string()),
                     dst: None,
                     domain_hash: None,
+                    protocol: None,
+                    src: None,
+                    state: None,
+                    dns: None,
+                    path: None,
+                    inode: None,
+                    file_op: None,
                 },
                 attrs: TraceAttrs {
                     argv_hash: Some("argv_1".to_string()),
                     cwd_hash: Some("cwd_1".to_string()),
                     bytes_out: None,
+                    argv: None,
+                    cwd: None,
+                    bytes_in: None,
+                    env_hash: None,
                 },
             },
             TraceEvent {
@@ -543,6 +972,14 @@ mod tests {
                     ppid: 1,
                     uid: 1000,
                     gid: 1000,
+                    net_ns: None,
+                    auid: None,
+                    ses: None,
+                    tty: None,
+                    euid: None,
+                    suid: None,
+                    fsuid: None,
+                    egid: None,
                     comm_hash: None,
                     exe_hash: None,
                     comm: None,
@@ -555,11 +992,22 @@ mod tests {
                     path_hash: None,
                     dst: Some("10.0.0.1:443".to_string()),
                     domain_hash: None,
+                    protocol: Some("tcp".to_string()),
+                    src: None,
+                    state: None,
+                    dns: None,
+                    path: None,
+                    inode: None,
+                    file_op: None,
                 },
                 attrs: TraceAttrs {
                     argv_hash: None,
                     cwd_hash: None,
                     bytes_out: Some(1024),
+                    argv: None,
+                    cwd: None,
+                    bytes_in: None,
+                    env_hash: None,
                 },
             },
         ];
@@ -575,7 +1023,11 @@ mod tests {
 
         // Hashes must be identical for same input
         assert_eq!(hash1, hash2, "graph hash must be deterministic");
-        assert_eq!(edges1.len(), edges2.len(), "edge count must be deterministic");
+        assert_eq!(
+            edges1.len(),
+            edges2.len(),
+            "edge count must be deterministic"
+        );
 
         // Verify edges are identical
         for (e1, e2) in edges1.iter().zip(edges2.iter()) {

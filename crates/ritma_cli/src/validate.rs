@@ -93,7 +93,7 @@ pub fn validate_tenant_id(tenant: &str) -> Result<(), String> {
     // Allow alphanumeric, dash, underscore, dot
     for ch in tenant.chars() {
         if !ch.is_alphanumeric() && !matches!(ch, '-' | '_' | '.') {
-            return Err(format!("invalid character '{}' in tenant ID", ch));
+            return Err(format!("invalid character '{ch}' in tenant ID"));
         }
     }
     Ok(())
@@ -123,7 +123,7 @@ pub fn validate_hex_string(s: &str) -> Result<(), String> {
     }
     for ch in s.chars() {
         if !ch.is_ascii_hexdigit() {
-            return Err(format!("invalid hex character '{}'", ch));
+            return Err(format!("invalid hex character '{ch}'"));
         }
     }
     Ok(())
@@ -143,7 +143,7 @@ pub fn validate_key_spec(spec: &str) -> Result<(), String> {
     // Validate key type
     match typ {
         "hmac" | "hmac_sha256" | "ed25519" => {}
-        _ => return Err(format!("unsupported key type '{}'", typ)),
+        _ => return Err(format!("unsupported key type '{typ}'")),
     }
     validate_hex_string(hex)?;
     Ok(())
@@ -211,7 +211,10 @@ mod tests {
     #[test]
     fn test_validate_key_spec() {
         assert!(validate_key_spec("hmac:deadbeef").is_ok());
-        assert!(validate_key_spec("ed25519:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890").is_ok());
+        assert!(validate_key_spec(
+            "ed25519:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        )
+        .is_ok());
         assert!(validate_key_spec("hmac").is_err());
         assert!(validate_key_spec("unknown:deadbeef").is_err());
     }

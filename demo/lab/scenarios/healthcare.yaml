@@ -1,0 +1,66 @@
+scenario:
+  name: healthcare-phi-monitoring
+  description: "PHI access monitoring with break-the-glass and anomaly detection"
+  duration_seconds: 120
+  seed: 42
+
+phases:
+  - name: normal_clinical_workflow
+    start: 0
+    duration: 40
+    traffic:
+      type: ehr_access
+      rps: 15
+      params:
+        users:
+          - role: physician
+            actions: ["view_patient", "order_medication", "view_labs"]
+            patients_per_session: 5
+          - role: nurse
+            actions: ["view_vitals", "document_care"]
+            patients_per_session: 10
+
+  - name: break_the_glass
+    start: 40
+    duration: 20
+    events:
+      - type: emergency_access
+        user: "dr_smith"
+        patient: "vip_patient_001"
+        justification: "Emergency consultation"
+        supervisor: "dr_jones"
+        approved: true
+
+  - name: suspicious_access
+    start: 60
+    duration: 30
+    traffic:
+      type: ehr_access
+      rps: 50
+      params:
+        users:
+          - role: admin
+            actions: ["bulk_export", "view_all_patients"]
+            anomaly: true
+
+  - name: anomaly_detection
+    start: 90
+    duration: 30
+    events:
+      - type: alert_triggered
+        user: "admin_user"
+        reason: "Unusual bulk access pattern"
+        severity: high
+
+assertions:
+  - type: event_count
+    filter: "kind=PhiAccess"
+    min: 500
+  - type: event_count
+    filter: "kind=BreakTheGlass"
+    min: 1
+  - type: event_count
+    filter: "kind=PhiAnomaly"
+    min: 1
+  - type: phi_never_logged
+    description: "No actual PHI in logs, only hashes"

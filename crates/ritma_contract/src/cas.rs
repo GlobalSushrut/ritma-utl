@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Default chunk size range
-pub const MIN_CHUNK_SIZE: usize = 1024 * 1024;      // 1 MB
-pub const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024;  // 4 MB
+pub const MIN_CHUNK_SIZE: usize = 1024 * 1024; // 1 MB
+pub const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB
 pub const DEFAULT_CHUNK_SIZE: usize = 2 * 1024 * 1024; // 2 MB
 
 /// A chunk hash (BLAKE3, 32 bytes)
@@ -123,7 +123,11 @@ fn merkle_root_blake3(leaves: &[ChunkHash]) -> ChunkHash {
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
-            let right = if i + 1 < level.len() { level[i + 1] } else { left };
+            let right = if i + 1 < level.len() {
+                level[i + 1]
+            } else {
+                left
+            };
 
             let mut hasher = blake3::Hasher::new();
             hasher.update(b"ritma-merkle-node@0.1");
@@ -248,12 +252,9 @@ impl CasStore {
         let mut data = Vec::with_capacity(manifest.total_size as usize);
 
         for chunk_ref in &manifest.chunks {
-            let chunk_data = self
-                .get_chunk(&chunk_ref.hash)?
-                .ok_or_else(|| std::io::Error::other(format!(
-                    "missing chunk: {}",
-                    chunk_ref.hash_hex()
-                )))?;
+            let chunk_data = self.get_chunk(&chunk_ref.hash)?.ok_or_else(|| {
+                std::io::Error::other(format!("missing chunk: {}", chunk_ref.hash_hex()))
+            })?;
 
             if chunk_data.len() != chunk_ref.size as usize {
                 return Err(std::io::Error::other(format!(
@@ -283,7 +284,10 @@ impl CasStore {
 
     /// Load a manifest from disk
     pub fn load_manifest(&self, name: &str) -> std::io::Result<Option<ChunkManifest>> {
-        let path = self.base_dir.join("manifests").join(format!("{}.manifest.cbor", name));
+        let path = self
+            .base_dir
+            .join("manifests")
+            .join(format!("{}.manifest.cbor", name));
         if !path.exists() {
             return Ok(None);
         }
@@ -339,8 +343,7 @@ impl CasStats {
 }
 
 fn parse_manifest(data: &[u8]) -> std::io::Result<ChunkManifest> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid manifest format"));
@@ -407,20 +410,18 @@ fn parse_manifest(data: &[u8]) -> std::io::Result<ChunkManifest> {
     };
 
     let root_hash = match arr.get(5) {
-        Some(ciborium::value::Value::Text(s)) => {
-            hex::decode(s)
-                .ok()
-                .and_then(|b| {
-                    if b.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&b);
-                        Some(arr)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or([0u8; 32])
-        }
+        Some(ciborium::value::Value::Text(s)) => hex::decode(s)
+            .ok()
+            .and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or([0u8; 32]),
         _ => [0u8; 32],
     };
 

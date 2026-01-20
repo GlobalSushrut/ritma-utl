@@ -399,4 +399,196 @@ int ritma_sendto(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
+SEC("tracepoint/syscalls/sys_enter_recvfrom")
+int ritma_recvfrom(struct trace_event_raw_sys_enter *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    const void *buf = (const void *)ctx->args[1];
+    __u64 len = ctx->args[2];
+    const struct sockaddr *addr = (const struct sockaddr *)ctx->args[4];
+
+    __u16 family = 0;
+    __u16 sport = 0;
+    if (addr) {
+        bpf_probe_read_user(&family, sizeof(family), &addr->sa_family);
+        if (family == AF_INET) {
+            struct sockaddr_in sin = {};
+            bpf_probe_read_user(&sin, sizeof(sin), addr);
+            sport = bpf_ntohs(sin.sin_port);
+        } else if (family == AF_INET6) {
+            struct sockaddr_in6 sin6 = {};
+            bpf_probe_read_user(&sin6, sizeof(sin6), addr);
+            sport = bpf_ntohs(sin6.sin6_port);
+        }
+    }
+
+    __u8 hdr[12] = {};
+    if (len >= 12 && buf) {
+        bpf_probe_read_user(&hdr[0], sizeof(hdr), buf);
+    }
+
+    __u16 flags = ((__u16)hdr[2] << 8) | (__u16)hdr[3];
+    __u16 qdcount = ((__u16)hdr[4] << 8) | (__u16)hdr[5];
+    __u16 qr = (flags >> 15) & 1;
+
+    int looks_like_dns = (len >= 12) && (qr == 1) && (qdcount > 0) && (qdcount <= 4);
+    if (!(sport == 53 || looks_like_dns)) {
+        return 0;
+    }
+
+    if (sport == 0 && looks_like_dns) {
+        sport = 53;
+    }
+
+    struct ritma_event *e;
+    e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) {
+        return 0;
+    }
+
+    e->kind = RITMA_EVENT_DNS;
+    e->pid = (__u32)(pid_tgid >> 32);
+    e->ppid = 0;
+    e->uid = (__u32)(uid_gid & 0xFFFFFFFF);
+    e->gid = (__u32)(uid_gid >> 32);
+    e->cgroup_id = bpf_get_current_cgroup_id();
+
+    __builtin_memset(&e->data, 0, sizeof(e->data));
+    e->data.dns.family = family;
+    e->data.dns.dport = sport;
+
+    if (addr) {
+        if (family == AF_INET) {
+            struct sockaddr_in sin = {};
+            bpf_probe_read_user(&sin, sizeof(sin), addr);
+            __builtin_memcpy(&e->data.dns.daddr[0], &sin.sin_addr.s_addr, 4);
+        } else if (family == AF_INET6) {
+            struct sockaddr_in6 sin6 = {};
+            bpf_probe_read_user(&sin6, sizeof(sin6), addr);
+            __builtin_memcpy(&e->data.dns.daddr[0], &sin6.sin6_addr.in6_u.u6_addr8, 16);
+        }
+    }
+
+    __u32 max_len = sizeof(e->data.dns.payload);
+    __u32 cap = 0;
+    if (buf) {
+        cap = (__u32)len;
+        if (cap > max_len) {
+            cap = max_len;
+        }
+        if (cap > 0) {
+            bpf_probe_read_user(&e->data.dns.payload[0], max_len, buf);
+        }
+    }
+    e->data.dns.len = cap;
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_recvmsg")
+int ritma_recvmsg(struct trace_event_raw_sys_enter *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    const struct msghdr *msg = (const struct msghdr *)ctx->args[1];
+
+    if (!msg) {
+        return 0;
+    }
+
+    struct msghdr mh = {};
+    bpf_probe_read_user(&mh, sizeof(mh), msg);
+
+    if (!mh.msg_iov || mh.msg_iovlen == 0) {
+        return 0;
+    }
+
+    struct iovec iov0 = {};
+    bpf_probe_read_user(&iov0, sizeof(iov0), mh.msg_iov);
+
+    const void *buf = iov0.iov_base;
+    __u64 len = iov0.iov_len;
+    const struct sockaddr *addr = (const struct sockaddr *)mh.msg_name;
+
+    __u16 family = 0;
+    __u16 sport = 0;
+    if (addr) {
+        bpf_probe_read_user(&family, sizeof(family), &addr->sa_family);
+        if (family == AF_INET) {
+            struct sockaddr_in sin = {};
+            bpf_probe_read_user(&sin, sizeof(sin), addr);
+            sport = bpf_ntohs(sin.sin_port);
+        } else if (family == AF_INET6) {
+            struct sockaddr_in6 sin6 = {};
+            bpf_probe_read_user(&sin6, sizeof(sin6), addr);
+            sport = bpf_ntohs(sin6.sin6_port);
+        }
+    }
+
+    __u8 hdr[12] = {};
+    if (len >= 12 && buf) {
+        bpf_probe_read_user(&hdr[0], sizeof(hdr), buf);
+    }
+
+    __u16 flags = ((__u16)hdr[2] << 8) | (__u16)hdr[3];
+    __u16 qdcount = ((__u16)hdr[4] << 8) | (__u16)hdr[5];
+    __u16 qr = (flags >> 15) & 1;
+
+    int looks_like_dns = (len >= 12) && (qr == 1) && (qdcount > 0) && (qdcount <= 4);
+    if (!(sport == 53 || looks_like_dns)) {
+        return 0;
+    }
+
+    if (sport == 0 && looks_like_dns) {
+        sport = 53;
+    }
+
+    struct ritma_event *e;
+    e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) {
+        return 0;
+    }
+
+    e->kind = RITMA_EVENT_DNS;
+    e->pid = (__u32)(pid_tgid >> 32);
+    e->ppid = 0;
+    e->uid = (__u32)(uid_gid & 0xFFFFFFFF);
+    e->gid = (__u32)(uid_gid >> 32);
+    e->cgroup_id = bpf_get_current_cgroup_id();
+
+    __builtin_memset(&e->data, 0, sizeof(e->data));
+    e->data.dns.family = family;
+    e->data.dns.dport = sport;
+
+    if (addr) {
+        if (family == AF_INET) {
+            struct sockaddr_in sin = {};
+            bpf_probe_read_user(&sin, sizeof(sin), addr);
+            __builtin_memcpy(&e->data.dns.daddr[0], &sin.sin_addr.s_addr, 4);
+        } else if (family == AF_INET6) {
+            struct sockaddr_in6 sin6 = {};
+            bpf_probe_read_user(&sin6, sizeof(sin6), addr);
+            __builtin_memcpy(&e->data.dns.daddr[0], &sin6.sin6_addr.in6_u.u6_addr8, 16);
+        }
+    }
+
+    __u32 max_len = sizeof(e->data.dns.payload);
+    __u32 cap = 0;
+    if (buf) {
+        cap = (__u32)len;
+        if (cap > max_len) {
+            cap = max_len;
+        }
+        if (cap > 0) {
+            bpf_probe_read_user(&e->data.dns.payload[0], max_len, buf);
+        }
+    }
+    e->data.dns.len = cap;
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
 char _license[] SEC("license") = "GPL";

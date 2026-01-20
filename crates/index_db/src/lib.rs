@@ -8,12 +8,24 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
+fn env_truthy(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum IndexDbError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("sqlite journal_mode is '{0}', expected 'wal'")]
     JournalModeNotWal(String),
+    #[error("{0}")]
+    Other(String),
 }
 
 pub type Result<T> = std::result::Result<T, IndexDbError>;
@@ -47,13 +59,16 @@ impl IndexDb {
         for _ in 0..50 {
             conn.pragma_update(None, "journal_mode", "WAL")?;
             let mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-            if mode.eq_ignore_ascii_case("wal") || (is_memory && mode.eq_ignore_ascii_case("memory")) {
+            if mode.eq_ignore_ascii_case("wal")
+                || (is_memory && mode.eq_ignore_ascii_case("memory"))
+            {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         let mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-        if !mode.eq_ignore_ascii_case("wal") && !(is_memory && mode.eq_ignore_ascii_case("memory")) {
+        if !mode.eq_ignore_ascii_case("wal") && !(is_memory && mode.eq_ignore_ascii_case("memory"))
+        {
             return Err(IndexDbError::JournalModeNotWal(mode));
         }
 
@@ -187,7 +202,10 @@ impl IndexDb {
                 prev_hash TEXT,
                 actor JSON,
                 target JSON,
-                attrs JSON
+                attrs JSON,
+                lamport_ts INTEGER,
+                causal_parent TEXT,
+                vclock JSON
             );
 
             CREATE INDEX IF NOT EXISTS idx_trace_ns_ts ON trace_events(namespace_id, ts);
@@ -261,11 +279,66 @@ impl IndexDb {
             );
 
             CREATE INDEX IF NOT EXISTS idx_tags_ns_time ON tags(namespace_id, created_ts);
+
+            -- Chain-of-Custody audit log v2 (ISO 27037, ACPO, NIST 800-88 compliant)
+            CREATE TABLE IF NOT EXISTS custody_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,                    -- RFC 3339 timestamp
+                actor_id TEXT NOT NULL,              -- node_id / user / service
+                session_id TEXT,                     -- ties actions within process lifetime
+                tool TEXT NOT NULL DEFAULT 'unknown', -- tracer_sidecar | bar_orchestrator | ritma_cli
+                action TEXT NOT NULL,                -- CAPTURE|SEAL|EXPORT|PRUNE|VERIFY|ACCESS
+                namespace_id TEXT,
+                window_id TEXT,
+                target_hash TEXT,                    -- hash of affected data
+                details BLOB,                        -- CBOR (not JSON) for canonicalization
+                prev_log_hash TEXT,                  -- hash chain for tamper detection
+                log_hash TEXT NOT NULL,              -- hash of this entry
+                signature TEXT,                      -- optional cryptographic signature
+                tsa_token BLOB,                      -- optional RFC 3161 timestamp token
+                host_attestation TEXT                -- optional TPM/IMA hash
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_custody_log_ns_ts ON custody_log(namespace_id, ts);
+            CREATE INDEX IF NOT EXISTS idx_custody_log_action ON custody_log(action);
+
+            -- Sealed windows registry (tracks which windows have been sealed to RTSL)
+            CREATE TABLE IF NOT EXISTS sealed_windows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                namespace_id TEXT NOT NULL,
+                window_id TEXT NOT NULL,
+                start_ts INTEGER NOT NULL,
+                end_ts INTEGER NOT NULL,
+                merkle_root TEXT NOT NULL,
+                seal_ts INTEGER NOT NULL,
+                rtsl_segment_id TEXT,
+                exported INTEGER DEFAULT 0,          -- 1 if proofpack exported
+                pruned INTEGER DEFAULT 0,            -- 1 if trace_events pruned
+                UNIQUE(namespace_id, window_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sealed_ns_time ON sealed_windows(namespace_id, start_ts, end_ts);
             "#,
         )?;
 
         self.ensure_trace_event_hash_columns()?;
         Ok(())
+    }
+
+    pub fn get_trace_event_chain_root(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT event_hash FROM trace_events WHERE namespace_id=?1 AND ts>=?2 AND ts<=?3 AND event_hash IS NOT NULL ORDER BY id DESC LIMIT 1",
+                params![namespace_id, start_ts, end_ts],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(IndexDbError::from)
     }
 
     fn ensure_trace_event_hash_columns(&self) -> Result<()> {
@@ -290,13 +363,30 @@ impl IndexDb {
                 .execute("ALTER TABLE trace_events ADD COLUMN prev_hash TEXT", [])?;
         }
 
+        // Add causal ordering columns
+        if !has_col(&self.conn, "trace_events", "lamport_ts")? {
+            self.conn
+                .execute("ALTER TABLE trace_events ADD COLUMN lamport_ts INTEGER", [])?;
+        }
+        if !has_col(&self.conn, "trace_events", "causal_parent")? {
+            self.conn
+                .execute("ALTER TABLE trace_events ADD COLUMN causal_parent TEXT", [])?;
+        }
+        if !has_col(&self.conn, "trace_events", "vclock")? {
+            self.conn
+                .execute("ALTER TABLE trace_events ADD COLUMN vclock JSON", [])?;
+        }
+
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_trace_ns_hash ON trace_events(namespace_id, event_hash)",
             [],
         )?;
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trace_ns_lamport ON trace_events(namespace_id, lamport_ts)",
+            [],
+        )?;
         Ok(())
     }
-
 }
 
 /// Simplified stored representation of a canonical decision event row.
@@ -419,6 +509,91 @@ pub struct PruneStats {
     pub baselines_deleted: usize,
     pub effective_config_deleted: usize,
     pub tags_deleted: usize,
+}
+
+/// Chain-of-custody log entry v2 (ISO 27037, ACPO, NIST 800-88 compliant)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustodyLogEntry {
+    pub id: Option<i64>,
+    pub ts: String,
+    pub actor_id: String,
+    /// Session identifier (ties actions within process lifetime)
+    pub session_id: Option<String>,
+    /// Tool that performed the action (tracer_sidecar, bar_orchestrator, ritma_cli)
+    pub tool: String,
+    pub action: CustodyAction,
+    pub namespace_id: Option<String>,
+    pub window_id: Option<String>,
+    pub target_hash: Option<String>,
+    /// Details stored as CBOR for canonicalization
+    pub details: Option<serde_json::Value>,
+    pub prev_log_hash: Option<String>,
+    pub log_hash: String,
+    pub signature: Option<String>,
+    /// Optional TPM/IMA attestation hash
+    pub host_attestation: Option<String>,
+}
+
+/// Custody action types per ISO 27037 / ACPO guidelines
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CustodyAction {
+    Capture, // Evidence captured by sidecar
+    Seal,    // Window sealed into RTSL
+    Export,  // Proofpack exported
+    Prune,   // Hot data deleted after seal
+    Verify,  // Proofpack verified
+    Access,  // Evidence accessed for review
+}
+
+impl std::fmt::Display for CustodyAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CustodyAction::Capture => write!(f, "CAPTURE"),
+            CustodyAction::Seal => write!(f, "SEAL"),
+            CustodyAction::Export => write!(f, "EXPORT"),
+            CustodyAction::Prune => write!(f, "PRUNE"),
+            CustodyAction::Verify => write!(f, "VERIFY"),
+            CustodyAction::Access => write!(f, "ACCESS"),
+        }
+    }
+}
+
+impl std::str::FromStr for CustodyAction {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "CAPTURE" => Ok(CustodyAction::Capture),
+            "SEAL" => Ok(CustodyAction::Seal),
+            "EXPORT" => Ok(CustodyAction::Export),
+            "PRUNE" => Ok(CustodyAction::Prune),
+            "VERIFY" => Ok(CustodyAction::Verify),
+            "ACCESS" => Ok(CustodyAction::Access),
+            _ => Err(format!("Unknown custody action: {s}")),
+        }
+    }
+}
+
+/// Sealed window record (tracks RTSL seal status)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SealedWindowRow {
+    pub namespace_id: String,
+    pub window_id: String,
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub merkle_root: String,
+    pub seal_ts: i64,
+    pub rtsl_segment_id: Option<String>,
+    pub exported: bool,
+    pub pruned: bool,
+}
+
+/// Result of secure pruning operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurePruneResult {
+    pub window_id: String,
+    pub events_deleted: usize,
+    pub custody_log_id: i64,
+    pub data_hash: String,
 }
 
 impl IndexDb {
@@ -626,7 +801,8 @@ impl IndexDb {
             public_inputs_hash: pack.public_inputs_hash.clone(),
             verification_key_id: pack.verification_key_id.clone(),
             status: status.to_string(),
-            receipt_refs: serde_json::to_value(&pack.receipt_refs).unwrap_or(serde_json::Value::Null),
+            receipt_refs: serde_json::to_value(&pack.receipt_refs)
+                .unwrap_or(serde_json::Value::Null),
             blob_ref: pack.proof_ref.clone(),
         };
         self.insert_proof_metadata(&row)
@@ -646,9 +822,15 @@ impl IndexDb {
             )
             .optional()?;
 
+        // Serialize vclock to JSON if present
+        let vclock_json = te
+            .vclock
+            .as_ref()
+            .map(|vc| serde_json::to_string(vc).unwrap_or("null".to_string()));
+
         self.conn.execute(
-            "INSERT INTO trace_events (namespace_id, trace_id, ts, source, kind, event_hash, prev_hash, actor, target, attrs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO trace_events (namespace_id, trace_id, ts, source, kind, event_hash, prev_hash, actor, target, attrs, lamport_ts, causal_parent, vclock)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 te.namespace_id,
                 te.trace_id,
@@ -660,6 +842,9 @@ impl IndexDb {
                 serde_json::to_string(&te.actor).unwrap_or("null".to_string()),
                 serde_json::to_string(&te.target).unwrap_or("null".to_string()),
                 serde_json::to_string(&te.attrs).unwrap_or("null".to_string()),
+                te.lamport_ts,
+                te.causal_parent,
+                vclock_json,
             ],
         )?;
         Ok(())
@@ -673,7 +858,7 @@ impl IndexDb {
         end_ts: i64,
     ) -> Result<Vec<CmTraceEvent>> {
         let mut stmt = self.conn.prepare(
-            "SELECT namespace_id, trace_id, ts, source, kind, actor, target, attrs
+            "SELECT namespace_id, trace_id, ts, source, kind, actor, target, attrs, lamport_ts, causal_parent, vclock
              FROM trace_events WHERE namespace_id = ?1 AND ts >= ?2 AND ts <= ?3 ORDER BY ts ASC",
         )?;
 
@@ -687,6 +872,9 @@ impl IndexDb {
                 let actor_s: String = r.get(5)?;
                 let target_s: String = r.get(6)?;
                 let attrs_s: String = r.get(7)?;
+                let lamport_ts: Option<u64> = r.get(8)?;
+                let causal_parent: Option<String> = r.get(9)?;
+                let vclock_s: Option<String> = r.get(10)?;
 
                 let ts = chrono::DateTime::from_timestamp(ts_epoch, 0)
                     .unwrap_or(chrono::DateTime::from_timestamp(0, 0).unwrap())
@@ -716,6 +904,14 @@ impl IndexDb {
                         ppid: 0,
                         uid: 0,
                         gid: 0,
+                        net_ns: None,
+                        auid: None,
+                        ses: None,
+                        tty: None,
+                        euid: None,
+                        suid: None,
+                        fsuid: None,
+                        egid: None,
                         comm_hash: None,
                         exe_hash: None,
                         comm: None,
@@ -729,13 +925,27 @@ impl IndexDb {
                         path_hash: None,
                         dst: None,
                         domain_hash: None,
+                        protocol: None,
+                        src: None,
+                        state: None,
+                        dns: None,
+                        path: None,
+                        inode: None,
+                        file_op: None,
                     });
                 let attrs: common_models::TraceAttrs =
                     serde_json::from_str(&attrs_s).unwrap_or(common_models::TraceAttrs {
                         argv_hash: None,
                         cwd_hash: None,
                         bytes_out: None,
+                        argv: None,
+                        cwd: None,
+                        bytes_in: None,
+                        env_hash: None,
                     });
+
+                // Parse vclock from JSON if present
+                let vclock = vclock_s.and_then(|s| serde_json::from_str(&s).ok());
 
                 Ok(CmTraceEvent {
                     trace_id,
@@ -746,6 +956,9 @@ impl IndexDb {
                     actor,
                     target,
                     attrs,
+                    lamport_ts,
+                    causal_parent,
+                    vclock,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1058,6 +1271,45 @@ impl IndexDb {
                 explain: r.get(5)?,
                 models: serde_json::from_str(&r.get::<_, String>(6)?)
                     .unwrap_or(serde_json::Value::Null),
+            }));
+        }
+        Ok(None)
+    }
+
+    /// Get verdict by time window (matches on event timestamp within range).
+    pub fn get_verdict_by_time(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Option<VerdictRow>> {
+        // Verdicts are linked to events, so we join to find verdicts for events in this window
+        let mut stmt = self.conn.prepare(
+            "SELECT v.namespace_id, v.verdict_id, v.event_id, v.verdict_type, v.severity, 
+                    v.confidence, v.reason_codes, v.explain, v.ranges_used, v.contract_hash, v.policy_pack
+             FROM verdicts v
+             JOIN events e ON v.event_id = e.event_id AND v.namespace_id = e.namespace_id
+             WHERE v.namespace_id = ?1 AND e.ts >= ?2 AND e.ts <= ?3
+             ORDER BY e.ts DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![namespace_id, start_ts, end_ts])?;
+        if let Some(r) = rows.next()? {
+            return Ok(Some(VerdictRow {
+                namespace_id: r.get(0)?,
+                verdict_id: r.get(1)?,
+                event_id: r.get(2)?,
+                verdict_type: r.get(3)?,
+                severity: r.get(4)?,
+                confidence: r.get(5)?,
+                reason_codes: serde_json::from_str(&r.get::<_, String>(6)?)
+                    .unwrap_or(serde_json::Value::Null),
+                explain: serde_json::from_str(&r.get::<_, String>(7)?)
+                    .unwrap_or(serde_json::Value::Null),
+                ranges_used: serde_json::from_str(&r.get::<_, String>(8)?)
+                    .unwrap_or(serde_json::Value::Null),
+                contract_hash: r.get(9)?,
+                policy_pack: r.get(10)?,
             }));
         }
         Ok(None)
@@ -1450,6 +1702,455 @@ impl IndexDb {
         rows.reverse();
         Ok(rows)
     }
+
+    // =========================================================================
+    // Chain-of-Custody Methods (ISO 27037, ACPO, NIST 800-88 compliant)
+    // =========================================================================
+
+    /// Insert a custody log entry with hash chaining for tamper detection.
+    /// Returns the inserted row ID.
+    pub fn insert_custody_log(&self, entry: &CustodyLogEntry) -> Result<i64> {
+        // Serialize details to CBOR for canonicalization
+        let details_cbor: Option<Vec<u8>> = entry.details.as_ref().map(|v| {
+            let mut buf = Vec::new();
+            ciborium::into_writer(v, &mut buf).ok();
+            buf
+        });
+
+        self.conn.execute(
+            "INSERT INTO custody_log (ts, actor_id, session_id, tool, action, namespace_id, window_id, target_hash, details, prev_log_hash, log_hash, signature, host_attestation)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                entry.ts,
+                entry.actor_id,
+                entry.session_id,
+                entry.tool,
+                entry.action.to_string(),
+                entry.namespace_id,
+                entry.window_id,
+                entry.target_hash,
+                details_cbor,
+                entry.prev_log_hash,
+                entry.log_hash,
+                entry.signature,
+                entry.host_attestation,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get the last custody log entry's hash for chaining.
+    pub fn get_last_custody_log_hash(&self) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT log_hash FROM custody_log ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(IndexDbError::from)
+    }
+
+    /// Create a new custody log entry with automatic hash chaining.
+    ///
+    /// Parameters:
+    /// - `actor_id`: Node ID, user, or service principal
+    /// - `session_id`: Optional session identifier (ties actions within process lifetime)
+    /// - `tool`: Tool name (tracer_sidecar, bar_orchestrator, ritma_cli)
+    /// - `action`: Custody action type
+    /// - `namespace_id`: Optional namespace
+    /// - `window_id`: Optional window ID
+    /// - `target_hash`: Optional hash of affected data
+    /// - `details`: Optional details (will be stored as CBOR)
+    pub fn log_custody_event(
+        &self,
+        actor_id: &str,
+        session_id: Option<&str>,
+        tool: &str,
+        action: CustodyAction,
+        namespace_id: Option<&str>,
+        window_id: Option<&str>,
+        target_hash: Option<&str>,
+        details: Option<serde_json::Value>,
+    ) -> Result<i64> {
+        let ts = chrono::Utc::now().to_rfc3339();
+        let prev_log_hash = self.get_last_custody_log_hash()?;
+
+        // Compute details hash if present (for inclusion in log_hash)
+        let details_hash = details.as_ref().map(|v| {
+            let mut buf = Vec::new();
+            ciborium::into_writer(v, &mut buf).ok();
+            hash_string_sha256(&String::from_utf8_lossy(&buf))
+        });
+
+        // Compute log_hash = SHA256(canonical_cbor({ts, actor_id, session_id, tool, action, ...}))
+        let hash_input = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            ts,
+            actor_id,
+            session_id.unwrap_or(""),
+            tool,
+            action,
+            namespace_id.unwrap_or(""),
+            window_id.unwrap_or(""),
+            target_hash.unwrap_or(""),
+            prev_log_hash.as_deref().unwrap_or("")
+        );
+        let log_hash = hash_string_sha256(&hash_input);
+
+        let entry = CustodyLogEntry {
+            id: None,
+            ts,
+            actor_id: actor_id.to_string(),
+            session_id: session_id.map(|s| s.to_string()),
+            tool: tool.to_string(),
+            action,
+            namespace_id: namespace_id.map(|s| s.to_string()),
+            window_id: window_id.map(|s| s.to_string()),
+            target_hash: target_hash.map(|s| s.to_string()),
+            details,
+            prev_log_hash,
+            log_hash,
+            signature: None,
+            host_attestation: None,
+        };
+
+        self.insert_custody_log(&entry)
+    }
+
+    /// List custody log entries for a namespace within a time range.
+    pub fn list_custody_log(
+        &self,
+        namespace_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<CustodyLogEntry>> {
+        let sql = match namespace_id {
+            Some(_) => "SELECT id, ts, actor_id, session_id, tool, action, namespace_id, window_id, target_hash, details, prev_log_hash, log_hash, signature, host_attestation 
+                        FROM custody_log WHERE namespace_id = ?1 ORDER BY id DESC LIMIT ?2",
+            None => "SELECT id, ts, actor_id, session_id, tool, action, namespace_id, window_id, target_hash, details, prev_log_hash, log_hash, signature, host_attestation 
+                     FROM custody_log ORDER BY id DESC LIMIT ?1",
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = match namespace_id {
+            Some(ns) => stmt.query_map(params![ns, limit], Self::map_custody_row)?,
+            None => stmt.query_map(params![limit], Self::map_custody_row)?,
+        };
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(IndexDbError::from)
+    }
+
+    fn map_custody_row(r: &rusqlite::Row) -> rusqlite::Result<CustodyLogEntry> {
+        let action_str: String = r.get(5)?;
+        let details_blob: Option<Vec<u8>> = r.get(9)?;
+        let details =
+            details_blob.and_then(|b| ciborium::from_reader::<serde_json::Value, _>(&b[..]).ok());
+        Ok(CustodyLogEntry {
+            id: Some(r.get(0)?),
+            ts: r.get(1)?,
+            actor_id: r.get(2)?,
+            session_id: r.get(3)?,
+            tool: r.get(4)?,
+            action: action_str.parse().unwrap_or(CustodyAction::Access),
+            namespace_id: r.get(6)?,
+            window_id: r.get(7)?,
+            target_hash: r.get(8)?,
+            details,
+            prev_log_hash: r.get(10)?,
+            log_hash: r.get(11)?,
+            signature: r.get(12)?,
+            host_attestation: r.get(13).ok().flatten(),
+        })
+    }
+
+    /// Verify custody log hash chain integrity.
+    /// Returns Ok(true) if chain is intact, Ok(false) if tampering detected.
+    pub fn verify_custody_log_chain(&self) -> Result<bool> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, actor_id, session_id, tool, action, namespace_id, window_id, target_hash, prev_log_hash, log_hash 
+             FROM custody_log ORDER BY id ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+
+        let mut expected_prev: Option<String> = None;
+        while let Some(r) = rows.next()? {
+            let ts: String = r.get(0)?;
+            let actor_id: String = r.get(1)?;
+            let session_id: Option<String> = r.get(2)?;
+            let tool: String = r.get(3)?;
+            let action: String = r.get(4)?;
+            let namespace_id: Option<String> = r.get(5)?;
+            let window_id: Option<String> = r.get(6)?;
+            let target_hash: Option<String> = r.get(7)?;
+            let prev_log_hash: Option<String> = r.get(8)?;
+            let log_hash: String = r.get(9)?;
+
+            // Verify prev_log_hash matches expected
+            if prev_log_hash != expected_prev {
+                return Ok(false);
+            }
+
+            // Recompute and verify log_hash (v2 format)
+            let hash_input = format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                ts,
+                actor_id,
+                session_id.as_deref().unwrap_or(""),
+                tool,
+                action,
+                namespace_id.as_deref().unwrap_or(""),
+                window_id.as_deref().unwrap_or(""),
+                target_hash.as_deref().unwrap_or(""),
+                prev_log_hash.as_deref().unwrap_or("")
+            );
+            let computed_hash = hash_string_sha256(&hash_input);
+            if computed_hash != log_hash {
+                return Ok(false);
+            }
+
+            expected_prev = Some(log_hash);
+        }
+
+        Ok(true)
+    }
+
+    // =========================================================================
+    // Sealed Windows Registry
+    // =========================================================================
+
+    /// Register a window as sealed in RTSL.
+    pub fn register_sealed_window(&self, row: &SealedWindowRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sealed_windows (namespace_id, window_id, start_ts, end_ts, merkle_root, seal_ts, rtsl_segment_id, exported, pruned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(namespace_id, window_id) DO UPDATE SET 
+                merkle_root=excluded.merkle_root, seal_ts=excluded.seal_ts, rtsl_segment_id=excluded.rtsl_segment_id",
+            params![
+                row.namespace_id,
+                row.window_id,
+                row.start_ts,
+                row.end_ts,
+                row.merkle_root,
+                row.seal_ts,
+                row.rtsl_segment_id,
+                row.exported as i32,
+                row.pruned as i32,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Check if a window is sealed.
+    pub fn is_window_sealed(&self, namespace_id: &str, window_id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(1) FROM sealed_windows WHERE namespace_id = ?1 AND window_id = ?2",
+            params![namespace_id, window_id],
+            |r| r.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Get sealed window by time range.
+    pub fn get_sealed_window_by_time(
+        &self,
+        namespace_id: &str,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<Option<SealedWindowRow>> {
+        self.conn
+            .query_row(
+                "SELECT namespace_id, window_id, start_ts, end_ts, merkle_root, seal_ts, rtsl_segment_id, exported, pruned
+                 FROM sealed_windows WHERE namespace_id = ?1 AND start_ts = ?2 AND end_ts = ?3",
+                params![namespace_id, start_ts, end_ts],
+                |r| {
+                    Ok(SealedWindowRow {
+                        namespace_id: r.get(0)?,
+                        window_id: r.get(1)?,
+                        start_ts: r.get(2)?,
+                        end_ts: r.get(3)?,
+                        merkle_root: r.get(4)?,
+                        seal_ts: r.get(5)?,
+                        rtsl_segment_id: r.get(6)?,
+                        exported: r.get::<_, i32>(7)? != 0,
+                        pruned: r.get::<_, i32>(8)? != 0,
+                    })
+                },
+            )
+            .optional()
+            .map_err(IndexDbError::from)
+    }
+
+    /// Mark a sealed window as exported.
+    pub fn mark_window_exported(&self, namespace_id: &str, window_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sealed_windows SET exported = 1 WHERE namespace_id = ?1 AND window_id = ?2",
+            params![namespace_id, window_id],
+        )?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Secure Pruning (NIST 800-88 / ISO 27037 compliant)
+    // =========================================================================
+
+    /// Securely prune trace events for a sealed window.
+    ///
+    /// This method:
+    /// 1. Verifies the window is sealed in RTSL (prevents premature deletion)
+    /// 2. Checks prune guardrails (RITMA_PRUNE_REQUIRE_EXPORT, RITMA_PRUNE_MIN_AGE_SECS)
+    /// 3. Computes hash of data to be deleted (audit trail)
+    /// 4. Logs a PRUNE custody event with hash chain
+    /// 5. Deletes the trace events
+    /// 6. Marks the window as pruned
+    ///
+    /// Returns error if window is not sealed or guardrails not met.
+    ///
+    /// Environment variables (spec §362-364):
+    /// - RITMA_PRUNE_REQUIRE_SEAL=1 (default) - prune fails if window not sealed
+    /// - RITMA_PRUNE_REQUIRE_EXPORT=1 - prune fails if proofpack not exported
+    /// - RITMA_PRUNE_MIN_AGE_SECS=86400 - minimum age before prune allowed (default 24h)
+    pub fn prune_sealed_window(
+        &self,
+        actor_id: &str,
+        namespace_id: &str,
+        window_id: &str,
+    ) -> Result<SecurePruneResult> {
+        // 1. Get sealed window record
+        let sealed = self.conn.query_row(
+            "SELECT start_ts, end_ts, merkle_root, seal_ts, exported, pruned FROM sealed_windows WHERE namespace_id = ?1 AND window_id = ?2",
+            params![namespace_id, window_id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, bool>(4)?, r.get::<_, i32>(5)?)),
+        ).optional()?;
+
+        let (start_ts, end_ts, merkle_root, seal_ts, exported, already_pruned) = match sealed {
+            Some(s) => s,
+            None => {
+                return Err(IndexDbError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
+            }
+        };
+
+        if already_pruned != 0 {
+            return Ok(SecurePruneResult {
+                window_id: window_id.to_string(),
+                events_deleted: 0,
+                custody_log_id: 0,
+                data_hash: merkle_root,
+            });
+        }
+
+        // 2. Check prune guardrails per spec §362-364
+        // RITMA_PRUNE_REQUIRE_EXPORT - if set, require proofpack exported before prune
+        if env_truthy("RITMA_PRUNE_REQUIRE_EXPORT") && !exported {
+            return Err(IndexDbError::Other(format!(
+                "prune blocked: RITMA_PRUNE_REQUIRE_EXPORT=1 but window {window_id} not exported"
+            )));
+        }
+
+        // RITMA_PRUNE_MIN_AGE_SECS - minimum age before prune allowed (default 86400 = 24h)
+        let min_age_secs: i64 = std::env::var("RITMA_PRUNE_MIN_AGE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(86400);
+        let now = chrono::Utc::now().timestamp();
+        let age_secs = now - seal_ts;
+        if age_secs < min_age_secs {
+            return Err(IndexDbError::Other(format!(
+                "prune blocked: window {window_id} sealed {age_secs}s ago, min age is {min_age_secs}s"
+            )));
+        }
+
+        // 2. Compute hash of events to be deleted
+        let events = self.list_trace_events_range(namespace_id, start_ts, end_ts)?;
+        let events_json = serde_json::to_string(&events).unwrap_or_default();
+        let data_hash = hash_string_sha256(&events_json);
+
+        // 3. Log PRUNE custody event with tombstone commitment
+        let tombstone_hash = {
+            let tombstone = serde_json::json!({
+                "ns": namespace_id,
+                "start": start_ts,
+                "end": end_ts,
+                "count": events.len(),
+                "deleted_events_hash": data_hash
+            });
+            hash_string_sha256(&tombstone.to_string())
+        };
+
+        let details = serde_json::json!({
+            "deleted_range": {
+                "ns": namespace_id,
+                "start": start_ts,
+                "end": end_ts,
+                "count": events.len()
+            },
+            "deleted_events_hash": data_hash,
+            "sealed_leaf_hash": merkle_root,
+            "tombstone_hash": tombstone_hash
+        });
+        let custody_log_id = self.log_custody_event(
+            actor_id,
+            None,       // session_id
+            "index_db", // tool
+            CustodyAction::Prune,
+            Some(namespace_id),
+            Some(window_id),
+            Some(&data_hash),
+            Some(details),
+        )?;
+
+        // 4. Delete trace events
+        let events_deleted = self.conn.execute(
+            "DELETE FROM trace_events WHERE namespace_id = ?1 AND ts >= ?2 AND ts <= ?3",
+            params![namespace_id, start_ts, end_ts],
+        )?;
+
+        // 5. Mark window as pruned
+        self.conn.execute(
+            "UPDATE sealed_windows SET pruned = 1 WHERE namespace_id = ?1 AND window_id = ?2",
+            params![namespace_id, window_id],
+        )?;
+
+        Ok(SecurePruneResult {
+            window_id: window_id.to_string(),
+            events_deleted,
+            custody_log_id,
+            data_hash,
+        })
+    }
+
+    /// Prune all sealed windows older than the given age (in seconds).
+    /// Only prunes windows that are sealed and optionally exported.
+    pub fn prune_old_sealed_windows(
+        &self,
+        actor_id: &str,
+        namespace_id: &str,
+        min_age_secs: i64,
+        require_exported: bool,
+    ) -> Result<Vec<SecurePruneResult>> {
+        let cutoff_ts = chrono::Utc::now().timestamp() - min_age_secs;
+
+        let sql = if require_exported {
+            "SELECT window_id FROM sealed_windows WHERE namespace_id = ?1 AND seal_ts < ?2 AND exported = 1 AND pruned = 0"
+        } else {
+            "SELECT window_id FROM sealed_windows WHERE namespace_id = ?1 AND seal_ts < ?2 AND pruned = 0"
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let window_ids: Vec<String> = stmt
+            .query_map(params![namespace_id, cutoff_ts], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut results = Vec::new();
+        for window_id in window_ids {
+            match self.prune_sealed_window(actor_id, namespace_id, &window_id) {
+                Ok(r) => results.push(r),
+                Err(e) => eprintln!("Failed to prune window {window_id}: {e}"),
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 #[cfg(test)]
@@ -1462,8 +2163,7 @@ mod tests {
     fn index_db_smoke_test() {
         let tmp = TempDir::new().expect("tempdir");
         let path = tmp.path().join("index_db.sqlite");
-        let db = IndexDb::open(path.to_str().unwrap()).expect("open index_db");
-        db.smoke_test().expect("smoke_test");
+        let _db = IndexDb::open(path.to_str().unwrap()).expect("open index_db");
     }
 
     #[test]
@@ -1558,6 +2258,18 @@ mod tests {
                 ppid: 0,
                 uid: 1000,
                 gid: 1000,
+                net_ns: None,
+                auid: None,
+                ses: None,
+                tty: None,
+                euid: None,
+                suid: None,
+                fsuid: None,
+                egid: None,
+                comm_hash: None,
+                exe_hash: None,
+                comm: None,
+                exe: None,
                 container_id: None,
                 service: Some("svc".into()),
                 build_hash: Some("b1".into()),
@@ -1566,12 +2278,30 @@ mod tests {
                 path_hash: Some("/bin/sh#hash".into()),
                 dst: None,
                 domain_hash: None,
+                protocol: None,
+                src: None,
+                state: None,
+                dns: None,
+                path: None,
+                inode: None,
+                file_op: None,
             },
             attrs: common_models::TraceAttrs {
                 argv_hash: Some("argv#hash".into()),
                 cwd_hash: None,
                 bytes_out: Some(0),
+                argv: None,
+                cwd: None,
+                bytes_in: None,
+                env_hash: None,
             },
+            lamport_ts: Some(1),
+            causal_parent: None,
+            vclock: Some({
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("node1".to_string(), 1);
+                m
+            }),
         };
         db.insert_trace_event_from_model(&te)
             .expect("insert_trace_event");

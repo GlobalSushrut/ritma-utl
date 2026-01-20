@@ -53,9 +53,7 @@ fn read_file(path: &PathBuf) -> std::io::Result<usize> {
 }
 
 fn tcp_probe(addr: &str) -> std::io::Result<()> {
-    let mut addrs = addr
-        .to_socket_addrs()?
-        .collect::<Vec<_>>();
+    let mut addrs = addr.to_socket_addrs()?.collect::<Vec<_>>();
     addrs.sort();
     let Some(sock) = addrs.first().cloned() else {
         return Err(std::io::Error::other("no resolved socket addrs"));
@@ -73,10 +71,7 @@ fn tcp_probe(addr: &str) -> std::io::Result<()> {
 
 fn exec_burst(n: u32) {
     for _ in 0..n {
-        let _ = Command::new("/bin/sh")
-            .arg("-lc")
-            .arg("true")
-            .status();
+        let _ = Command::new("/bin/sh").arg("-lc").arg("true").status();
     }
 }
 
@@ -179,5 +174,10 @@ fn main() {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    eprintln!("ritma_demo_workload done run_id={} ticks={} file={}", run_id, ticks, file_path.display());
+    eprintln!(
+        "ritma_demo_workload done run_id={} ticks={} file={}",
+        run_id,
+        ticks,
+        file_path.display()
+    );
 }

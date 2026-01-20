@@ -1,0 +1,77 @@
+scenario:
+  name: network-security-monitoring
+  description: "Network traffic with lateral movement attempt and detection"
+  duration_seconds: 120
+  seed: 42
+
+phases:
+  - name: baseline_traffic
+    start: 0
+    duration: 40
+    traffic:
+      type: network_normal
+      rps: 50
+      patterns:
+        - src: web-proxy
+          dst: api-server
+          rps: 30
+        - src: api-server
+          dst: db-server
+          rps: 20
+
+  - name: reconnaissance
+    start: 40
+    duration: 20
+    events:
+      - type: port_scan
+        src: api-server
+        targets: ["db-server"]
+        ports: [22, 3306, 5432, 6379, 27017]
+
+  - name: lateral_movement_attempt
+    start: 60
+    duration: 20
+    events:
+      - type: lateral_movement
+        src: api-server
+        dst: db-server
+        method: ssh_brute_force
+        attempts: 50
+
+  - name: policy_enforcement
+    start: 80
+    duration: 20
+    events:
+      - type: policy_block
+        src: api-server
+        dst: db-server
+        port: 22
+        policy_id: "deny-ssh-cross-zone"
+        action: deny
+
+  - name: normal_recovery
+    start: 100
+    duration: 20
+    traffic:
+      type: network_normal
+      rps: 30
+
+chaos:
+  - action: latency
+    target: api-server
+    start: 50
+    duration: 10
+    params:
+      latency_ms: 200
+      jitter_ms: 50
+
+assertions:
+  - type: event_count
+    filter: "kind=NetConnect"
+    min: 5000
+  - type: event_count
+    filter: "kind=PolicyViolation"
+    min: 10
+  - type: event_count
+    filter: "kind=AnomalyDetected AND anomaly_type=lateral_movement"
+    min: 1

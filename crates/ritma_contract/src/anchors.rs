@@ -264,7 +264,10 @@ impl AnchorManager {
     pub fn new(out_dir: &Path, config: AnchorConfig) -> std::io::Result<Self> {
         let anchors_dir = out_dir.join("anchors");
         std::fs::create_dir_all(&anchors_dir)?;
-        Ok(Self { anchors_dir, config })
+        Ok(Self {
+            anchors_dir,
+            config,
+        })
     }
 
     /// Create a daily anchor
@@ -294,7 +297,7 @@ impl AnchorManager {
 
         for anchor_type in &self.config.anchor_types {
             let submission = AnchorSubmission::new(anchor.anchor_id, *anchor_type);
-            
+
             // Save submission record
             let sub_path = self.anchors_dir.join(format!(
                 "{}_{}.submission.cbor",
@@ -351,8 +354,7 @@ impl AnchorManager {
 }
 
 fn parse_daily_anchor(data: &[u8]) -> std::io::Result<DailyAnchor> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid anchor format"));
@@ -363,20 +365,18 @@ fn parse_daily_anchor(data: &[u8]) -> std::io::Result<DailyAnchor> {
     }
 
     let anchor_id = match arr.get(1) {
-        Some(ciborium::value::Value::Text(s)) => {
-            hex::decode(s)
-                .ok()
-                .and_then(|b| {
-                    if b.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&b);
-                        Some(arr)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or([0u8; 32])
-        }
+        Some(ciborium::value::Value::Text(s)) => hex::decode(s)
+            .ok()
+            .and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or([0u8; 32]),
         _ => [0u8; 32],
     };
 
@@ -391,44 +391,40 @@ fn parse_daily_anchor(data: &[u8]) -> std::io::Result<DailyAnchor> {
     };
 
     let day_root = match arr.get(4) {
-        Some(ciborium::value::Value::Text(s)) => {
-            hex::decode(s)
-                .ok()
-                .and_then(|b| {
-                    if b.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&b);
-                        Some(arr)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or([0u8; 32])
-        }
+        Some(ciborium::value::Value::Text(s)) => hex::decode(s)
+            .ok()
+            .and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or([0u8; 32]),
         _ => [0u8; 32],
     };
 
     let hour_roots = match arr.get(5) {
-        Some(ciborium::value::Value::Array(roots)) => {
-            roots
-                .iter()
-                .filter_map(|r| {
-                    if let ciborium::value::Value::Text(s) = r {
-                        hex::decode(s).ok().and_then(|b| {
-                            if b.len() == 32 {
-                                let mut arr = [0u8; 32];
-                                arr.copy_from_slice(&b);
-                                Some(arr)
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
+        Some(ciborium::value::Value::Array(roots)) => roots
+            .iter()
+            .filter_map(|r| {
+                if let ciborium::value::Value::Text(s) = r {
+                    hex::decode(s).ok().and_then(|b| {
+                        if b.len() == 32 {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&b);
+                            Some(arr)
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect(),
         _ => Vec::new(),
     };
 

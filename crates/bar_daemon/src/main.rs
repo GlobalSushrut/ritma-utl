@@ -87,7 +87,7 @@ fn main() -> std::io::Result<()> {
     // Use secure socket location, not world-writable /tmp
     let socket_path =
         std::env::var("BAR_SOCKET").unwrap_or_else(|_| "/run/ritma/bar_daemon.sock".to_string());
-    
+
     // Ensure socket directory exists with proper permissions
     if let Some(parent) = std::path::Path::new(&socket_path).parent() {
         std::fs::create_dir_all(parent).ok();
@@ -102,7 +102,7 @@ fn main() -> std::io::Result<()> {
     // Set secure socket permissions - only owner can read/write
     if let Ok(meta) = std::fs::metadata(&socket_path) {
         let mut perms = meta.permissions();
-        perms.set_mode(0o600);  // Owner read/write only
+        perms.set_mode(0o600); // Owner read/write only
         if let Err(e) = std::fs::set_permissions(&socket_path, perms) {
             error!("failed to set permissions on {}: {}", socket_path, e);
         }

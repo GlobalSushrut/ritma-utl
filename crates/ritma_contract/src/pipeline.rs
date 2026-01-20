@@ -109,7 +109,11 @@ pub struct SealingPipeline {
 }
 
 impl SealingPipeline {
-    pub fn new(out_dir: &Path, node_id: &str, anchor_config: AnchorConfig) -> std::io::Result<Self> {
+    pub fn new(
+        out_dir: &Path,
+        node_id: &str,
+        anchor_config: AnchorConfig,
+    ) -> std::io::Result<Self> {
         std::fs::create_dir_all(out_dir.join("pipeline"))?;
         Ok(Self {
             out_dir: out_dir.to_path_buf(),
@@ -174,20 +178,22 @@ impl SealingPipeline {
     }
 
     /// Process a full day and create anchor
-    pub fn process_day(&self, date: &str, hour_statuses: &[HourPipelineStatus]) -> std::io::Result<Option<DailyAnchor>> {
+    pub fn process_day(
+        &self,
+        date: &str,
+        hour_statuses: &[HourPipelineStatus],
+    ) -> std::io::Result<Option<DailyAnchor>> {
         if !self.anchor_config.enabled {
             return Ok(None);
         }
 
-        let hour_roots: Vec<[u8; 32]> = hour_statuses
-            .iter()
-            .filter_map(|s| s.hour_root)
-            .collect();
+        let hour_roots: Vec<[u8; 32]> = hour_statuses.iter().filter_map(|s| s.hour_root).collect();
 
         let event_count: u64 = hour_statuses.iter().map(|s| s.event_count).sum();
 
         let anchor_manager = AnchorManager::new(&self.out_dir, self.anchor_config.clone())?;
-        let anchor = anchor_manager.create_daily_anchor(date, &self.node_id, hour_roots, event_count)?;
+        let anchor =
+            anchor_manager.create_daily_anchor(date, &self.node_id, hour_roots, event_count)?;
 
         // Submit to configured anchor services
         anchor_manager.submit_anchor(&anchor)?;
@@ -216,7 +222,10 @@ impl SealingPipeline {
 
     /// Get status for an hour
     pub fn get_status(&self, hour_ts: i64) -> std::io::Result<Option<HourPipelineStatus>> {
-        let path = self.out_dir.join("pipeline").join(format!("{}.status.cbor", hour_ts));
+        let path = self
+            .out_dir
+            .join("pipeline")
+            .join(format!("{}.status.cbor", hour_ts));
         if !path.exists() {
             return Ok(None);
         }
@@ -290,8 +299,7 @@ impl MicroWindowData {
 }
 
 fn parse_pipeline_status(data: &[u8]) -> std::io::Result<HourPipelineStatus> {
-    let v: ciborium::value::Value =
-        ciborium::from_reader(data).map_err(std::io::Error::other)?;
+    let v: ciborium::value::Value = ciborium::from_reader(data).map_err(std::io::Error::other)?;
 
     let ciborium::value::Value::Array(arr) = v else {
         return Err(std::io::Error::other("invalid pipeline status format"));

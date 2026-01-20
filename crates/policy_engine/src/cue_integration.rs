@@ -114,7 +114,9 @@ impl CueConfigLoader {
             return Err("CUE integration is disabled (experimental feature)".to_string());
         }
         // EXPERIMENTAL: return default config until real CUE loading is implemented
-        eprintln!("[WARN] CUE config for {}:{} is using experimental defaults", tenant, policy_name);
+        eprintln!(
+            "[WARN] CUE config for {tenant}:{policy_name} is using experimental defaults"
+        );
 
         let _key = format!("{tenant}:{policy_name}");
 
