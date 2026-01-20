@@ -12,6 +12,7 @@ nav:
   - Architecture: ARCHITECTURE.md
   - Production Setup: production_setup.md
   - CLI Reference: CLI_REFERENCE.md
+  - SDK Guide: SDK.md
   - Forensics Standard: ritma_transparency_forensics.md
   - RTSL Spec: RTSL_SPEC.md
   - EEC Spec: EEC_SPEC.md
