@@ -34,7 +34,7 @@ This format replaces the current "folder dump" approach with a court-ready, prod
 9. [Locator System](#9-locator-system)
 10. [Verification Protocol](#10-verification-protocol)
 11. [Compression](#11-compression)
-12. [Cold Storage & Retention](#12-cold-storage--retention)
+12. [Cold Storage & Retention](#12-cold-storage-retention)
 13. [Court Admissibility](#13-court-admissibility)
 14. [Migration from v1](#14-migration-from-v1)
 15. [References](#15-references)
