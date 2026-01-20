@@ -618,12 +618,12 @@ impl ConsensusCluster {
 
         // Add all existing nodes as peers
         for existing_id in self.nodes.keys() {
-            node.add_peer(existing_id, &format!("{}:8080", existing_id));
+            node.add_peer(existing_id, &format!("{existing_id}:8080"));
         }
 
         // Add new node as peer to all existing nodes
         for existing_node in self.nodes.values_mut() {
-            existing_node.add_peer(node_id, &format!("{}:8080", node_id));
+            existing_node.add_peer(node_id, &format!("{node_id}:8080"));
         }
 
         self.nodes.insert(node_id.to_string(), node);

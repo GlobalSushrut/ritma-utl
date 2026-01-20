@@ -612,7 +612,7 @@ mod tests {
                 .as_nanos()
         ));
 
-        let mut attestor = TpmAttestor::new("test-node", &tmp).unwrap();
+        let attestor = TpmAttestor::new("test-node", &tmp).unwrap();
         let nonce = b"test-nonce-12345";
         let pcr_sel = PcrSelection::default();
 

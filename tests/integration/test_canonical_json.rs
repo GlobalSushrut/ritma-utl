@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn cargo_bin(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

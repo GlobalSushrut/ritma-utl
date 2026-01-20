@@ -760,7 +760,7 @@ mod tests {
 
         for i in 0..5 {
             engine.ingest(StateEvent {
-                event_id: format!("e{}", i),
+                event_id: format!("e{i}"),
                 timestamp: 1000 + i * 100,
                 entity_id: "proc-1".to_string(),
                 entity_type: EntityType::Process,

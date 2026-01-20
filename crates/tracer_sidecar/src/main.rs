@@ -296,7 +296,7 @@ impl AuditAccumulator {
 
                 let objtype = parse_token(line, " objtype=");
                 let nametype = parse_token(line, " nametype=");
-                entry.file_op = map_audit_file_op(objtype.as_deref(), nametype.as_deref());
+                entry.file_op = map_audit_file_op(objtype, nametype);
 
                 Some(vec![])
             }
@@ -527,8 +527,7 @@ fn parse_audit_msg_id(line: &str) -> Option<String> {
 }
 
 fn parse_audit_type(line: &str) -> Option<String> {
-    if line.starts_with("type=") {
-        let rest = &line["type=".len()..];
+    if let Some(rest) = line.strip_prefix("type=") {
         let end = rest.find(' ').unwrap_or(rest.len());
         return Some(rest[..end].to_string());
     }
@@ -678,7 +677,7 @@ fn acquire_single_instance_lock(lock_path: &Path) -> Result<Option<File>> {
 
     let lock_path_s = lock_path.display().to_string();
     validate_path_str("RITMA_SIDECAR_LOCK_PATH", &lock_path_s, false)
-        .map_err(|e| std::io::Error::other(e))?;
+        .map_err(std::io::Error::other)?;
 
     let _ = ensure_parent_dir(lock_path);
 
@@ -1307,6 +1306,100 @@ fn tail_file_to_indexdb(index: &IndexDb, path: &str, namespace_id: &str) -> Resu
     }
 }
 
+fn main() -> Result<()> {
+    let namespace_id =
+        std::env::var("NAMESPACE_ID").unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string());
+    validate_namespace(&namespace_id)
+        .map_err(|e| std::io::Error::other(format!("invalid NAMESPACE_ID: {e}")))?;
+
+    let contract = StorageContract::resolve_cctv()
+        .map_err(|e| std::io::Error::other(format!("storage contract: {e}")))?;
+
+    let _lock = acquire_single_instance_lock(&contract.tracer_lock_path())?;
+
+    contract
+        .ensure_base_dir()
+        .map_err(|e| std::io::Error::other(format!("ensure base dir: {e}")))?;
+    contract
+        .ensure_out_layout()
+        .map_err(|e| std::io::Error::other(format!("ensure RITMA_OUT layout: {e}")))?;
+
+    let audit_path =
+        std::env::var("AUDIT_LOG_PATH").unwrap_or_else(|_| "/var/log/audit/audit.log".to_string());
+    validate_path_str("AUDIT_LOG_PATH", &audit_path, false).map_err(std::io::Error::other)?;
+
+    let index_path = contract.index_db_path.display().to_string();
+    validate_path_str("INDEX_DB_PATH", &index_path, true).map_err(std::io::Error::other)?;
+    if !index_path.ends_with(".sqlite") {
+        return Err(std::io::Error::other("INDEX_DB_PATH must end with .sqlite").into());
+    }
+
+    ensure_parent_dir(&contract.index_db_path)?;
+
+    let proc_root = std::env::var("PROC_ROOT").unwrap_or_else(|_| "/proc".to_string());
+    validate_path_str("PROC_ROOT", &proc_root, false).map_err(std::io::Error::other)?;
+
+    let net_scan_secs: u64 = match std::env::var("NET_SCAN_INTERVAL_SECS") {
+        Ok(s) => s
+            .parse::<u64>()
+            .map_err(|e| std::io::Error::other(format!("invalid NET_SCAN_INTERVAL_SECS: {e}")))?,
+        Err(_) => 30,
+    };
+    if !(1..=3600).contains(&net_scan_secs) {
+        return Err(std::io::Error::other("NET_SCAN_INTERVAL_SECS must be 1..=3600").into());
+    }
+
+    let selected = TraceProviderSelector::select_best();
+    if selected == "ebpf" {
+        let ns = namespace_id.clone();
+        let idx = index_path.clone();
+        spawn(move || {
+            eprintln!("tracer_sidecar[ebpf]: starting for {ns}");
+            let mut p = EbpfProvider::new(ns, idx);
+            if let Err(e) = p.start() {
+                eprintln!("tracer_sidecar[ebpf]: init error: {e}");
+                return;
+            }
+            eprintln!("tracer_sidecar[ebpf]: active");
+            loop {
+                sleep(Duration::from_secs(3600));
+            }
+        });
+    }
+
+    if selected != "ebpf" {
+        // Thread 1: auditd tail (fallback)
+        {
+            let ns = namespace_id.clone();
+            let idx = index_path.clone();
+            let ap = audit_path.clone();
+            spawn(move || match IndexDb::open(&idx) {
+                Ok(index) => {
+                    eprintln!("tracer_sidecar[auditd]: tailing {ap} for {ns}");
+                    let _ = tail_file_to_indexdb(&index, &ap, &ns);
+                }
+                Err(e) => eprintln!("tracer_sidecar[auditd]: init error: {e}"),
+            });
+        }
+
+        // Thread 2: proc net egress scanner
+        {
+            let ns = namespace_id.clone();
+            let idx = index_path.clone();
+            let pr = proc_root.clone();
+            spawn(move || {
+                eprintln!("tracer_sidecar[proc]: scanning {pr} every {net_scan_secs}s");
+                let _ = scan_proc_net_egress(idx, ns, pr, net_scan_secs);
+            });
+        }
+    }
+
+    // Keep main alive
+    loop {
+        sleep(Duration::from_secs(3600));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1535,99 +1628,5 @@ mod tests {
             (Some(0), Some(0))
         );
         assert_eq!(parse_tx_rx_queues(None), (None, None));
-    }
-}
-
-fn main() -> Result<()> {
-    let namespace_id =
-        std::env::var("NAMESPACE_ID").unwrap_or_else(|_| "ns://demo/dev/hello/world".to_string());
-    validate_namespace(&namespace_id)
-        .map_err(|e| std::io::Error::other(format!("invalid NAMESPACE_ID: {e}")))?;
-
-    let contract = StorageContract::resolve_cctv()
-        .map_err(|e| std::io::Error::other(format!("storage contract: {e}")))?;
-
-    let _lock = acquire_single_instance_lock(&contract.tracer_lock_path())?;
-
-    contract
-        .ensure_base_dir()
-        .map_err(|e| std::io::Error::other(format!("ensure base dir: {e}")))?;
-    contract
-        .ensure_out_layout()
-        .map_err(|e| std::io::Error::other(format!("ensure RITMA_OUT layout: {e}")))?;
-
-    let audit_path =
-        std::env::var("AUDIT_LOG_PATH").unwrap_or_else(|_| "/var/log/audit/audit.log".to_string());
-    validate_path_str("AUDIT_LOG_PATH", &audit_path, false).map_err(std::io::Error::other)?;
-
-    let index_path = contract.index_db_path.display().to_string();
-    validate_path_str("INDEX_DB_PATH", &index_path, true).map_err(std::io::Error::other)?;
-    if !index_path.ends_with(".sqlite") {
-        return Err(std::io::Error::other("INDEX_DB_PATH must end with .sqlite").into());
-    }
-
-    ensure_parent_dir(&contract.index_db_path)?;
-
-    let proc_root = std::env::var("PROC_ROOT").unwrap_or_else(|_| "/proc".to_string());
-    validate_path_str("PROC_ROOT", &proc_root, false).map_err(std::io::Error::other)?;
-
-    let net_scan_secs: u64 = match std::env::var("NET_SCAN_INTERVAL_SECS") {
-        Ok(s) => s
-            .parse::<u64>()
-            .map_err(|e| std::io::Error::other(format!("invalid NET_SCAN_INTERVAL_SECS: {e}")))?,
-        Err(_) => 30,
-    };
-    if !(1..=3600).contains(&net_scan_secs) {
-        return Err(std::io::Error::other("NET_SCAN_INTERVAL_SECS must be 1..=3600").into());
-    }
-
-    let selected = TraceProviderSelector::select_best();
-    if selected == "ebpf" {
-        let ns = namespace_id.clone();
-        let idx = index_path.clone();
-        spawn(move || {
-            eprintln!("tracer_sidecar[ebpf]: starting for {ns}");
-            let mut p = EbpfProvider::new(ns, idx);
-            if let Err(e) = p.start() {
-                eprintln!("tracer_sidecar[ebpf]: init error: {e}");
-                return;
-            }
-            eprintln!("tracer_sidecar[ebpf]: active");
-            loop {
-                sleep(Duration::from_secs(3600));
-            }
-        });
-    }
-
-    if selected != "ebpf" {
-        // Thread 1: auditd tail (fallback)
-        {
-            let ns = namespace_id.clone();
-            let idx = index_path.clone();
-            let ap = audit_path.clone();
-            spawn(move || match IndexDb::open(&idx) {
-                Ok(index) => {
-                    eprintln!("tracer_sidecar[auditd]: tailing {ap} for {ns}");
-                    let _ = tail_file_to_indexdb(&index, &ap, &ns);
-                }
-                Err(e) => eprintln!("tracer_sidecar[auditd]: init error: {e}"),
-            });
-        }
-
-        // Thread 2: proc net egress scanner
-        {
-            let ns = namespace_id.clone();
-            let idx = index_path.clone();
-            let pr = proc_root.clone();
-            spawn(move || {
-                eprintln!("tracer_sidecar[proc]: scanning {pr} every {net_scan_secs}s");
-                let _ = scan_proc_net_egress(idx, ns, pr, net_scan_secs);
-            });
-        }
-    }
-
-    // Keep main alive
-    loop {
-        sleep(Duration::from_secs(3600));
     }
 }

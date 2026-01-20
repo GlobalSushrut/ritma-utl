@@ -67,7 +67,7 @@ impl IndexDb {
             std::thread::sleep(Duration::from_millis(100));
         }
         let mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-        if !mode.eq_ignore_ascii_case("wal") && !(is_memory && mode.eq_ignore_ascii_case("memory"))
+        if !mode.eq_ignore_ascii_case("wal") && !is_memory
         {
             return Err(IndexDbError::JournalModeNotWal(mode));
         }
@@ -1762,6 +1762,7 @@ impl IndexDb {
     /// - `window_id`: Optional window ID
     /// - `target_hash`: Optional hash of affected data
     /// - `details`: Optional details (will be stored as CBOR)
+    #[allow(clippy::too_many_arguments)]
     pub fn log_custody_event(
         &self,
         actor_id: &str,
@@ -1777,7 +1778,7 @@ impl IndexDb {
         let prev_log_hash = self.get_last_custody_log_hash()?;
 
         // Compute details hash if present (for inclusion in log_hash)
-        let details_hash = details.as_ref().map(|v| {
+        let _details_hash = details.as_ref().map(|v| {
             let mut buf = Vec::new();
             ciborium::into_writer(v, &mut buf).ok();
             hash_string_sha256(&String::from_utf8_lossy(&buf))

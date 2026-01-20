@@ -670,7 +670,7 @@ mod tests {
     fn make_test_data(n: usize) -> Vec<FeatureVector> {
         (0..n)
             .map(|i| {
-                let mut fv = FeatureVector::new(&format!("entity-{}", i), i as i64 * 1000);
+                let mut fv = FeatureVector::new(&format!("entity-{i}"), i as i64 * 1000);
                 fv.add_feature("f1", (i as f64).sin() * 10.0 + 50.0);
                 fv.add_feature("f2", (i as f64).cos() * 5.0 + 25.0);
                 fv.add_feature("f3", i as f64 % 10.0);

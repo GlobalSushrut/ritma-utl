@@ -32,7 +32,7 @@ fn cargo_bin(name: &str) -> PathBuf {
 fn skip_if_no_binary() -> bool {
     let bin = cargo_bin("ritma");
     if !bin.exists() {
-        eprintln!("Skipping test: ritma binary not found at {:?}", bin);
+        eprintln!("Skipping test: ritma binary not found at {bin:?}");
         true
     } else {
         false

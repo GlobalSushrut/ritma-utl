@@ -323,11 +323,10 @@ impl XdpCaptureSession {
         }
 
         // Sample if needed
-        if self.mode == CaptureMode::Sampled {
-            if self.stats.packets_received % self.sample_rate as u64 != 0 {
+        if self.mode == CaptureMode::Sampled
+            && self.stats.packets_received % self.sample_rate as u64 != 0 {
                 return None;
             }
-        }
 
         self.stats.filter_matches += 1;
 

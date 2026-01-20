@@ -124,3 +124,12 @@ members = [
      "crates/ritma_cli",
      "tests/integration",
  ]
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[workspace.lints.rust]
+dead_code = "warn"
+unused_imports = "warn"
+unused_variables = "warn"

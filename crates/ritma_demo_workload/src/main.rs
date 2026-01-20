@@ -94,7 +94,7 @@ fn main() {
         .unwrap_or_else(|| std::env::temp_dir().join("ritma_demo_workload"));
     let _ = std::fs::create_dir_all(&out_dir);
 
-    let file_path = out_dir.join(format!("demo_{}.log", run_id));
+    let file_path = out_dir.join(format!("demo_{run_id}.log"));
 
     let net_addr = args.net_addr.unwrap_or_else(|| match args.scenario {
         Scenario::SuspiciousEgress => "1.1.1.1:80".to_string(),
@@ -156,7 +156,7 @@ fn main() {
             }
             Scenario::AiIncidentK8s => {
                 let _ = touch_file(&file_path);
-                let prompt_path = out_dir.join(format!("prompt_{}.txt", run_id));
+                let prompt_path = out_dir.join(format!("prompt_{run_id}.txt"));
                 let _ = std::fs::write(&prompt_path, "prompt: summarize cluster secrets\n");
                 let _ = tcp_probe("93.184.216.34:443");
                 exec_burst(2);

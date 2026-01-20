@@ -286,7 +286,7 @@ impl ValidatingWebhook {
     pub fn validate(&mut self, request: &AdmissionRequest) -> AdmissionResponse {
         let mut decision = AdmissionDecision::new(request, true, None);
         let mut denied_reasons = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
 
         for policy in &self.policies {
             if !policy.enabled {
@@ -437,7 +437,7 @@ impl ValidatingWebhook {
                         for (i, container) in arr.iter().enumerate() {
                             let has_limits = container.pointer("/resources/limits").is_some();
                             if !has_limits {
-                                return Err(format!("container {} missing resource limits", i));
+                                return Err(format!("container {i} missing resource limits"));
                             }
                         }
                     }
@@ -453,8 +453,7 @@ impl ValidatingWebhook {
                                 let allowed = registries.iter().any(|r| image.starts_with(r));
                                 if !allowed {
                                     return Err(format!(
-                                        "image {} not from allowed registry",
-                                        image
+                                        "image {image} not from allowed registry"
                                     ));
                                 }
                             }
@@ -471,8 +470,7 @@ impl ValidatingWebhook {
                             if let Some(image) = container.get("image").and_then(|v| v.as_str()) {
                                 if image.ends_with(":latest") || !image.contains(':') {
                                     return Err(format!(
-                                        "image {} uses latest tag or no tag",
-                                        image
+                                        "image {image} uses latest tag or no tag"
                                     ));
                                 }
                             }
@@ -492,8 +490,7 @@ impl ValidatingWebhook {
                                 .unwrap_or(false);
                             if !read_only {
                                 return Err(format!(
-                                    "container {} must have readOnlyRootFilesystem",
-                                    i
+                                    "container {i} must have readOnlyRootFilesystem"
                                 ));
                             }
                         }
@@ -511,7 +508,7 @@ impl ValidatingWebhook {
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(true);
                             if allow_escalation {
-                                return Err(format!("container {} allows privilege escalation", i));
+                                return Err(format!("container {i} allows privilege escalation"));
                             }
                         }
                     }
@@ -568,7 +565,7 @@ impl MutatingWebhook {
 
             for mutation in &policy.mutations {
                 if let Some(patch) = self.apply_mutation(mutation, request) {
-                    decision.mutations_applied.push(format!("{:?}", mutation));
+                    decision.mutations_applied.push(format!("{mutation:?}"));
                     patches.extend(patch);
                 }
             }

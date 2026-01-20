@@ -44,7 +44,7 @@ fn parse_name(payload: &[u8], mut off: usize, depth: u8) -> Option<(String, usiz
         return None;
     }
     let mut labels: Vec<String> = Vec::new();
-    let mut jumped = false;
+    let jumped = false;
     let mut end_off = off;
 
     loop {
@@ -66,7 +66,6 @@ fn parse_name(payload: &[u8], mut off: usize, depth: u8) -> Option<(String, usiz
             let ptr = (((payload[off] as u16 & 0x3F) << 8) | payload[off + 1] as u16) as usize;
             if !jumped {
                 end_off = off + 2;
-                jumped = true;
             }
             let (name2, _) = parse_name(payload, ptr, depth + 1)?;
             if !name2.is_empty() {
