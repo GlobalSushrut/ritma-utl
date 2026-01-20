@@ -139,12 +139,14 @@ fn compute_isolation_forest(
     threshold: f64,
 ) -> IsolationForestResult {
     // Feature vector for isolation forest
-    let feature_vec = [features.process_graph.fork_fan_out,
+    let feature_vec = [
+        features.process_graph.fork_fan_out,
         features.process_graph.diversity,
         features.temporal_causality.burst_score,
         features.entropy.rarity_score,
         features.privilege_transitions.transition_score,
-        features.io_flow.exfil_indicator];
+        features.io_flow.exfil_indicator,
+    ];
 
     // Simplified isolation forest score calculation
     // In production, this would use trained isolation forest model
@@ -205,12 +207,14 @@ fn compute_lof(features: &DeterministicFeatures, threshold: f64) -> LOFResult {
         ("exfil", 0.1, 0.05),
     ];
 
-    let actual_values = [features.process_graph.fork_fan_out,
+    let actual_values = [
+        features.process_graph.fork_fan_out,
         features.process_graph.diversity,
         features.temporal_causality.burst_score,
         features.entropy.rarity_score,
         features.privilege_transitions.transition_score,
-        features.io_flow.exfil_indicator];
+        features.io_flow.exfil_indicator,
+    ];
 
     // K-distance approximation (distance to kth nearest neighbor in feature space)
     let mut total_deviation = 0.0;

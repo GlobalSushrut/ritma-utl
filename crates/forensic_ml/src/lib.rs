@@ -60,8 +60,7 @@ pub fn engine_version_hash() -> String {
 pub const DETERMINISTIC_SEED: u64 = 0x52_49_54_4D_41_4D_4C_31; // "RITMAML1"
 
 /// Forensic ML configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ForensicMLConfig {
     /// Layer weights for verdict synthesis
     pub weights: VerdictWeights,
@@ -72,7 +71,6 @@ pub struct ForensicMLConfig {
     /// Explainability requirements
     pub explainability: ExplainabilityConfig,
 }
-
 
 /// Verdict synthesis weights (per spec: versioned and logged)
 #[derive(Debug, Clone, Serialize, Deserialize)]

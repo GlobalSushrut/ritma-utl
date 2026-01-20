@@ -55,7 +55,6 @@ impl PcrBank {
     }
 }
 
-
 /// PCR selection for quoting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PcrSelection {

@@ -155,6 +155,9 @@ mod proofpack_smoke_tests {
                 bytes_in: None,
                 env_hash: None,
             },
+            lamport_ts: None,
+            causal_parent: None,
+            vclock: None,
         };
         db.insert_trace_event_from_model(&te).unwrap();
 
@@ -206,6 +209,9 @@ mod proofpack_smoke_tests {
                 bytes_in: Some(5),
                 env_hash: None,
             },
+            lamport_ts: None,
+            causal_parent: None,
+            vclock: None,
         };
         db.insert_trace_event_from_model(&te2).unwrap();
 
@@ -1521,10 +1527,9 @@ fn default_index_db_path() -> String {
 fn default_bar_socket_path() -> String {
     if let Ok(p) = std::env::var("BAR_SOCKET") {
         let pb = PathBuf::from(&p);
-        if validate::validate_path_allowed(&pb, true).is_ok()
-            && fs_metadata(&p).is_ok() {
-                return p;
-            }
+        if validate::validate_path_allowed(&pb, true).is_ok() && fs_metadata(&p).is_ok() {
+            return p;
+        }
     }
 
     let secure = "/run/ritma/bar_daemon.sock";
@@ -3390,8 +3395,7 @@ fn cmd_export_window(
     } else {
         &ns_safe
     };
-    let out_dir =
-        out.unwrap_or_else(|| PathBuf::from(format!("proofpack_{ns_safe}_{start_ts}")));
+    let out_dir = out.unwrap_or_else(|| PathBuf::from(format!("proofpack_{ns_safe}_{start_ts}")));
     fs::create_dir_all(&out_dir).map_err(|e| (1, format!("mkdir {}: {e}", out_dir.display())))?;
 
     // Serialize artifacts to CBOR and compute hashes
@@ -6531,9 +6535,7 @@ cargo run -p ritma_cli -- verify-proof --path .
         }
         Ok(git_commit_result)
     } else {
-        Err(std::io::Error::other(
-            "git commit disabled",
-        ))
+        Err(std::io::Error::other("git commit disabled"))
     };
 
     if json {
@@ -7578,9 +7580,7 @@ fn cmd_verify_proofpack(json_output: bool, path: PathBuf) -> Result<(), (u8, Str
             artifacts_verified + artifacts_missing + artifacts_mismatch
         );
         if artifacts_missing > 0 {
-            println!(
-                "               ⚠️  {artifacts_missing} missing (hash-only mode)"
-            );
+            println!("               ⚠️  {artifacts_missing} missing (hash-only mode)");
         }
         if artifacts_mismatch > 0 {
             println!("               ❌ {artifacts_mismatch} hash mismatch");
