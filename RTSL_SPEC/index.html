@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="canonical" href="https://ritma.io/RTSL_SPEC/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>RTSL Spec - Ritma</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "RTSL Spec";
+        var mkdocs_page_input_path = "RTSL_SPEC.md";
+        var mkdocs_page_url = "/RTSL_SPEC/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Ritma
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ARCHITECTURE/">Architecture</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../production_setup/">Production Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../CLI_REFERENCE/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../SDK/">SDK Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ritma_transparency_forensics/">Forensics Standard</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">RTSL Spec</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#abstract">Abstract</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#table-of-contents">Table of Contents</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#1-design-goals">1. Design Goals</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#11-stability-production-critical">1.1 Stability (Production-Critical)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#12-traceability-court-ready">1.2 Traceability (Court-Ready)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#13-scalability-enterprise-grade">1.3 Scalability (Enterprise-Grade)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-directory-structure">2. Directory Structure</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#21-file-naming-convention">2.1 File Naming Convention</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-segment-files-rseg">3. Segment Files (.rseg)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#31-format-overview">3.1 Format Overview</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#32-segment-header">3.2 Segment Header</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#33-record-structure">3.3 Record Structure</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#331-record-header">3.3.1 Record Header</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#332-record-types">3.3.2 Record Types</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#34-segment-footer-seal-record">3.4 Segment Footer (Seal Record)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#35-append-only-guarantee">3.5 Append-Only Guarantee</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-index-files-ridx">4. Index Files (.ridx)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#41-time-index-timeridx">4.1 Time Index (time.ridx)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#42-object-index-objectridx">4.2 Object Index (object.ridx)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#43-hash-index-hashridx">4.3 Hash Index (hash.ridx)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-root-files-rroot">5. Root Files (.rroot)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#51-hour-root-structure">5.1 Hour Root Structure</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#52-signature-file-rrootsig">5.2 Signature File (.rroot.sig)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#6-merkle-structure">6. Merkle Structure</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#61-merkle-mountain-range-mmr">6.1 Merkle Mountain Range (MMR)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#62-hash-function">6.2 Hash Function</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#63-proof-structure">6.3 Proof Structure</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#7-sharding-strategy">7. Sharding Strategy</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#71-shard-boundaries">7.1 Shard Boundaries</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#72-shard-lifecycle">7.2 Shard Lifecycle</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#73-cross-shard-chain">7.3 Cross-Shard Chain</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#8-content-addressed-blocks">8. Content-Addressed Blocks</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#81-block-format">8.1 Block Format</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#82-block-references">8.2 Block References</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#83-deduplication">8.3 Deduplication</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#9-locator-system">9. Locator System</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#91-loc-format">9.1 LOC Format</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#92-loc-uri">9.2 LOC URI</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#93-loc-resolution">9.3 LOC Resolution</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#10-verification-protocol">10. Verification Protocol</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#101-offline-verification-steps">10.1 Offline Verification Steps</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#102-inclusion-proof-verification">10.2 Inclusion Proof Verification</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#11-compression">11. Compression</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#111-strategy">11.1 Strategy</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#112-record-level-compression">11.2 Record-Level Compression</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#113-segment-level-compression">11.3 Segment-Level Compression</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#12-cold-storage-retention">12. Cold Storage &amp; Retention</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#121-tiered-storage">12.1 Tiered Storage</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#122-minimal-verification-set">12.2 Minimal Verification Set</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#13-court-admissibility">13. Court Admissibility</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#131-chain-of-custody">13.1 Chain of Custody</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#132-evidence-export">13.2 Evidence Export</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#133-verification-report">13.3 Verification Report</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#14-migration-from-v1">14. Migration from v1</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#141-compatibility">14.1 Compatibility</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#142-migration-tool">14.2 Migration Tool</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#15-references">15. References</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#16-production-readiness-checklist">16. Production Readiness Checklist</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#161-crash-safe-writes-atomic-recoverable">16.1 Crash-Safe Writes (Atomic + Recoverable)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#162-append-only-immutability">16.2 Append-Only Immutability</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#163-deterministic-canonical-hashing">16.3 Deterministic Canonical Hashing</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#164-chain-of-custody-correctness">16.4 Chain-of-Custody Correctness</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#165-scales-without-filesystem-pain">16.5 Scales Without Filesystem Pain</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#166-fast-tracing-o1-ish-lookup">16.6 Fast Tracing (O(1)-ish Lookup)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#167-multi-level-provability">16.7 Multi-Level Provability</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#168-selective-disclosure-exports-proofpack-tiers">16.8 Selective Disclosure Exports (ProofPack Tiers)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#169-retention-cold-storage-without-breaking-verification">16.9 Retention + Cold Storage Without Breaking Verification</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#1610-operational-observability-self-checks">16.10 Operational Observability + Self-Checks</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#17-design-principles-lightweight-no-external-dependencies">17. Design Principles: Lightweight &amp; No External Dependencies</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#appendix-a-abnf-grammar">Appendix A: ABNF Grammar</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#appendix-b-example-segment-hex-dump">Appendix B: Example Segment Hex Dump</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#appendix-c-cli-examples">Appendix C: CLI Examples</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../EEC_SPEC/">EEC Spec</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Ritma</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">RTSL Spec</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="ritma-transparent-segment-ledger-rtsl-specification">Ritma Transparent Segment Ledger (RTSL) Specification</h1>
+<p><strong>Version:</strong> 1.0<br />
+<strong>Status:</strong> Draft<br />
+<strong>Date:</strong> 2026-01-19  </p>
+<hr />
+<h2 id="abstract">Abstract</h2>
+<p>RTSL (Ritma Transparent Segment Ledger) is a production-grade output format for forensic audit logs that combines:</p>
+<ul>
+<li><strong>WARC-style append-only segments</strong> for stability and reduced filesystem operations</li>
+<li><strong>Certificate Transparency (CT) Merkle proofs</strong> for cryptographic append-only guarantees</li>
+<li><strong>Sigstore/Rekor sharding</strong> for infinite scalability</li>
+<li><strong>IPLD CAR content-addressing</strong> for deduplication and efficient exports</li>
+<li><strong>Git packfile delta compression</strong> for storage efficiency</li>
+<li><strong>Merkle Mountain Range (MMR)</strong> for efficient append-only proofs</li>
+</ul>
+<p>This format replaces the current "folder dump" approach with a court-ready, production-stable, easily traceable archive system.</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#1-design-goals">Design Goals</a></li>
+<li><a href="#2-directory-structure">Directory Structure</a></li>
+<li><a href="#3-segment-files-rseg">Segment Files (.rseg)</a></li>
+<li><a href="#4-index-files-ridx">Index Files (.ridx)</a></li>
+<li><a href="#5-root-files-rroot">Root Files (.rroot)</a></li>
+<li><a href="#6-merkle-structure">Merkle Structure</a></li>
+<li><a href="#7-sharding-strategy">Sharding Strategy</a></li>
+<li><a href="#8-content-addressed-blocks">Content-Addressed Blocks</a></li>
+<li><a href="#9-locator-system">Locator System</a></li>
+<li><a href="#10-verification-protocol">Verification Protocol</a></li>
+<li><a href="#11-compression">Compression</a></li>
+<li><a href="#12-cold-storage-retention">Cold Storage &amp; Retention</a></li>
+<li><a href="#13-court-admissibility">Court Admissibility</a></li>
+<li><a href="#14-migration-from-v1">Migration from v1</a></li>
+<li><a href="#15-references">References</a></li>
+</ol>
+<hr />
+<h2 id="1-design-goals">1. Design Goals</h2>
+<h3 id="11-stability-production-critical">1.1 Stability (Production-Critical)</h3>
+<table>
+<thead>
+<tr>
+<th>Problem (Current)</th>
+<th>Solution (RTSL)</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Millions of small files</td>
+<td>Append-only segment files</td>
+<td>WARC ISO 28500 [1]</td>
+</tr>
+<tr>
+<td>Filesystem exhaustion</td>
+<td>Few large files per hour</td>
+<td>WARC best practices</td>
+</tr>
+<tr>
+<td>Crash corruption</td>
+<td>Atomic segment finalization</td>
+<td>WAL pattern [2]</td>
+</tr>
+<tr>
+<td>Index corruption</td>
+<td>Rebuildable from segments</td>
+<td>Git packfile design [3]</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-traceability-court-ready">1.2 Traceability (Court-Ready)</h3>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>RTSL Feature</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Precise event location</td>
+<td>LOC = (shard, segment, offset, len)</td>
+<td>WARC record offsets</td>
+</tr>
+<tr>
+<td>Tamper detection</td>
+<td>Merkle inclusion proofs</td>
+<td>RFC 6962/9162 [4][5]</td>
+</tr>
+<tr>
+<td>Append-only guarantee</td>
+<td>Signed Tree Heads (STH)</td>
+<td>Certificate Transparency</td>
+</tr>
+<tr>
+<td>Chain of custody</td>
+<td>Custody records in segments</td>
+<td>NIST IR 8387 [6]</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-scalability-enterprise-grade">1.3 Scalability (Enterprise-Grade)</h3>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Solution</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unbounded growth</td>
+<td>Time-based sharding</td>
+<td>Sigstore/Rekor [7]</td>
+</tr>
+<tr>
+<td>Verification cost</td>
+<td>MMR for O(log n) proofs</td>
+<td>Grin MMR [8]</td>
+</tr>
+<tr>
+<td>Storage cost</td>
+<td>Delta compression + dedup</td>
+<td>Git packfiles [3]</td>
+</tr>
+<tr>
+<td>Export size</td>
+<td>Content-addressed blocks</td>
+<td>IPLD CAR [9]</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-directory-structure">2. Directory Structure</h2>
+<pre><code>ledger/
+├── v2/                           # Format version
+│   ├── CURRENT                   # Active shard pointer
+│   ├── shards/
+│   │   └── 2026/
+│   │       └── 01/
+│   │           └── 19/
+│   │               └── 10/       # Hour shard (YYYYMMDDHH)
+│   │                   ├── segments/
+│   │                   │   ├── 00.rseg      # Minute 00-09
+│   │                   │   ├── 10.rseg      # Minute 10-19
+│   │                   │   ├── 20.rseg      # ...
+│   │                   │   ├── 30.rseg
+│   │                   │   ├── 40.rseg
+│   │                   │   └── 50.rseg
+│   │                   ├── index/
+│   │                   │   ├── time.ridx    # Time → offset index
+│   │                   │   ├── object.ridx  # ObjectID → offsets
+│   │                   │   └── hash.ridx    # ContentHash → offset
+│   │                   ├── roots/
+│   │                   │   ├── hour.rroot   # Signed hour root
+│   │                   │   └── hour.rroot.sig
+│   │                   └── blocks/
+│   │                       └── *.rblk       # Content-addressed blocks
+│   ├── chain/
+│   │   ├── chain.rchn            # Append-only chain file
+│   │   └── chain.rchn.sig
+│   └── _meta/
+│       ├── ledger.cbor           # Ledger metadata
+│       ├── keys/
+│       │   └── pubkeys.cbor      # Public keys for verification
+│       └── schema/
+│           └── v2.cbor           # Schema definitions
+</code></pre>
+<h3 id="21-file-naming-convention">2.1 File Naming Convention</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{MM}.rseg</code></td>
+<td>Segment for minutes MM-MM+9</td>
+<td><code>00.rseg</code>, <code>10.rseg</code></td>
+</tr>
+<tr>
+<td><code>{type}.ridx</code></td>
+<td>Index by type</td>
+<td><code>time.ridx</code>, <code>object.ridx</code></td>
+</tr>
+<tr>
+<td><code>hour.rroot</code></td>
+<td>Signed hour root</td>
+<td>Single file per hour</td>
+</tr>
+<tr>
+<td><code>{hash}.rblk</code></td>
+<td>Content-addressed block</td>
+<td><code>a1b2c3...d4.rblk</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-segment-files-rseg">3. Segment Files (.rseg)</h2>
+<h3 id="31-format-overview">3.1 Format Overview</h3>
+<p>Segment files are <strong>append-only</strong> containers holding multiple records, inspired by WARC ISO 28500 [1].</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ Segment Header (fixed)                                      │
+├─────────────────────────────────────────────────────────────┤
+│ Record 0: [varint len][Record Header][Record Body]          │
+├─────────────────────────────────────────────────────────────┤
+│ Record 1: [varint len][Record Header][Record Body]          │
+├─────────────────────────────────────────────────────────────┤
+│ ...                                                         │
+├─────────────────────────────────────────────────────────────┤
+│ Record N: [varint len][Record Header][Record Body]          │
+├─────────────────────────────────────────────────────────────┤
+│ Segment Footer (on finalization)                            │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="32-segment-header">3.2 Segment Header</h3>
+<pre><code>CBOR Array (tag: &quot;ritma-seg@1.0&quot;):
+[
+  &quot;ritma-seg@1.0&quot;,           // [0] Format tag
+  2,                         // [1] Version
+  &quot;2026-01-19T10:00:00Z&quot;,    // [2] Start timestamp (ISO 8601)
+  &quot;node-abc123&quot;,             // [3] Node ID
+  &quot;2026011910&quot;,              // [4] Shard ID (YYYYMMDDHH)
+  0,                         // [5] Segment index (0-5 for 10-min segments)
+  &lt;prev_segment_hash&gt;,       // [6] Previous segment hash (32 bytes) or null
+  {}                         // [7] Extensions (reserved)
+]
+</code></pre>
+<p><strong>Size:</strong> ~150 bytes typical</p>
+<h3 id="33-record-structure">3.3 Record Structure</h3>
+<p>Each record follows the WARC-inspired framing:</p>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│ Length Prefix (LEB128 varint)                            │
+├──────────────────────────────────────────────────────────┤
+│ Record Header (CBOR)                                     │
+├──────────────────────────────────────────────────────────┤
+│ Record Body (CBOR, optionally compressed)                │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<h4 id="331-record-header">3.3.1 Record Header</h4>
+<pre><code>CBOR Array (tag: &quot;ritma-rec@1.0&quot;):
+[
+  &quot;ritma-rec@1.0&quot;,           // [0] Record tag
+  &lt;record_type&gt;,             // [1] Type enum (see below)
+  &lt;record_id&gt;,               // [2] UUID or sequential ID
+  &lt;timestamp_ns&gt;,            // [3] Nanosecond timestamp (i64)
+  &lt;body_length&gt;,             // [4] Body length in bytes
+  &lt;body_hash&gt;,               // [5] SHA-256 of body (32 bytes)
+  &lt;compression&gt;,             // [6] Compression: 0=none, 1=zstd
+  {}                         // [7] Extensions
+]
+</code></pre>
+<h4 id="332-record-types">3.3.2 Record Types</h4>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>segment_info</code></td>
+<td>Segment metadata (first record)</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>event</code></td>
+<td>Canonical event atom</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>custody</code></td>
+<td>Custody transfer record</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>snapshot</code></td>
+<td>State snapshot chunk</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>block_ref</code></td>
+<td>Reference to content-addressed block</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>micro_root</code></td>
+<td>Micro-window Merkle root</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>attestation</code></td>
+<td>TPM or external attestation</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>metadata</code></td>
+<td>Arbitrary metadata</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>segment_seal</code></td>
+<td>Segment finalization (last record)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="34-segment-footer-seal-record">3.4 Segment Footer (Seal Record)</h3>
+<p>When a segment is finalized:</p>
+<pre><code>CBOR Array (tag: &quot;ritma-seal@1.0&quot;):
+[
+  &quot;ritma-seal@1.0&quot;,          // [0] Seal tag
+  &lt;record_count&gt;,            // [1] Total records in segment
+  &lt;byte_count&gt;,              // [2] Total bytes (excluding footer)
+  &lt;end_timestamp&gt;,           // [3] Last record timestamp
+  &lt;segment_hash&gt;,            // [4] SHA-256 of segment (excluding footer)
+  &lt;mmr_peaks&gt;,               // [5] MMR peaks array for records
+  &lt;signature&gt;                // [6] Ed25519 signature of [0..5]
+]
+</code></pre>
+<h3 id="35-append-only-guarantee">3.5 Append-Only Guarantee</h3>
+<p>Per RFC 6962 Section 3 [4]:</p>
+<blockquote>
+<p>"A log is a single, ever-growing, append-only Merkle Tree"</p>
+</blockquote>
+<p>RTSL enforces this by:
+1. Segments are write-once after sealing
+2. Each segment references previous segment hash
+3. Segment seals are signed
+4. MMR structure allows efficient append proofs</p>
+<hr />
+<h2 id="4-index-files-ridx">4. Index Files (.ridx)</h2>
+<p>Indexes are <strong>rebuildable</strong> from segments (crash-safe design per Git [3]).</p>
+<h3 id="41-time-index-timeridx">4.1 Time Index (time.ridx)</h3>
+<p>Maps timestamps to segment offsets for fast time-range queries.</p>
+<pre><code>CBOR Map:
+{
+  &quot;tag&quot;: &quot;ritma-idx-time@1.0&quot;,
+  &quot;shard&quot;: &quot;2026011910&quot;,
+  &quot;entries&quot;: [
+    // Sorted by timestamp
+    [&lt;timestamp_ns&gt;, &lt;segment_idx&gt;, &lt;byte_offset&gt;, &lt;record_len&gt;],
+    [&lt;timestamp_ns&gt;, &lt;segment_idx&gt;, &lt;byte_offset&gt;, &lt;record_len&gt;],
+    ...
+  ],
+  &quot;built_at&quot;: &lt;timestamp&gt;,
+  &quot;segment_hashes&quot;: [&lt;hash0&gt;, &lt;hash1&gt;, ...]  // For validation
+}
+</code></pre>
+<h3 id="42-object-index-objectridx">4.2 Object Index (object.ridx)</h3>
+<p>Maps object/entity IDs to all their occurrences.</p>
+<pre><code>CBOR Map:
+{
+  &quot;tag&quot;: &quot;ritma-idx-object@1.0&quot;,
+  &quot;shard&quot;: &quot;2026011910&quot;,
+  &quot;entries&quot;: {
+    &quot;&lt;object_id&gt;&quot;: [
+      [&lt;segment_idx&gt;, &lt;byte_offset&gt;, &lt;record_len&gt;, &lt;timestamp_ns&gt;],
+      ...
+    ],
+    ...
+  }
+}
+</code></pre>
+<h3 id="43-hash-index-hashridx">4.3 Hash Index (hash.ridx)</h3>
+<p>Maps content hashes to offsets (for deduplication).</p>
+<pre><code>CBOR Map:
+{
+  &quot;tag&quot;: &quot;ritma-idx-hash@1.0&quot;,
+  &quot;shard&quot;: &quot;2026011910&quot;,
+  &quot;entries&quot;: {
+    &quot;&lt;sha256_hex&gt;&quot;: [&lt;segment_idx&gt;, &lt;byte_offset&gt;],
+    ...
+  }
+}
+</code></pre>
+<hr />
+<h2 id="5-root-files-rroot">5. Root Files (.rroot)</h2>
+<h3 id="51-hour-root-structure">5.1 Hour Root Structure</h3>
+<p>Per RFC 9162 Section 4.10 (Signed Tree Head) [5]:</p>
+<pre><code>CBOR Array (tag: &quot;ritma-hour-root@2.0&quot;):
+[
+  &quot;ritma-hour-root@2.0&quot;,     // [0] Tag
+  &quot;2026011910&quot;,              // [1] Shard ID
+  &quot;node-abc123&quot;,             // [2] Node ID
+  &lt;timestamp&gt;,               // [3] Signing timestamp
+  &lt;tree_size&gt;,               // [4] Number of records in hour
+  &lt;mmr_root&gt;,                // [5] MMR root hash (32 bytes)
+  &lt;segment_roots&gt;,           // [6] Array of segment seal hashes
+  &lt;prev_hour_root&gt;,          // [7] Previous hour root hash
+  &lt;extensions&gt;               // [8] Reserved
+]
+</code></pre>
+<h3 id="52-signature-file-rrootsig">5.2 Signature File (.rroot.sig)</h3>
+<pre><code>CBOR Array (tag: &quot;ritma-sig@1.0&quot;):
+[
+  &quot;ritma-sig@1.0&quot;,
+  &quot;hour_root&quot;,               // Signed artifact type
+  &quot;&lt;key_id&gt;&quot;,                // Signing key identifier
+  &lt;signature&gt;                // Ed25519 signature (64 bytes)
+]
+</code></pre>
+<hr />
+<h2 id="6-merkle-structure">6. Merkle Structure</h2>
+<h3 id="61-merkle-mountain-range-mmr">6.1 Merkle Mountain Range (MMR)</h3>
+<p>RTSL uses MMR instead of balanced Merkle trees because:</p>
+<ol>
+<li><strong>Append-only friendly</strong>: No rebalancing needed (per Grin [8])</li>
+<li><strong>Efficient proofs</strong>: O(log n) inclusion proofs</li>
+<li><strong>Incremental updates</strong>: Only new peaks computed on append</li>
+</ol>
+<pre><code>Height 3:           14
+                   /  \
+Height 2:         6    13
+                 / \   / \
+Height 1:       2   5 9  12
+               /\ /\ /\  /\
+Height 0:     0 1 3 4 7 8 10 11
+              └─────────────────── Leaves (records)
+</code></pre>
+<h3 id="62-hash-function">6.2 Hash Function</h3>
+<p>Per RFC 9162 Section 2.1 [5]:</p>
+<pre><code>Leaf hash:     H(0x00 || record_bytes)
+Internal hash: H(0x01 || left_hash || right_hash)
+</code></pre>
+<p>Where H = SHA-256 (FIPS 180-4).</p>
+<h3 id="63-proof-structure">6.3 Proof Structure</h3>
+<p>Inclusion proof for record at position <code>m</code> in tree of size <code>n</code>:</p>
+<pre><code>CBOR Array (tag: &quot;ritma-proof@1.0&quot;):
+[
+  &quot;ritma-proof@1.0&quot;,
+  &lt;leaf_index&gt;,              // Position in MMR
+  &lt;tree_size&gt;,               // MMR size at proof time
+  &lt;path&gt;,                    // Array of sibling hashes
+  &lt;peak_hashes&gt;              // MMR peaks for verification
+]
+</code></pre>
+<hr />
+<h2 id="7-sharding-strategy">7. Sharding Strategy</h2>
+<p>Per Sigstore/Rekor sharding best practices [7]:</p>
+<h3 id="71-shard-boundaries">7.1 Shard Boundaries</h3>
+<table>
+<thead>
+<tr>
+<th>Shard Level</th>
+<th>ID Format</th>
+<th>Duration</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hour</td>
+<td>YYYYMMDDHH</td>
+<td>1 hour</td>
+<td>Default production</td>
+</tr>
+<tr>
+<td>Day</td>
+<td>YYYYMMDD</td>
+<td>24 hours</td>
+<td>Low-volume systems</td>
+</tr>
+<tr>
+<td>Minute</td>
+<td>YYYYMMDDHHmm</td>
+<td>1 minute</td>
+<td>High-volume systems</td>
+</tr>
+</tbody>
+</table>
+<h3 id="72-shard-lifecycle">7.2 Shard Lifecycle</h3>
+<pre><code>ACTIVE → SEALING → SEALED → ARCHIVED
+   │         │         │         │
+   │         │         │         └── Cold storage
+   │         │         └── Immutable, verified
+   │         └── Finalizing, no new writes
+   └── Accepting writes
+</code></pre>
+<h3 id="73-cross-shard-chain">7.3 Cross-Shard Chain</h3>
+<p>The <code>chain.rchn</code> file links shards:</p>
+<pre><code>CBOR Array (tag: &quot;ritma-chain@2.0&quot;):
+[
+  &quot;ritma-chain@2.0&quot;,
+  [
+    // Each entry links to previous
+    {
+      &quot;shard&quot;: &quot;2026011909&quot;,
+      &quot;hour_root&quot;: &lt;hash&gt;,
+      &quot;prev_chain_hash&quot;: &lt;hash&gt;,
+      &quot;chain_hash&quot;: &lt;hash&gt;,
+      &quot;timestamp&quot;: &lt;ts&gt;,
+      &quot;signature&quot;: &lt;sig&gt;
+    },
+    {
+      &quot;shard&quot;: &quot;2026011910&quot;,
+      &quot;hour_root&quot;: &lt;hash&gt;,
+      &quot;prev_chain_hash&quot;: &lt;hash&gt;,  // Points to 2026011909
+      &quot;chain_hash&quot;: &lt;hash&gt;,
+      &quot;timestamp&quot;: &lt;ts&gt;,
+      &quot;signature&quot;: &lt;sig&gt;
+    },
+    ...
+  ]
+]
+</code></pre>
+<hr />
+<h2 id="8-content-addressed-blocks">8. Content-Addressed Blocks</h2>
+<p>Per IPLD CAR specification [9]:</p>
+<h3 id="81-block-format">8.1 Block Format</h3>
+<p>Large payloads are stored as content-addressed blocks:</p>
+<pre><code>┌─────────────────────────────────────────┐
+│ Block Header (CBOR)                     │
+├─────────────────────────────────────────┤
+│ Block Data (raw bytes, may be zstd)     │
+└─────────────────────────────────────────┘
+</code></pre>
+<p>Header:</p>
+<pre><code>CBOR Array (tag: &quot;ritma-blk@1.0&quot;):
+[
+  &quot;ritma-blk@1.0&quot;,
+  &lt;content_hash&gt;,            // SHA-256 of uncompressed data
+  &lt;uncompressed_size&gt;,
+  &lt;compressed_size&gt;,         // 0 if not compressed
+  &lt;codec&gt;                    // 0=raw, 1=cbor, 2=json
+]
+</code></pre>
+<h3 id="82-block-references">8.2 Block References</h3>
+<p>Records reference blocks by hash:</p>
+<pre><code>CBOR Array (tag: &quot;ritma-blkref@1.0&quot;):
+[
+  &quot;ritma-blkref@1.0&quot;,
+  &lt;content_hash&gt;,            // Reference to block
+  &lt;block_type&gt;,              // What the block contains
+  &lt;metadata&gt;                 // Type-specific metadata
+]
+</code></pre>
+<h3 id="83-deduplication">8.3 Deduplication</h3>
+<p>Per Git packfile design [3]:
+- Identical content → same hash → stored once
+- Similar content → delta compression (future)</p>
+<hr />
+<h2 id="9-locator-system">9. Locator System</h2>
+<p>Every record has a unique <strong>Locator (LOC)</strong>:</p>
+<h3 id="91-loc-format">9.1 LOC Format</h3>
+<pre><code>LOC := shard:segment:offset:length
+
+Example: 2026011910:00:4096:512
+         │          │  │    └── Record length (bytes)
+         │          │  └── Byte offset in segment
+         │          └── Segment index (00-50)
+         └── Shard ID (hour)
+</code></pre>
+<h3 id="92-loc-uri">9.2 LOC URI</h3>
+<pre><code>ritma://node-abc123/2026011910/00/4096/512
+        │           │          │  │    └── Length
+        │           │          │  └── Offset
+        │           │          └── Segment
+        │           └── Shard
+        └── Node ID
+</code></pre>
+<h3 id="93-loc-resolution">9.3 LOC Resolution</h3>
+<pre><code class="language-rust">fn resolve_loc(ledger: &amp;Ledger, loc: &amp;Loc) -&gt; Result&lt;Record&gt; {
+    let shard = ledger.get_shard(&amp;loc.shard)?;
+    let segment = shard.get_segment(loc.segment)?;
+    let record = segment.read_at(loc.offset, loc.length)?;
+    Ok(record)
+}
+</code></pre>
+<hr />
+<h2 id="10-verification-protocol">10. Verification Protocol</h2>
+<h3 id="101-offline-verification-steps">10.1 Offline Verification Steps</h3>
+<ol>
+<li><strong>Segment Integrity</strong></li>
+<li>Verify each segment's seal signature</li>
+<li>Recompute segment hash, compare to seal</li>
+<li>
+<p>Verify prev_segment_hash chain</p>
+</li>
+<li>
+<p><strong>MMR Verification</strong></p>
+</li>
+<li>Rebuild MMR from segment records</li>
+<li>Compare peaks to sealed peaks</li>
+<li>
+<p>Verify hour root matches MMR root</p>
+</li>
+<li>
+<p><strong>Chain Verification</strong></p>
+</li>
+<li>Verify hour root signatures</li>
+<li>Verify prev_hour_root linkage</li>
+<li>
+<p>Verify chain.rchn consistency</p>
+</li>
+<li>
+<p><strong>Record Verification</strong></p>
+</li>
+<li>For specific record: compute inclusion proof</li>
+<li>Verify proof against hour root</li>
+</ol>
+<h3 id="102-inclusion-proof-verification">10.2 Inclusion Proof Verification</h3>
+<p>Per RFC 9162 Section 2.1.3 [5]:</p>
+<pre><code class="language-rust">fn verify_inclusion(
+    record: &amp;[u8],
+    proof: &amp;InclusionProof,
+    root: &amp;[u8; 32]
+) -&gt; bool {
+    let leaf_hash = sha256(&amp;[0x00, record].concat());
+    let mut current = leaf_hash;
+
+    for (i, sibling) in proof.path.iter().enumerate() {
+        let bit = (proof.leaf_index &gt;&gt; i) &amp; 1;
+        current = if bit == 0 {
+            sha256(&amp;[0x01, &amp;current, sibling].concat())
+        } else {
+            sha256(&amp;[0x01, sibling, &amp;current].concat())
+        };
+    }
+
+    // Combine with MMR peaks
+    current == *root
+}
+</code></pre>
+<hr />
+<h2 id="11-compression">11. Compression</h2>
+<h3 id="111-strategy">11.1 Strategy</h3>
+<p>Per WARC Annex D [1]:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Compression</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Record</td>
+<td>Optional zstd per record</td>
+<td>Mixed content</td>
+</tr>
+<tr>
+<td>Segment</td>
+<td>Whole-segment gzip</td>
+<td>Archival</td>
+</tr>
+<tr>
+<td>Block</td>
+<td>zstd for large blocks</td>
+<td>Snapshots</td>
+</tr>
+</tbody>
+</table>
+<h3 id="112-record-level-compression">11.2 Record-Level Compression</h3>
+<pre><code>Record Header: compression = 1 (zstd)
+Record Body: zstd-compressed CBOR
+</code></pre>
+<h3 id="113-segment-level-compression">11.3 Segment-Level Compression</h3>
+<p>For archival, entire <code>.rseg</code> can be gzip-wrapped:
+- Filename: <code>00.rseg.gz</code>
+- Random access via gzip member boundaries (per WARC)</p>
+<hr />
+<h2 id="12-cold-storage-retention">12. Cold Storage &amp; Retention</h2>
+<h3 id="121-tiered-storage">12.1 Tiered Storage</h3>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Content</th>
+<th>Retention</th>
+<th>Access</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hot</td>
+<td>Last 7 days segments</td>
+<td>Always</td>
+<td>Immediate</td>
+</tr>
+<tr>
+<td>Warm</td>
+<td>Last 90 days roots + indexes</td>
+<td>Always</td>
+<td>Fast</td>
+</tr>
+<tr>
+<td>Cold</td>
+<td>Older segments</td>
+<td>Per policy</td>
+<td>Minutes</td>
+</tr>
+<tr>
+<td>Archive</td>
+<td>Sealed shards</td>
+<td>Years</td>
+<td>Hours</td>
+</tr>
+</tbody>
+</table>
+<h3 id="122-minimal-verification-set">12.2 Minimal Verification Set</h3>
+<p>Even with cold segments, verification possible with:
+- <code>chain.rchn</code> (tiny, always hot)
+- <code>hour.rroot</code> files (tiny, always hot)
+- Specific segment (fetch on demand)</p>
+<hr />
+<h2 id="13-court-admissibility">13. Court Admissibility</h2>
+<p>Per NIST IR 8387 [6] and digital forensics standards:</p>
+<h3 id="131-chain-of-custody">13.1 Chain of Custody</h3>
+<p>RTSL provides:
+- <strong>Immutable records</strong>: Append-only, signed segments
+- <strong>Precise timestamps</strong>: Nanosecond resolution
+- <strong>Cryptographic binding</strong>: Every record in Merkle tree
+- <strong>Verifiable history</strong>: Inclusion proofs</p>
+<h3 id="132-evidence-export">13.2 Evidence Export</h3>
+<pre><code>ritma export --loc 2026011910:00:4096:512 --format court-package
+
+Output:
+├── record.cbor              # The actual record
+├── inclusion_proof.cbor     # Merkle proof
+├── hour_root.cbor           # Signed root
+├── chain_excerpt.cbor       # Relevant chain entries
+├── verification_report.pdf  # Human-readable report
+└── manifest.json            # Package manifest
+</code></pre>
+<h3 id="133-verification-report">13.3 Verification Report</h3>
+<pre><code>RITMA EVIDENCE VERIFICATION REPORT
+==================================
+Record LOC: 2026011910:00:4096:512
+Record Hash: a1b2c3...
+Timestamp: 2026-01-19T10:00:37.123456789Z
+
+VERIFICATION RESULTS:
+[✓] Record hash matches content
+[✓] Inclusion proof valid against hour root
+[✓] Hour root signature valid (key: node-abc123-ed25519)
+[✓] Chain linkage verified (prev: 2026011909)
+[✓] TPM attestation binding verified
+
+CHAIN OF CUSTODY:
+- Created: 2026-01-19T10:00:37Z by node-abc123
+- Sealed: 2026-01-19T10:10:00Z
+- Verified: 2026-01-19T17:56:00Z by verifier-xyz
+</code></pre>
+<hr />
+<h2 id="14-migration-from-v1">14. Migration from v1</h2>
+<h3 id="141-compatibility">14.1 Compatibility</h3>
+<table>
+<thead>
+<tr>
+<th>v1 Artifact</th>
+<th>v2 Equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>windows/YYYY/MM/DD/HH/micro/*.cbor</code></td>
+<td><code>shards/YYYY/MM/DD/HH/segments/*.rseg</code></td>
+</tr>
+<tr>
+<td><code>windows/.../proofs/hour_root.cbor</code></td>
+<td><code>shards/.../roots/hour.rroot</code></td>
+</tr>
+<tr>
+<td><code>windows/.../proofs/chain.cbor</code></td>
+<td><code>chain/chain.rchn</code></td>
+</tr>
+<tr>
+<td><code>_meta/keys/pubkeys.cbor</code></td>
+<td><code>_meta/keys/pubkeys.cbor</code> (unchanged)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="142-migration-tool">14.2 Migration Tool</h3>
+<pre><code class="language-bash">ritma migrate-ledger --from v1 --to v2 --input ./RITMA_OUT --output ./ledger
+</code></pre>
+<hr />
+<h2 id="15-references">15. References</h2>
+<ol>
+<li>
+<p><strong>[WARC ISO 28500]</strong> The WARC Format 1.1, IIPC. https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/</p>
+</li>
+<li>
+<p><strong>[WAL]</strong> Write-Ahead Logging. SQLite. https://sqlite.org/wal.html</p>
+</li>
+<li>
+<p><strong>[Git Packfiles]</strong> Git Internals - Packfiles. https://git-scm.com/book/en/v2/Git-Internals-Packfiles</p>
+</li>
+<li>
+<p><strong>[RFC 6962]</strong> Certificate Transparency. https://www.rfc-editor.org/rfc/rfc6962.html</p>
+</li>
+<li>
+<p><strong>[RFC 9162]</strong> Certificate Transparency Version 2.0. https://www.rfc-editor.org/rfc/rfc9162.html</p>
+</li>
+<li>
+<p><strong>[NIST IR 8387]</strong> Digital Evidence Preservation. https://nvlpubs.nist.gov/nistpubs/ir/2022/NIST.IR.8387.pdf</p>
+</li>
+<li>
+<p><strong>[Sigstore Sharding]</strong> Rekor Log Sharding. https://docs.sigstore.dev/logging/sharding/</p>
+</li>
+<li>
+<p><strong>[Grin MMR]</strong> Merkle Mountain Ranges. https://docs.grin.mw/wiki/chain-state/merkle-mountain-range/</p>
+</li>
+<li>
+<p><strong>[IPLD CAR]</strong> Content Addressable aRchives v1. https://ipld.io/specs/transport/car/carv1/</p>
+</li>
+</ol>
+<hr />
+<h2 id="16-production-readiness-checklist">16. Production Readiness Checklist</h2>
+<p>This section defines <strong>10 hard requirements</strong> for production stability. Each requirement includes MUST/SHOULD levels, failure modes, and RTSL implementation details.</p>
+<h3 id="161-crash-safe-writes-atomic-recoverable">16.1 Crash-Safe Writes (Atomic + Recoverable)</h3>
+<p><strong>Requirement:</strong> Power loss mid-write MUST NOT corrupt the ledger.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>No partial records visible after crash</td>
+<td>Write-ahead: full record written before advancing offset pointer</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Recovery without data loss</td>
+<td>Replay from last sealed segment + truncate incomplete records</td>
+</tr>
+<tr>
+<td>SHOULD</td>
+<td>Sub-second recovery time</td>
+<td>Index rebuild from segment headers only (not full scan)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Implementation (No External DB):</strong></p>
+<pre><code>Write sequence:
+1. Append [varint_len][header][body] to segment file
+2. fsync() segment file
+3. Update in-memory offset pointer
+4. Periodically fsync() index file
+
+Recovery sequence:
+1. Read segment header → get expected record count
+2. Scan forward, validating each [varint_len][header][body]
+3. Truncate at first invalid/incomplete record
+4. Rebuild index from valid records
+</code></pre>
+<p><strong>Failure Modes:</strong>
+- Partial varint write → detected by invalid length, truncated
+- Partial record write → detected by length mismatch, truncated
+- Index corruption → rebuilt from segments (indexes are derived, not source of truth)</p>
+<p><strong>References:</strong> SQLite WAL [2], ARIES recovery algorithm</p>
+<hr />
+<h3 id="162-append-only-immutability">16.2 Append-Only Immutability</h3>
+<p><strong>Requirement:</strong> Once written, records MUST NEVER be edited in place.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>No in-place modification</td>
+<td>Segment files opened O_APPEND only</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Corrections as new records</td>
+<td><code>correction</code> record type with <code>corrects_loc</code> field</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>History always preserved</td>
+<td>Sealed segments are read-only (chmod 0444)</td>
+</tr>
+<tr>
+<td>SHOULD</td>
+<td>Detect tampering</td>
+<td>MMR root changes if any record modified</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Correction Record Format:</strong></p>
+<pre><code class="language-cbor">[&quot;ritma-rec@1.0&quot;, 9, &lt;uuid&gt;, &lt;ts&gt;, &lt;len&gt;, &lt;hash&gt;, 0, {
+  &quot;corrects_loc&quot;: &quot;2026011910:00:4096:512&quot;,
+  &quot;reason&quot;: &quot;data_entry_error&quot;,
+  &quot;correction_type&quot;: &quot;supersede&quot;  // or &quot;void&quot;, &quot;amend&quot;
+}]
+</code></pre>
+<p><strong>References:</strong> Event Sourcing patterns, RFC 6962 append-only logs</p>
+<hr />
+<h3 id="163-deterministic-canonical-hashing">16.3 Deterministic Canonical Hashing</h3>
+<p><strong>Requirement:</strong> Same input MUST produce identical hash across all implementations.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>Cross-language consistency</td>
+<td>RFC 8949 Core Deterministic Encoding</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Reproducible hashes</td>
+<td>Canonical CBOR rules strictly enforced</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>No floating-point ambiguity</td>
+<td>Integers only for timestamps; floats banned in hashed fields</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Canonical CBOR Rules (per RFC 8949 §4.2.1):</strong>
+1. Preferred serialization (shortest form)
+2. Map keys sorted by encoded byte order
+3. No indefinite-length items
+4. Integers: smallest encoding that fits
+5. No duplicate map keys</p>
+<p><strong>Hash Function:</strong> SHA-256 (FIPS 180-4), same as Certificate Transparency</p>
+<p><strong>Test Vectors:</strong></p>
+<pre><code>Input: {&quot;b&quot;: 2, &quot;a&quot;: 1}
+Canonical CBOR: a2 61 61 01 61 62 02  (keys sorted: &quot;a&quot; before &quot;b&quot;)
+SHA-256: 9f86d08...
+</code></pre>
+<p><strong>References:</strong> RFC 8949 §4.2, FIDO CTAP2 canonical CBOR</p>
+<hr />
+<h3 id="164-chain-of-custody-correctness">16.4 Chain-of-Custody Correctness</h3>
+<p><strong>Requirement:</strong> Every event MUST link to previous, enabling instant gap/reorder detection.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>Sequential numbering</td>
+<td><code>seq</code> field in every record (per-segment, monotonic)</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Hash chaining</td>
+<td><code>prev_record_hash</code> in record header</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Gap detection</td>
+<td>Verifier checks seq[i] == seq[i-1] + 1</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Double-write detection</td>
+<td>Same seq + different hash = error</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Record Linkage:</strong></p>
+<pre><code>Record N:   seq=42, prev_hash=H(Record N-1), ...
+Record N+1: seq=43, prev_hash=H(Record N), ...
+</code></pre>
+<p><strong>Segment Linkage:</strong></p>
+<pre><code>Segment M:   prev_segment_hash = H(Segment M-1 seal)
+Segment M+1: prev_segment_hash = H(Segment M seal)
+</code></pre>
+<p><strong>Verification Checks:</strong>
+- <code>seq</code> strictly increasing within segment
+- <code>prev_record_hash</code> matches computed hash of previous record
+- <code>prev_segment_hash</code> matches sealed hash of previous segment
+- No gaps in segment sequence (00, 10, 20, 30, 40, 50)</p>
+<hr />
+<h3 id="165-scales-without-filesystem-pain">16.5 Scales Without Filesystem Pain</h3>
+<p><strong>Requirement:</strong> MUST handle months/years of data without "millions of tiny files" problem.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>&lt; 100 files per hour</td>
+<td>6 segments + 3 indexes + 2 roots = 11 files/hour</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>No inode exhaustion</td>
+<td>Segments contain thousands of records each</td>
+</tr>
+<tr>
+<td>SHOULD</td>
+<td>&lt; 1000 files per day</td>
+<td>~264 files/day (11 × 24)</td>
+</tr>
+<tr>
+<td>SHOULD</td>
+<td>Predictable growth</td>
+<td>Linear with time, not with event count</td>
+</tr>
+</tbody>
+</table>
+<p><strong>File Count Analysis:</strong></p>
+<pre><code>Per hour:  6 segments + 3 indexes + 2 roots + ~10 blocks = ~21 files
+Per day:   ~504 files
+Per month: ~15,120 files
+Per year:  ~183,960 files (manageable on any filesystem)
+</code></pre>
+<p><strong>Contrast with v1:</strong></p>
+<pre><code>v1: 1 file per micro-window (10s) = 360 files/hour = 8,640 files/day
+v2: 21 files/hour = 504 files/day (17x reduction)
+</code></pre>
+<hr />
+<h3 id="166-fast-tracing-o1-ish-lookup">16.6 Fast Tracing (O(1)-ish Lookup)</h3>
+<p><strong>Requirement:</strong> Given time or object_id, MUST jump to exact records without full scan.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>Time → records in O(log n)</td>
+<td><code>time.ridx</code>: sorted array, binary search</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Object → records in O(1)</td>
+<td><code>object.ridx</code>: hash map object_id → offsets</td>
+</tr>
+<tr>
+<td>SHOULD</td>
+<td>&lt; 10ms for any lookup</td>
+<td>Index fits in memory for hot shards</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Index Structures (Simple Files, No DB):</strong></p>
+<p><strong>time.ridx</strong> (sorted array):</p>
+<pre><code class="language-cbor">{
+  &quot;entries&quot;: [
+    [1705665600000000000, 0, 0, 512],      // ts_ns, seg, offset, len
+    [1705665600100000000, 0, 512, 256],
+    ...
+  ]
+}
+</code></pre>
+<p>Lookup: binary search on timestamp → segment + offset</p>
+<p><strong>object.ridx</strong> (hash map):</p>
+<pre><code class="language-cbor">{
+  &quot;entries&quot;: {
+    &quot;obj-abc123&quot;: [[0, 1024, 512, ts1], [0, 2048, 256, ts2]],
+    &quot;obj-def456&quot;: [[1, 0, 1024, ts3]],
+    ...
+  }
+}
+</code></pre>
+<p>Lookup: direct key access → list of (segment, offset, len, ts)</p>
+<hr />
+<h3 id="167-multi-level-provability">16.7 Multi-Level Provability</h3>
+<p><strong>Requirement:</strong> MUST support proofs at record, segment, hour, and chain levels.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Proof Type</th>
+<th>What It Proves</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Record</td>
+<td>MMR inclusion</td>
+<td>"Record X exists in segment S"</td>
+<td>O(log n) hashes</td>
+</tr>
+<tr>
+<td>Segment</td>
+<td>Seal signature</td>
+<td>"Segment S was finalized by node N at time T"</td>
+<td>64 bytes</td>
+</tr>
+<tr>
+<td>Hour</td>
+<td>Root signature</td>
+<td>"Hour H contains segments S1..S6 with root R"</td>
+<td>64 bytes</td>
+</tr>
+<tr>
+<td>Chain</td>
+<td>Chain linkage</td>
+<td>"Hours H1→H2→...→Hn form append-only sequence"</td>
+<td>O(n) × 32 bytes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Proof Generation:</strong></p>
+<pre><code class="language-rust">// Record inclusion proof
+fn prove_record(loc: &amp;Loc) -&gt; InclusionProof {
+    let segment = load_segment(loc.shard, loc.segment);
+    let mmr = segment.rebuild_mmr();
+    mmr.prove(loc.record_index)
+}
+
+// Verify: recompute root from proof, compare to signed hour root
+</code></pre>
+<p><strong>Future Extension:</strong> ZK proofs for "state transitioned correctly" (not in v1.0)</p>
+<hr />
+<h3 id="168-selective-disclosure-exports-proofpack-tiers">16.8 Selective Disclosure Exports (ProofPack Tiers)</h3>
+<p><strong>Requirement:</strong> MUST support tiered exports from minimal to full.</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Contents</th>
+<th>Size</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Micro</strong></td>
+<td>Roots + chain + specific record proofs</td>
+<td>~10 KB</td>
+<td>Court exhibit, audit summary</td>
+</tr>
+<tr>
+<td><strong>Mini</strong></td>
+<td>Above + relevant segment(s)</td>
+<td>~1 MB</td>
+<td>Incident investigation</td>
+</tr>
+<tr>
+<td><strong>Full</strong></td>
+<td>All segments + blocks for time range</td>
+<td>~100 MB+</td>
+<td>Complete forensic package</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Export Commands:</strong></p>
+<pre><code class="language-bash"># Micro: just prove one record existed
+ritma export --loc 2026011910:00:4096:512 --tier micro
+
+# Mini: include the segment containing the record
+ritma export --loc 2026011910:00:4096:512 --tier mini
+
+# Full: entire hour
+ritma export --shard 2026011910 --tier full
+</code></pre>
+<p><strong>Micro Export Contents:</strong></p>
+<pre><code>export/
+├── record.cbor           # The specific record
+├── proof.cbor            # MMR inclusion proof
+├── segment_seal.cbor     # Segment seal (signed)
+├── hour_root.cbor        # Hour root (signed)
+├── chain_excerpt.cbor    # Relevant chain entries
+└── manifest.json
+</code></pre>
+<hr />
+<h3 id="169-retention-cold-storage-without-breaking-verification">16.9 Retention + Cold Storage Without Breaking Verification</h3>
+<p><strong>Requirement:</strong> MUST verify integrity even after moving segments to cold storage.</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Requirement</th>
+<th>RTSL Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MUST</td>
+<td>Verify without segments</td>
+<td>Keep roots + chain (tiny) forever</td>
+</tr>
+<tr>
+<td>MUST</td>
+<td>Prove record existed</td>
+<td>Inclusion proof works with just root</td>
+</tr>
+<tr>
+<td>SHOULD</td>
+<td>On-demand segment fetch</td>
+<td>LOC → fetch from cold storage if needed</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What to Keep Forever (Tiny):</strong></p>
+<pre><code>Per hour: hour.rroot (&lt; 1 KB) + hour.rroot.sig (&lt; 1 KB)
+Per year: ~17 MB of roots (trivial)
+</code></pre>
+<p><strong>What Can Be Archived/Deleted:</strong></p>
+<pre><code>segments/*.rseg     → Archive to S3/Glacier after 90 days
+blocks/*.rblk       → Archive after 90 days
+index/*.ridx        → Rebuild from segments if needed
+</code></pre>
+<p><strong>Verification with Cold Segments:</strong></p>
+<pre><code>1. User requests proof for LOC 2024011910:00:4096:512
+2. System checks: segment in hot storage? No.
+3. System fetches segment from cold storage (async)
+4. System generates proof, returns to user
+5. Proof verifies against always-hot hour root
+</code></pre>
+<hr />
+<h3 id="1610-operational-observability-self-checks">16.10 Operational Observability + Self-Checks</h3>
+<p><strong>Requirement:</strong> MUST provide built-in health checks and diagnostics.</p>
+<p><strong>CLI Commands:</strong></p>
+<pre><code class="language-bash"># Full verification
+ritma ledger doctor --path ./ledger
+</code></pre>
+<p><strong>Doctor Output:</strong></p>
+<pre><code>RITMA LEDGER HEALTH CHECK
+=========================
+Path: ./ledger
+Format: RTSL v2
+
+STRUCTURE CHECKS:
+[✓] CURRENT file exists and valid
+[✓] Chain file intact (1,234 entries)
+[✓] All shards have hour roots
+
+INTEGRITY CHECKS:
+[✓] Chain hash continuity verified
+[✓] All hour roots properly signed
+[✓] Segment seals verified (7,404 segments)
+[✓] MMR roots match sealed values
+
+INDEX CHECKS:
+[✓] time.ridx consistent with segments
+[✓] object.ridx consistent with segments
+[!] hash.ridx missing for shard 2026011823 (rebuildable)
+
+STORAGE METRICS:
+  Total shards:     1,234
+  Total segments:   7,404
+  Total records:    12,456,789
+  Total size:       45.2 GB
+  Hot storage:      12.1 GB (last 7 days)
+  Cold storage:     33.1 GB
+
+RECOMMENDATIONS:
+- Rebuild hash.ridx for shard 2026011823
+- Consider archiving shards older than 2025121910
+</code></pre>
+<p><strong>Metrics Exposed:</strong></p>
+<pre><code>ritma_ledger_records_total{shard=&quot;2026011910&quot;} 12345
+ritma_ledger_segments_total 7404
+ritma_ledger_bytes_total 48573849234
+ritma_ledger_last_seal_timestamp 1705665600
+ritma_ledger_verification_errors_total 0
+</code></pre>
+<hr />
+<h2 id="17-design-principles-lightweight-no-external-dependencies">17. Design Principles: Lightweight &amp; No External Dependencies</h2>
+<p>RTSL is designed to be <strong>self-contained</strong> with <strong>no external database dependencies</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Principle</th>
+<th>Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No embedded DB</td>
+<td>Plain files only (no RocksDB, SQLite, LMDB)</td>
+</tr>
+<tr>
+<td>No complex indexes</td>
+<td>Simple CBOR files, rebuildable from segments</td>
+</tr>
+<tr>
+<td>Minimal dependencies</td>
+<td>Only: SHA-256, Ed25519, CBOR, zstd</td>
+</tr>
+<tr>
+<td>Portable</td>
+<td>Works on any POSIX filesystem</td>
+</tr>
+<tr>
+<td>Inspectable</td>
+<td><code>cbor2json</code> can read any file</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why No Embedded Database:</strong>
+- RocksDB/LMDB add 10+ MB binary size
+- Complex failure modes (compaction, WAL, etc.)
+- Harder to inspect/debug
+- Overkill for append-only workload</p>
+<p><strong>RTSL Approach:</strong>
+- Segments are the source of truth (append-only files)
+- Indexes are derived (rebuildable)
+- Roots are tiny (keep forever)
+- Everything is CBOR (human-inspectable with tools)</p>
+<hr />
+<h2 id="appendix-a-abnf-grammar">Appendix A: ABNF Grammar</h2>
+<pre><code class="language-abnf">; Segment file
+rseg-file = segment-header *record segment-seal
+
+; Record
+record = length-prefix record-header record-body
+length-prefix = varint
+record-header = cbor-array
+record-body = cbor-value / compressed-cbor
+
+; Varint (LEB128)
+varint = 1*8OCTET
+
+; CBOR types
+cbor-array = &lt;per RFC 8949&gt;
+cbor-value = &lt;per RFC 8949&gt;
+</code></pre>
+<h2 id="appendix-b-example-segment-hex-dump">Appendix B: Example Segment Hex Dump</h2>
+<pre><code>00000000: d9 d9 f7 88 6d 72 69 74  6d 61 2d 73 65 67 40 31  |....mritma-seg@1|
+00000010: 2e 30 02 78 18 32 30 32  36 2d 30 31 2d 31 39 54  |.0.x.2026-01-19T|
+00000020: 31 30 3a 30 30 3a 30 30  5a 6b 6e 6f 64 65 2d 61  |10:00:00Zknode-a|
+00000030: 62 63 31 32 33 6a 32 30  32 36 30 31 31 39 31 30  |bc123j2026011910|
+...
+</code></pre>
+<h2 id="appendix-c-cli-examples">Appendix C: CLI Examples</h2>
+<pre><code class="language-bash"># Write events to ledger
+ritma ledger write --event '{&quot;type&quot;:&quot;file_access&quot;,...}'
+
+# Query by time range
+ritma ledger query --from 2026-01-19T10:00:00Z --to 2026-01-19T11:00:00Z
+
+# Get inclusion proof
+ritma ledger prove --loc 2026011910:00:4096:512
+
+# Verify entire ledger
+ritma ledger verify --path ./ledger
+
+# Export for court
+ritma ledger export --loc 2026011910:00:4096:512 --format court-package
+</code></pre>
+<hr />
+<p><em>End of RTSL Specification v1.0</em></p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../ritma_transparency_forensics/" class="btn btn-neutral float-left" title="Forensics Standard"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../EEC_SPEC/" class="btn btn-neutral float-right" title="EEC Spec">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../ritma_transparency_forensics/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../EEC_SPEC/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

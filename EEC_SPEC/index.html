@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="canonical" href="https://ritma.io/EEC_SPEC/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>EEC Spec - Ritma</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "EEC Spec";
+        var mkdocs_page_input_path = "EEC_SPEC.md";
+        var mkdocs_page_url = "/EEC_SPEC/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Ritma
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ARCHITECTURE/">Architecture</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../production_setup/">Production Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../CLI_REFERENCE/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../SDK/">SDK Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ritma_transparency_forensics/">Forensics Standard</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../RTSL_SPEC/">RTSL Spec</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">EEC Spec</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#abstract">Abstract</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#1-introduction">1. Introduction</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#11-design-goals">1.1 Design Goals</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-the-five-eec-constraints">2. The Five EEC Constraints</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#21-temporal-constraint">2.1 Temporal Constraint</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#22-causal-constraint">2.2 Causal Constraint</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#23-cryptographic-constraint">2.3 Cryptographic Constraint</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#24-observational-constraint">2.4 Observational Constraint</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#25-entropic-constraint">2.5 Entropic Constraint</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-artifact-schema">3. Artifact Schema</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#31-micro-window-ritma-micro02">3.1 Micro-Window (ritma-micro@0.2)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#32-micro-leaves-sidecar-ritma-micro-leaves01">3.2 Micro Leaves Sidecar (ritma-micro-leaves@0.1)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#33-hour-root-ritma-hour-root02">3.3 Hour Root (ritma-hour-root@0.2)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#34-chain-record-ritma-chain03">3.4 Chain Record (ritma-chain@0.3)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#35-signature-file-ritma-sig01">3.5 Signature File (ritma-sig@0.1)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#36-public-keys-ritma-pubkeys02">3.6 Public Keys (ritma-pubkeys@0.2)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#37-tpm-quote-ritma-tpm-quote01">3.7 TPM Quote (ritma-tpm-quote@0.1)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#38-tpm-binding-ritma-tpm-binding01">3.8 TPM Binding (ritma-tpm-binding@0.1)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-verification-flow">4. Verification Flow</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-environment-variables">5. Environment Variables</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#6-code-mapping">6. Code Mapping</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#7-security-considerations">7. Security Considerations</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#71-key-management">7.1 Key Management</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#72-tpm-trust">7.2 TPM Trust</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#73-replay-attacks">7.3 Replay Attacks</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#74-clock-attacks">7.4 Clock Attacks</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#8-future-work">8. Future Work</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#references">References</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#appendix-a-example-verification-output">Appendix A: Example Verification Output</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Ritma</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">EEC Spec</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="execution-entropy-consensus-eec-specification">Execution-Entropy Consensus (EEC) Specification</h1>
+<p><strong>Version:</strong> 0.1<br />
+<strong>Status:</strong> Draft<br />
+<strong>Last Updated:</strong> 2026-01-19</p>
+<h2 id="abstract">Abstract</h2>
+<p>Execution-Entropy Consensus (EEC) is a constraint-survival model for forensic audit logs. It ensures that recorded execution traces are <strong>admissible</strong> as evidence by enforcing five orthogonal constraints: temporal, causal, cryptographic, observational, and entropic. This document specifies the EEC model, maps constraints to Ritma ProofPack artifacts, and provides citations to foundational research.</p>
+<hr />
+<h2 id="1-introduction">1. Introduction</h2>
+<p>Traditional audit logs suffer from:
+- <strong>Tampering</strong>: Logs can be modified after the fact.
+- <strong>Repudiation</strong>: Actors can deny actions.
+- <strong>Clock manipulation</strong>: Timestamps can be forged.
+- <strong>Selective omission</strong>: Events can be dropped without detection.</p>
+<p>EEC addresses these by requiring that every recorded artifact <strong>survives</strong> a set of verifiable constraints. If any constraint fails, the artifact is inadmissible.</p>
+<h3 id="11-design-goals">1.1 Design Goals</h3>
+<ol>
+<li><strong>Offline verifiability</strong>: No network access required for verification.</li>
+<li><strong>Hardware-backed trust</strong>: Optional TPM attestation for observational/entropic constraints.</li>
+<li><strong>Incremental sealing</strong>: Proofs generated per micro-window (≤60s) and aggregated hourly.</li>
+<li><strong>Backward compatibility</strong>: Older bundles without signatures/TPM remain verifiable (with warnings).</li>
+</ol>
+<hr />
+<h2 id="2-the-five-eec-constraints">2. The Five EEC Constraints</h2>
+<h3 id="21-temporal-constraint">2.1 Temporal Constraint</h3>
+<p><strong>Definition</strong>: Events must be ordered by a monotonic, tamper-evident clock.</p>
+<p><strong>Implementation</strong>:
+- Each micro-window has <code>start_ts</code> and <code>end_ts</code> (Unix epoch, nanoseconds).
+- Hour roots aggregate micro-windows in chronological order.
+- Chain records link hours with <code>prev_root</code> forming a hash chain.</p>
+<p><strong>Verification</strong>:
+- <code>OfflineVerifier::verify_chain()</code> checks <code>prev_root</code> linkage.
+- Timestamps must be monotonically increasing within and across windows.</p>
+<p><strong>Citations</strong>:
+- Haber, S., &amp; Stornetta, W. S. (1991). "How to Time-Stamp a Digital Document." <em>Journal of Cryptology</em>.
+- RFC 3161: Internet X.509 Public Key Infrastructure Time-Stamp Protocol (TSP).</p>
+<h3 id="22-causal-constraint">2.2 Causal Constraint</h3>
+<p><strong>Definition</strong>: Events must preserve causal ordering (happens-before relationships).</p>
+<p><strong>Implementation</strong>:
+- Micro-window Merkle trees preserve leaf order.
+- Hour root is computed from ordered micro-roots.
+- Chain hash includes previous hour root, enforcing causal dependency.</p>
+<p><strong>Verification</strong>:
+- <code>OfflineVerifier::verify_hours()</code> recomputes hour root from micro-roots.
+- <code>merkle_root_sha256()</code> preserves insertion order.</p>
+<p><strong>Citations</strong>:
+- Lamport, L. (1978). "Time, Clocks, and the Ordering of Events in a Distributed System." <em>Communications of the ACM</em>.</p>
+<h3 id="23-cryptographic-constraint">2.3 Cryptographic Constraint</h3>
+<p><strong>Definition</strong>: All artifacts must be cryptographically bound to their contents.</p>
+<p><strong>Implementation</strong>:
+- <strong>Micro-window</strong>: <code>micro_root</code> = Merkle root of leaf hashes (SHA-256).
+- <strong>Hour root</strong>: <code>hour_root</code> = Merkle root of micro-roots.
+- <strong>Chain hash</strong>: <code>chain_hash = SHA256("ritma-chain-hash@0.1" || prev_root || hour_root)</code>.
+- <strong>Signatures</strong>: Ed25519 signatures on micro, hour, and chain artifacts.</p>
+<p><strong>Artifacts</strong>:
+| File | Tag | Signed Payload |
+|------|-----|----------------|
+| <code>micro/*.sig</code> | <code>ritma-micro-sig@0.1</code> | <code>micro_root</code> |
+| <code>proofs/hour_root.sig</code> | <code>ritma-hour-root-sig@0.1</code> | <code>hour_root</code> |
+| <code>proofs/chain.sig</code> | <code>ritma-chain-sig@0.1</code> | <code>chain_hash</code> |</p>
+<p><strong>Verification</strong>:
+- <code>verify_sig_file()</code> loads public keys from <code>_meta/keys/pubkeys.cbor</code>.
+- Signature format: <code>("ritma-sig@0.1", key_id, alg, payload_hex, sig_hex)</code>.</p>
+<p><strong>Citations</strong>:
+- Bernstein, D. J., et al. (2012). "High-speed high-security signatures." <em>Journal of Cryptographic Engineering</em>.
+- RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA).</p>
+<h3 id="24-observational-constraint">2.4 Observational Constraint</h3>
+<p><strong>Definition</strong>: The recording environment must be attested by a trusted observer.</p>
+<p><strong>Implementation</strong>:
+- TPM 2.0 quote binds the chain hash to platform state (PCR values).
+- <code>tpm_quote.cbor</code>: Contains PCR selection, nonce (chain hash), signature, AIK public key.
+- <code>tpm_binding.cbor</code>: Links quote hash to chain hash with timestamp.</p>
+<p><strong>Verification</strong>:
+- <code>OfflineVerifier::verify_tpm_binding()</code> checks:
+  - Quote nonce matches chain hash.
+  - PCR digest is consistent.
+  - Signature verifies against AIK.</p>
+<p><strong>Citations</strong>:
+- Trusted Computing Group. (2019). "TPM 2.0 Library Specification."
+- Parno, B., et al. (2010). "Bootstrapping Trust in Commodity Computers." <em>IEEE S&amp;P</em>.</p>
+<h3 id="25-entropic-constraint">2.5 Entropic Constraint</h3>
+<p><strong>Definition</strong>: Artifacts must contain sufficient entropy to prevent pre-computation attacks.</p>
+<p><strong>Implementation</strong>:
+- Leaf hashes include event-specific data (timestamps, PIDs, hashes of binaries).
+- TPM nonce is derived from chain hash (unpredictable without prior events).
+- Micro-window IDs include nanosecond timestamps.</p>
+<p><strong>Verification</strong>:
+- Implicit: If cryptographic and observational constraints pass, entropic constraint is satisfied.
+- Future: Entropy estimation on leaf data distributions.</p>
+<p><strong>Citations</strong>:
+- Dodis, Y., et al. (2004). "On the (Im)possibility of Cryptography with Imperfect Randomness." <em>FOCS</em>.</p>
+<hr />
+<h2 id="3-artifact-schema">3. Artifact Schema</h2>
+<h3 id="31-micro-window-ritma-micro02">3.1 Micro-Window (<code>ritma-micro@0.2</code>)</h3>
+<pre><code>(
+  &quot;ritma-micro@0.2&quot;,   // tag
+  window_id,           // string: YYYYMMDD_HHMMSS_nnnnnnnnn
+  node_id,             // string
+  start_ts,            // i64: Unix epoch ns
+  end_ts,              // i64: Unix epoch ns
+  event_count,         // u64
+  leaf_count,          // u64
+  micro_root_hex       // string: 64 hex chars (SHA-256)
+)
+</code></pre>
+<h3 id="32-micro-leaves-sidecar-ritma-micro-leaves01">3.2 Micro Leaves Sidecar (<code>ritma-micro-leaves@0.1</code>)</h3>
+<pre><code>(
+  &quot;ritma-micro-leaves@0.1&quot;,  // tag
+  window_id,                  // string
+  [leaf_hex, ...]             // array of 64-char hex strings
+)
+</code></pre>
+<p>Stored as <code>micro/{window_id}.leaves.cbor.zst</code> (zstd compressed).</p>
+<h3 id="33-hour-root-ritma-hour-root02">3.3 Hour Root (<code>ritma-hour-root@0.2</code>)</h3>
+<pre><code>(
+  &quot;ritma-hour-root@0.2&quot;,  // tag
+  node_id,                 // string
+  hour_ts,                 // i64: Unix epoch (hour start)
+  hour_root_hex,           // string: 64 hex chars
+  [micro_root_hex, ...]    // array of micro roots in order
+)
+</code></pre>
+<h3 id="34-chain-record-ritma-chain03">3.4 Chain Record (<code>ritma-chain@0.3</code>)</h3>
+<pre><code>(
+  &quot;ritma-chain@0.3&quot;,   // tag
+  node_id,              // string
+  hour_ts,              // i64
+  prev_root_hex,        // string: 64 hex chars (or GENESIS hash)
+  hour_root_hex,        // string: 64 hex chars
+  chain_hash_hex        // string: 64 hex chars
+)
+</code></pre>
+<h3 id="35-signature-file-ritma-sig01">3.5 Signature File (<code>ritma-sig@0.1</code>)</h3>
+<pre><code>(
+  &quot;ritma-sig@0.1&quot;,     // tag
+  key_id,               // string: key identifier
+  alg,                  // string: &quot;ed25519&quot; or &quot;none&quot;
+  payload_hex,          // string: 64 hex chars (what was signed)
+  sig_hex               // string: 128 hex chars (Ed25519 signature)
+)
+</code></pre>
+<h3 id="36-public-keys-ritma-pubkeys02">3.6 Public Keys (<code>ritma-pubkeys@0.2</code>)</h3>
+<pre><code>(
+  &quot;ritma-pubkeys@0.2&quot;,  // tag
+  node_id,               // string
+  [
+    {
+      &quot;key_id&quot;: string,
+      &quot;algorithm&quot;: string,
+      &quot;public_key_hash&quot;: string,  // SHA-256 of public key
+      &quot;ed25519_pubkey&quot;: string    // 64 hex chars (32 bytes)
+    },
+    ...
+  ]
+)
+</code></pre>
+<h3 id="37-tpm-quote-ritma-tpm-quote01">3.7 TPM Quote (<code>ritma-tpm-quote@0.1</code>)</h3>
+<pre><code>{
+  &quot;version&quot;: &quot;ritma-tpm-quote@0.1&quot;,
+  &quot;pcr_selection&quot;: { &quot;hash_alg&quot;: &quot;sha256&quot;, &quot;pcrs&quot;: [0, 1, 2, ...] },
+  &quot;pcr_digest&quot;: string,      // hex
+  &quot;nonce&quot;: string,           // hex (should match chain_hash)
+  &quot;signature&quot;: string,       // hex
+  &quot;aik_public&quot;: string,      // hex (AIK public key)
+  &quot;is_hardware&quot;: bool,
+  &quot;timestamp&quot;: i64
+}
+</code></pre>
+<h3 id="38-tpm-binding-ritma-tpm-binding01">3.8 TPM Binding (<code>ritma-tpm-binding@0.1</code>)</h3>
+<pre><code>{
+  &quot;version&quot;: &quot;ritma-tpm-binding@0.1&quot;,
+  &quot;quote_hash&quot;: string,      // SHA-256 of serialized quote
+  &quot;pcr_digest&quot;: string,
+  &quot;is_hardware&quot;: bool,
+  &quot;timestamp&quot;: i64,
+  &quot;node_id&quot;: string
+}
+</code></pre>
+<hr />
+<h2 id="4-verification-flow">4. Verification Flow</h2>
+<pre><code>OfflineVerifier::verify_all()
+├── load_pubkeys()                    // _meta/keys/pubkeys.cbor
+├── verify_chain()                    // chain.cbor linkage
+│   ├── for each hour:
+│   │   ├── verify_chain_record()     // prev_root, chain_hash
+│   │   ├── verify_sig_file(chain.sig)
+│   │   └── verify_tpm_binding()      // optional
+├── verify_hours()                    // hour_root.cbor
+│   ├── for each hour:
+│   │   ├── verify_hour_root()        // recompute from micro_roots
+│   │   ├── verify_sig_file(hour_root.sig)
+│   │   └── verify_micro_windows()
+│   │       ├── for each micro:
+│   │       │   ├── read_micro_root()
+│   │       │   ├── read_micro_leaves()
+│   │       │   ├── merkle_root_sha256(leaves) == claimed_root
+│   │       │   └── verify_sig_file(micro.sig)
+└── aggregate stats and errors
+</code></pre>
+<hr />
+<h2 id="5-environment-variables">5. Environment Variables</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RITMA_OUT_REQUIRE_SIGNATURE</code></td>
+<td><code>false</code></td>
+<td>Fail sealing if signing unavailable</td>
+</tr>
+<tr>
+<td><code>RITMA_VERIFY_REQUIRE_SIGNATURE</code></td>
+<td><code>false</code></td>
+<td>Fail verification if signatures missing/invalid</td>
+</tr>
+<tr>
+<td><code>RITMA_OUT_REQUIRE_TPM</code></td>
+<td><code>false</code></td>
+<td>Fail sealing if TPM unavailable</td>
+</tr>
+<tr>
+<td><code>RITMA_VERIFY_REQUIRE_TPM</code></td>
+<td><code>false</code></td>
+<td>Fail verification if TPM binding missing/invalid</td>
+</tr>
+<tr>
+<td><code>RITMA_SIGNING_KEY_ID</code></td>
+<td>(auto)</td>
+<td>Key ID to use for signing</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-code-mapping">6. Code Mapping</h2>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Sealing Code</th>
+<th>Verification Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Temporal</td>
+<td><code>StorageContract::write_micro_window_proof()</code></td>
+<td><code>OfflineVerifier::verify_chain()</code></td>
+</tr>
+<tr>
+<td>Causal</td>
+<td><code>compute_hour_root_from_micro()</code></td>
+<td><code>OfflineVerifier::verify_hours()</code></td>
+</tr>
+<tr>
+<td>Cryptographic</td>
+<td><code>write_sig_file()</code>, <code>merkle_root_sha256()</code></td>
+<td><code>verify_sig_file()</code>, <code>merkle_root_sha256()</code></td>
+</tr>
+<tr>
+<td>Observational</td>
+<td><code>TpmAttestor::attest()</code></td>
+<td><code>OfflineVerifier::verify_tpm_binding()</code></td>
+</tr>
+<tr>
+<td>Entropic</td>
+<td><code>canonical_leaf_hash()</code></td>
+<td>(implicit)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key Files</strong>:
+- <code>crates/ritma_contract/src/lib.rs</code>: Sealing pipeline, signature generation.
+- <code>crates/ritma_contract/src/verify.rs</code>: <code>OfflineVerifier</code> implementation.
+- <code>crates/node_keystore/src/lib.rs</code>: Key management, <code>sign_bytes()</code>.
+- <code>crates/node_keystore/src/tpm.rs</code>: TPM attestation.
+- <code>crates/ritma_cli/src/main.rs</code>: <code>cmd_verify_proof()</code>, <code>cmd_verify_ritma_out_bundle()</code>.</p>
+<hr />
+<h2 id="7-security-considerations">7. Security Considerations</h2>
+<h3 id="71-key-management">7.1 Key Management</h3>
+<ul>
+<li>Ed25519 private keys are stored in <code>node_keystore</code> with zeroization on drop.</li>
+<li>Public keys exported to <code>_meta/keys/pubkeys.cbor</code> for offline verification.</li>
+<li>Key rotation: New keys can be added; old signatures remain valid.</li>
+</ul>
+<h3 id="72-tpm-trust">7.2 TPM Trust</h3>
+<ul>
+<li>Hardware TPM provides strongest guarantees.</li>
+<li>Simulated TPM (swtpm) acceptable for development/testing only.</li>
+<li><code>is_hardware</code> flag in binding distinguishes trust levels.</li>
+</ul>
+<h3 id="73-replay-attacks">7.3 Replay Attacks</h3>
+<ul>
+<li>Chain hash includes previous hour root, preventing insertion.</li>
+<li>TPM nonce is chain hash, binding quote to specific chain state.</li>
+</ul>
+<h3 id="74-clock-attacks">7.4 Clock Attacks</h3>
+<ul>
+<li>Monotonic timestamps enforced within node.</li>
+<li>Cross-node synchronization requires external trusted time (RFC 3161 TSR).</li>
+</ul>
+<hr />
+<h2 id="8-future-work">8. Future Work</h2>
+<ol>
+<li><strong>Witness cosigning</strong>: Multiple nodes sign the same chain hash (threshold signatures).</li>
+<li><strong>Certificate Transparency integration</strong>: Publish chain hashes to CT logs.</li>
+<li><strong>Entropy estimation</strong>: Statistical tests on leaf data distributions.</li>
+<li><strong>Formal verification</strong>: Prove constraint satisfaction in Coq/Lean.</li>
+</ol>
+<hr />
+<h2 id="references">References</h2>
+<ol>
+<li>Haber, S., &amp; Stornetta, W. S. (1991). "How to Time-Stamp a Digital Document." <em>Journal of Cryptology</em>, 3(2), 99-111.</li>
+<li>Lamport, L. (1978). "Time, Clocks, and the Ordering of Events in a Distributed System." <em>Communications of the ACM</em>, 21(7), 558-565.</li>
+<li>Bernstein, D. J., Duif, N., Lange, T., Schwabe, P., &amp; Yang, B. Y. (2012). "High-speed high-security signatures." <em>Journal of Cryptographic Engineering</em>, 2(2), 77-89.</li>
+<li>Trusted Computing Group. (2019). "Trusted Platform Module Library Specification, Family 2.0."</li>
+<li>Parno, B., McCune, J. M., &amp; Perrig, A. (2010). "Bootstrapping Trust in Commodity Computers." <em>IEEE Symposium on Security and Privacy</em>.</li>
+<li>Dodis, Y., Reyzin, L., &amp; Smith, A. (2004). "On the (Im)possibility of Cryptography with Imperfect Randomness." <em>FOCS</em>.</li>
+<li>RFC 3161: Internet X.509 Public Key Infrastructure Time-Stamp Protocol (TSP).</li>
+<li>RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA).</li>
+<li>Laurie, B., Langley, A., &amp; Kasper, E. (2013). "Certificate Transparency." RFC 6962.</li>
+</ol>
+<hr />
+<h2 id="appendix-a-example-verification-output">Appendix A: Example Verification Output</h2>
+<pre><code>$ ritma verify-proof /var/ritma_out/ns-demo
+RITMA_OUT bundle verify (path=/var/ritma_out/ns-demo)
+  status: OK
+  hours_verified: 24
+  micro_windows_verified: 1440
+  chain_links_verified: 24
+  signatures_verified: 2928
+  bytes_verified: 15728640
+</code></pre>
+<pre><code class="language-json">{
+  &quot;bundle_type&quot;: &quot;ritma_out&quot;,
+  &quot;path&quot;: &quot;/var/ritma_out/ns-demo&quot;,
+  &quot;valid&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;warnings&quot;: [],
+  &quot;stats&quot;: {
+    &quot;hours_verified&quot;: 24,
+    &quot;micro_windows_verified&quot;: 1440,
+    &quot;chain_links_verified&quot;: 24,
+    &quot;signatures_verified&quot;: 2928,
+    &quot;bytes_verified&quot;: 15728640
+  }
+}
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../RTSL_SPEC/" class="btn btn-neutral float-left" title="RTSL Spec"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../RTSL_SPEC/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

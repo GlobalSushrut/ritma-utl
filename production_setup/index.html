@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="canonical" href="https://ritma.io/production_setup/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Production Setup - Ritma</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Production Setup";
+        var mkdocs_page_input_path = "production_setup.md";
+        var mkdocs_page_url = "/production_setup/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Ritma
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ARCHITECTURE/">Architecture</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Production Setup</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#1-the-single-config-file-ritmayaml">1) The single config file: ritma.yaml</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#11-minimal-example-current">1.1 Minimal example (current)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#12-regulated-example-suggested-pattern">1.2 Regulated example (suggested pattern)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-installation">2) Installation</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#21-debianubuntu-recommended">2.1 Debian/Ubuntu (recommended)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#22-from-source-developer">2.2 From source (developer)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-systemd-setup-linux-hosts">3) Systemd setup (Linux hosts)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#31-configure">3.1 Configure</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#32-start-the-sidecar">3.2 Start the sidecar</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#33-verify-capture-is-working">3.3 Verify capture is working</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-docker-setup-compose">4) Docker setup (compose)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#41-generate-templates">4.1 Generate templates</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#42-run">4.2 Run</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#43-stop">4.3 Stop</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-kubernetes-setup">5) Kubernetes setup</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#51-generate-manifests">5.1 Generate manifests</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#52-apply">5.2 Apply</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#53-observe">5.3 Observe</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#54-verify-its-capturing">5.4 Verify it’s capturing</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#6-production-operations-day-2">6) Production operations (day-2)</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#61-seal-a-window-strict-production">6.1 Seal a window (strict / production)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#62-export-proof-proofpack-v2">6.2 Export proof (ProofPack v2)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#63-diff-human-readable">6.3 Diff (human-readable)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#7-notes-on-current-vs-planned-ux">7) Notes on current vs. planned UX</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../CLI_REFERENCE/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../SDK/">SDK Guide</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ritma_transparency_forensics/">Forensics Standard</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../RTSL_SPEC/">RTSL Spec</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../EEC_SPEC/">EEC Spec</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Ritma</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Production Setup</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="ritma-production-setup-systemd-kubernetes-docker">Ritma Production Setup (Systemd + Kubernetes + Docker)</h1>
+<p>Goal: a real-world standard setup experience:</p>
+<ul>
+<li><strong>one config file</strong>: <code>ritma.yaml</code> (portable across Python / TypeScript / Rust tooling)</li>
+<li><strong>one deployment generator</strong>: <code>ritma deploy ...</code> (templates)</li>
+<li><strong>one evidence contract</strong>: capture → seal → export (ProofPacks)</li>
+</ul>
+<p>This document is operator-focused and matches the <strong>current CLI behavior</strong>.</p>
+<hr />
+<h2 id="1-the-single-config-file-ritmayaml">1) The single config file: <code>ritma.yaml</code></h2>
+<h3 id="11-minimal-example-current">1.1 Minimal example (current)</h3>
+<pre><code class="language-yaml">version: &quot;1.0&quot;
+namespace: &quot;ns://acme/prod/app&quot;
+
+node:
+  id: &quot;node-001&quot;
+  labels:
+    environment: &quot;production&quot;
+
+storage:
+  base_dir: &quot;/var/lib/ritma&quot;
+  out_dir: &quot;/var/lib/ritma/out&quot;
+  cas_enabled: true
+
+capture:
+  window_seconds: 300
+  privacy_mode: &quot;full&quot;  # full | redacted | minimal
+
+ml:
+  enabled: true
+  threshold: 0.7
+
+deploy:
+  type: &quot;systemd&quot; # systemd | kubernetes | docker | standalone
+</code></pre>
+<p>Where this is used today:</p>
+<ul>
+<li><strong>SDKs</strong> (Python/TS) can load/validate/generate env files and deployment manifests from <code>ritma.yaml</code>.</li>
+<li><strong>Runtime binaries</strong> (<code>ritma-sidecar</code>) currently consume configuration primarily via <strong>environment variables</strong> and <code>/etc/ritma/ritma.conf</code>.</li>
+</ul>
+<p>Tip: see <code>schemas/ritma.example.yaml</code> for a complete example.</p>
+<h3 id="12-regulated-example-suggested-pattern">1.2 Regulated example (suggested pattern)</h3>
+<p>Ritma supports privacy modes at capture time. A common regulated posture is:</p>
+<ul>
+<li>Default to <code>privacy_mode: redacted</code> or <code>minimal</code></li>
+<li>Use short, time-bounded overrides when investigating an active incident</li>
+</ul>
+<p>(Exact “break-glass” workflow enforcement is environment-specific.)</p>
+<hr />
+<h2 id="2-installation">2) Installation</h2>
+<h3 id="21-debianubuntu-recommended">2.1 Debian/Ubuntu (recommended)</h3>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/ritma-io/ritma/main/scripts/setup-apt.sh | sudo bash
+sudo apt install ritma
+</code></pre>
+<p>This installs:</p>
+<ul>
+<li><code>ritma</code> (CLI)</li>
+<li><code>ritma-sidecar</code> (capture daemon)</li>
+<li><code>/etc/ritma/ritma.conf</code> (env config)</li>
+</ul>
+<h3 id="22-from-source-developer">2.2 From source (developer)</h3>
+<pre><code class="language-bash">cargo build --release -p ritma_cli -p tracer_sidecar
+sudo ./install.sh
+</code></pre>
+<h2 id="3-systemd-setup-linux-hosts">3) Systemd setup (Linux hosts)</h2>
+<h3 id="31-configure">3.1 Configure</h3>
+<p>Edit:</p>
+<ul>
+<li><code>/etc/ritma/ritma.conf</code> (environment variables)</li>
+</ul>
+<p>Minimum recommended values:</p>
+<pre><code class="language-bash">RITMA_NODE_ID=node-001
+RITMA_BASE_DIR=/var/lib/ritma
+RITMA_OUT_ENABLE=1
+RITMA_CAS_ENABLE=1
+RUST_LOG=ritma=info
+</code></pre>
+<h3 id="32-start-the-sidecar">3.2 Start the sidecar</h3>
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl enable ritma-sidecar
+sudo systemctl start ritma-sidecar
+sudo systemctl status ritma-sidecar
+</code></pre>
+<h3 id="33-verify-capture-is-working">3.3 Verify capture is working</h3>
+<p>The sidecar writes to IndexDB. You can sanity-check with:</p>
+<pre><code class="language-bash">ritma doctor --index-db /var/lib/ritma/index_db.sqlite --namespace ns://acme/prod/app
+</code></pre>
+<h2 id="4-docker-setup-compose">4) Docker setup (compose)</h2>
+<h3 id="41-generate-templates">4.1 Generate templates</h3>
+<pre><code class="language-bash">ritma deploy export --out ./deploy-out --namespace ns://acme/prod/app
+</code></pre>
+<p>Expected output is a set of deploy templates under <code>./deploy-out/</code>.</p>
+<h3 id="42-run">4.2 Run</h3>
+<pre><code class="language-bash">ritma up --help
+ritma ps --help
+ritma logs --help
+</code></pre>
+<h3 id="43-stop">4.3 Stop</h3>
+<pre><code class="language-bash">ritma down --help
+</code></pre>
+<hr />
+<h2 id="5-kubernetes-setup">5) Kubernetes setup</h2>
+<h3 id="51-generate-manifests">5.1 Generate manifests</h3>
+<pre><code class="language-bash">ritma deploy k8s --dir ./deploy-out/k8s --namespace ns://acme/prod/app
+</code></pre>
+<p>Expected output is a set of Kubernetes YAML templates under <code>./deploy-out/k8s/</code>.</p>
+<h3 id="52-apply">5.2 Apply</h3>
+<pre><code class="language-bash">kubectl apply -f ./deploy-out/k8s/
+</code></pre>
+<h3 id="53-observe">5.3 Observe</h3>
+<pre><code class="language-bash">kubectl get pods -A | grep ritma
+kubectl logs -A -l app=ritma-sidecar --tail=200
+</code></pre>
+<h3 id="54-verify-its-capturing">5.4 Verify it’s capturing</h3>
+<p>Use <code>ritma doctor</code> against the IndexDB path you mounted:</p>
+<pre><code class="language-bash">ritma doctor --index-db /data/index_db.sqlite --namespace ns://acme/prod/app
+</code></pre>
+<hr />
+<h2 id="6-production-operations-day-2">6) Production operations (day-2)</h2>
+<h3 id="61-seal-a-window-strict-production">6.1 Seal a window (strict / production)</h3>
+<pre><code class="language-bash">ritma seal-window --namespace &lt;ns&gt; --start &lt;unix_seconds&gt; --end &lt;unix_seconds&gt; --strict
+</code></pre>
+<p>Notes:</p>
+<ul>
+<li><code>--strict</code> fails if the window has zero trace events.</li>
+<li><code>--demo-mode</code> exists for testing, but production should prefer the strict path.</li>
+</ul>
+<h3 id="62-export-proof-proofpack-v2">6.2 Export proof (ProofPack v2)</h3>
+<pre><code class="language-bash">ritma export window --namespace &lt;ns&gt; --start &lt;start&gt; --end &lt;end&gt; --out ./proofpacks/window
+ritma verify-proof --path ./proofpacks/window
+</code></pre>
+<h3 id="63-diff-human-readable">6.3 Diff (human-readable)</h3>
+<pre><code class="language-bash">ritma diff --a &lt;ml_id_baseline&gt; --b &lt;ml_id_incident&gt;
+</code></pre>
+<hr />
+<h2 id="7-notes-on-current-vs-planned-ux">7) Notes on current vs. planned UX</h2>
+<p>The CLI already provides deploy template generation (<code>ritma deploy export|systemd|k8s</code>).</p>
+<p>Planned improvements (explicitly not all wired everywhere yet):</p>
+<ol>
+<li><code>ritma deploy export</code> consumes <code>ritma.yaml</code> directly (single source of truth)</li>
+<li><code>ritma deploy validate</code> performs host readiness checks (paths, permissions, kernel capability)</li>
+<li>Signed ProofPacks by default when a node keystore is configured</li>
+</ol>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../ARCHITECTURE/" class="btn btn-neutral float-left" title="Architecture"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../CLI_REFERENCE/" class="btn btn-neutral float-right" title="CLI Reference">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../ARCHITECTURE/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../CLI_REFERENCE/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

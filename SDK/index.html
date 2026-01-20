@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="canonical" href="https://ritma.io/SDK/" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>SDK Guide - Ritma</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "SDK Guide";
+        var mkdocs_page_input_path = "SDK.md";
+        var mkdocs_page_url = "/SDK/";
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Ritma
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ARCHITECTURE/">Architecture</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../production_setup/">Production Setup</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../CLI_REFERENCE/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">SDK Guide</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#option-1-debian-package-apt">Option 1: Debian Package (apt)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#option-2-cargo-from-source">Option 2: Cargo (from source)</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#option-3-quick-install-script">Option 3: Quick Install Script</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#quick-start">Quick Start</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#cli-commands">CLI Commands</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#start-sidecar-service">Start Sidecar Service</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#sdk-building-on-ritma">SDK: Building on Ritma</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#rust-crates">Rust Crates</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#example-custom-event-recording">Example: Custom Event Recording</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#example-forensic-ml-analysis">Example: Forensic ML Analysis</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#example-using-the-demo-lab">Example: Using the Demo Lab</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#architecture">Architecture</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#key-crates">Key Crates</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#output-format">Output Format</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#proofpack-structure">Proofpack Structure</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#window-page-cbor">Window Page (CBOR)</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#environment-variables">Environment Variables</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#license">License</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../ritma_transparency_forensics/">Forensics Standard</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../RTSL_SPEC/">RTSL Spec</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../EEC_SPEC/">EEC Spec</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Ritma</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">SDK Guide</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="ritma-sdk-developer-guide">Ritma SDK - Developer Guide</h1>
+<p>Build forensic security applications on top of Ritma's court-grade evidence platform.</p>
+<h2 id="installation">Installation</h2>
+<h3 id="option-1-debian-package-apt">Option 1: Debian Package (apt)</h3>
+<pre><code class="language-bash"># Add Ritma repository
+curl -fsSL https://get.ritma.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/ritma.gpg
+echo &quot;deb [signed-by=/usr/share/keyrings/ritma.gpg] https://apt.ritma.io stable main&quot; | sudo tee /etc/apt/sources.list.d/ritma.list
+
+# Install
+sudo apt update
+sudo apt install ritma
+</code></pre>
+<h3 id="option-2-cargo-from-source">Option 2: Cargo (from source)</h3>
+<pre><code class="language-bash"># Clone and build
+git clone https://github.com/ritma-io/ritma
+cd ritma
+cargo build --release
+
+# Install
+sudo ./install.sh
+</code></pre>
+<h3 id="option-3-quick-install-script">Option 3: Quick Install Script</h3>
+<pre><code class="language-bash">curl -sSL https://get.ritma.io | sudo bash
+</code></pre>
+<h2 id="quick-start">Quick Start</h2>
+<h3 id="cli-commands">CLI Commands</h3>
+<pre><code class="language-bash"># Capture events for 60 seconds
+ritma capture --duration 60 --output ./evidence
+
+# Verify a proofpack
+ritma verify ./evidence/proofpack
+
+# Export sealed windows
+ritma export-window --namespace my-app --output ./export
+
+# Start interactive demo
+ritma demo --scenario ransomware
+</code></pre>
+<h3 id="start-sidecar-service">Start Sidecar Service</h3>
+<pre><code class="language-bash">sudo systemctl start ritma-sidecar
+sudo systemctl enable ritma-sidecar
+
+# Check status
+sudo systemctl status ritma-sidecar
+journalctl -u ritma-sidecar -f
+</code></pre>
+<h2 id="sdk-building-on-ritma">SDK: Building on Ritma</h2>
+<h3 id="rust-crates">Rust Crates</h3>
+<p>Add Ritma crates to your <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[dependencies]
+# Core types and models
+common_models = { git = &quot;https://github.com/ritma-io/ritma&quot;, package = &quot;common_models&quot; }
+
+# Storage and indexing
+index_db = { git = &quot;https://github.com/ritma-io/ritma&quot;, package = &quot;index_db&quot; }
+ritma_contract = { git = &quot;https://github.com/ritma-io/ritma&quot;, package = &quot;ritma_contract&quot; }
+
+# BAR pipeline (seal and prove)
+bar_orchestrator = { git = &quot;https://github.com/ritma-io/ritma&quot;, package = &quot;bar_orchestrator&quot; }
+
+# Forensic ML
+forensic_ml = { git = &quot;https://github.com/ritma-io/ritma&quot;, package = &quot;forensic_ml&quot; }
+
+# Security interfaces
+security_interfaces = { git = &quot;https://github.com/ritma-io/ritma&quot;, package = &quot;security_interfaces&quot; }
+</code></pre>
+<h3 id="example-custom-event-recording">Example: Custom Event Recording</h3>
+<pre><code class="language-rust">use common_models::{TraceEvent, EventPayload, WindowRange};
+use index_db::IndexDb;
+use bar_orchestrator::Orchestrator;
+use security_interfaces::PipelineOrchestrator;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Initialize storage
+    let index = IndexDb::open(&quot;/var/lib/ritma/index.db&quot;)?;
+    let orchestrator = Orchestrator::new(index.clone())?;
+
+    // Record a custom event
+    let event = TraceEvent {
+        trace_id: uuid::Uuid::new_v4().to_string(),
+        timestamp_ns: chrono::Utc::now().timestamp_nanos() as u64,
+        namespace_id: &quot;my-app&quot;.to_string(),
+        event_type: &quot;custom_audit&quot;.to_string(),
+        payload: EventPayload::Custom {
+            data: serde_json::json!({
+                &quot;user_id&quot;: &quot;user_123&quot;,
+                &quot;action&quot;: &quot;login&quot;,
+                &quot;ip&quot;: &quot;192.168.1.100&quot;
+            })
+        },
+        ..Default::default()
+    };
+
+    index.insert_trace_event_from_model(&amp;event)?;
+
+    // Seal window (triggers full BAR pipeline)
+    let window = WindowRange {
+        start_ts: chrono::Utc::now().timestamp() - 300,
+        end_ts: chrono::Utc::now().timestamp(),
+    };
+
+    let proof = orchestrator.run_window(&quot;my-app&quot;, &amp;window)?;
+    println!(&quot;Sealed window: {:?}&quot;, proof.merkle_root);
+
+    Ok(())
+}
+</code></pre>
+<h3 id="example-forensic-ml-analysis">Example: Forensic ML Analysis</h3>
+<pre><code class="language-rust">use forensic_ml::{ForensicMLEngine, MLNotary};
+use common_models::WindowRange;
+
+fn analyze_window(namespace: &amp;str, window: &amp;WindowRange) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let engine = ForensicMLEngine::new();
+    let notary = MLNotary::new(&quot;my-key-id&quot;);
+
+    // Run 4-layer forensic analysis
+    let result = engine.analyze(namespace, window)?;
+
+    println!(&quot;Forensic Score: {:.2}&quot;, result.final_score);
+    println!(&quot;Verdict: {:?}&quot;, result.verdict);
+    println!(&quot;Explanation: {}&quot;, result.human_explanation);
+
+    // Notarize the result (cryptographic attestation)
+    let notarized = notary.notarize(&amp;result)?;
+    println!(&quot;Notary Hash: {}&quot;, notarized.notary_hash);
+
+    Ok(())
+}
+</code></pre>
+<h3 id="example-using-the-demo-lab">Example: Using the Demo Lab</h3>
+<pre><code class="language-rust">use ritma_lab::{LabOrchestrator, ForensicEvidenceCollector};
+use std::path::PathBuf;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Initialize lab with forensic evidence collection
+    let collector = ForensicEvidenceCollector::new(
+        PathBuf::from(&quot;./my-lab&quot;),
+        &quot;my-node&quot;,
+        &quot;my-namespace&quot;
+    )?;
+
+    collector.start(5).await?; // 5-second windows
+
+    // Record events
+    for i in 0..100 {
+        let event = create_test_event(i);
+        collector.record_event(event).await?;
+    }
+
+    // Seal and export
+    collector.seal_window().await?;
+    let path = collector.export_proofpack(&quot;./output&quot;).await?;
+
+    println!(&quot;Exported proofpack to: {}&quot;, path);
+    Ok(())
+}
+</code></pre>
+<h2 id="architecture">Architecture</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                        Your Application                      │
+├─────────────────────────────────────────────────────────────┤
+│  ritma_lab (demo)  │  ritma_cli (CLI)  │  Your Custom Code  │
+├─────────────────────────────────────────────────────────────┤
+│                     bar_orchestrator                         │
+│            (13-stage seal pipeline + RTSL)                   │
+├────────────────┬────────────────┬───────────────────────────┤
+│   forensic_ml  │   snapshotter  │   attack_graph            │
+│   (4-layer ML) │   (capture)    │   (threat detection)      │
+├────────────────┴────────────────┴───────────────────────────┤
+│                        index_db                              │
+│              (SQLite + custody log v2)                       │
+├─────────────────────────────────────────────────────────────┤
+│                     ritma_contract                           │
+│           (StorageContract, CAS, RTSL writer)                │
+├─────────────────────────────────────────────────────────────┤
+│                     common_models                            │
+│        (TraceEvent, WindowPageV2, ProofPack, etc.)           │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="key-crates">Key Crates</h2>
+<table>
+<thead>
+<tr>
+<th>Crate</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>common_models</code></td>
+<td>Core types: TraceEvent, WindowRange, ProofPack</td>
+</tr>
+<tr>
+<td><code>index_db</code></td>
+<td>Event storage, custody log, sealed windows</td>
+</tr>
+<tr>
+<td><code>ritma_contract</code></td>
+<td>StorageContract, CAS, RTSL output</td>
+</tr>
+<tr>
+<td><code>bar_orchestrator</code></td>
+<td>13-stage BAR pipeline</td>
+</tr>
+<tr>
+<td><code>forensic_ml</code></td>
+<td>4-layer forensic ML with notarization</td>
+</tr>
+<tr>
+<td><code>security_interfaces</code></td>
+<td>PipelineOrchestrator trait</td>
+</tr>
+<tr>
+<td><code>snapshotter</code></td>
+<td>Process tree, socket, container capture</td>
+</tr>
+<tr>
+<td><code>attack_graph</code></td>
+<td>Threat detection and graph analysis</td>
+</tr>
+</tbody>
+</table>
+<h2 id="output-format">Output Format</h2>
+<h3 id="proofpack-structure">Proofpack Structure</h3>
+<pre><code>proofpack/
+├── manifest.json           # Bundle metadata
+├── windows/
+│   └── YYYY/MM/DD/HH/
+│       ├── window_page.cbor     # Canonical sealed window
+│       ├── window_page.sig.cose # COSE_Sign1 signature
+│       └── leaves.cbor.zst      # Event hashes
+├── chain.json              # Hash chain continuity
+└── custody_log.jsonl       # Audit trail
+</code></pre>
+<h3 id="window-page-cbor">Window Page (CBOR)</h3>
+<pre><code class="language-json">{
+  &quot;version&quot;: &quot;ritma-page@0.2&quot;,
+  &quot;namespace_id&quot;: &quot;my-app&quot;,
+  &quot;window&quot;: { &quot;start_ts&quot;: 1768893279, &quot;end_ts&quot;: 1768893579 },
+  &quot;merkle_root&quot;: &quot;abc123...&quot;,
+  &quot;event_count&quot;: 1500,
+  &quot;ml_notary_hash&quot;: &quot;def456...&quot;,
+  &quot;forensic_verdict&quot;: &quot;normal&quot;,
+  &quot;forensic_score&quot;: 0.12,
+  &quot;prev_hash&quot;: &quot;789abc...&quot;
+}
+</code></pre>
+<h2 id="environment-variables">Environment Variables</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RITMA_NODE_ID</code></td>
+<td>auto</td>
+<td>Node identifier</td>
+</tr>
+<tr>
+<td><code>RITMA_BASE_DIR</code></td>
+<td><code>/var/lib/ritma</code></td>
+<td>Base data directory</td>
+</tr>
+<tr>
+<td><code>RITMA_OUT_DIR</code></td>
+<td><code>$BASE/out</code></td>
+<td>Proofpack output</td>
+</tr>
+<tr>
+<td><code>RITMA_OUT_ENABLE</code></td>
+<td><code>0</code></td>
+<td>Enable RTSL output</td>
+</tr>
+<tr>
+<td><code>RITMA_CAS_ENABLE</code></td>
+<td><code>0</code></td>
+<td>Enable CAS storage</td>
+</tr>
+<tr>
+<td><code>RITMA_PRIVACY_MODE</code></td>
+<td><code>full</code></td>
+<td>Privacy level</td>
+</tr>
+<tr>
+<td><code>RITMA_WINDOW_SECONDS</code></td>
+<td><code>300</code></td>
+<td>Window duration</td>
+</tr>
+<tr>
+<td><code>RITMA_KEY_ID</code></td>
+<td>none</td>
+<td>Signing key ID</td>
+</tr>
+</tbody>
+</table>
+<h2 id="license">License</h2>
+<p>Apache 2.0 - See <a href="https://github.com/GlobalSushrut/ritma-utl/blob/main/LICENSE">LICENSE</a></p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../CLI_REFERENCE/" class="btn btn-neutral float-left" title="CLI Reference"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../ritma_transparency_forensics/" class="btn btn-neutral float-right" title="Forensics Standard">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../CLI_REFERENCE/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../ritma_transparency_forensics/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
