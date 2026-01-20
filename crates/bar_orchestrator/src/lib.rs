@@ -960,6 +960,9 @@ mod tests {
                     bytes_in: None,
                     env_hash: None,
                 },
+                lamport_ts: None,
+                causal_parent: None,
+                vclock: None,
             },
             TraceEvent {
                 trace_id: "trace_det_2".to_string(),
@@ -1009,6 +1012,9 @@ mod tests {
                     bytes_in: None,
                     env_hash: None,
                 },
+                lamport_ts: None,
+                causal_parent: None,
+                vclock: None,
             },
         ];
 

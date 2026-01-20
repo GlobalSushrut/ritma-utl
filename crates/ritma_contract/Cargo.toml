@@ -18,9 +18,12 @@ hex = "0.4"
 blake3 = "1.5"
 uuid = { version = "1", features = ["v4"] }
 node_keystore = { path = "../node_keystore" }
-ed25519-dalek = "2.0"
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
 reqwest = { version = "0.11", features = ["blocking"], optional = true }
 base64 = "0.21"
+
+[dev-dependencies]
+rand = "0.8"
 
 [features]
 default = []
