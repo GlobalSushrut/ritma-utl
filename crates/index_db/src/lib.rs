@@ -67,8 +67,7 @@ impl IndexDb {
             std::thread::sleep(Duration::from_millis(100));
         }
         let mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-        if !mode.eq_ignore_ascii_case("wal") && !is_memory
-        {
+        if !mode.eq_ignore_ascii_case("wal") && !is_memory {
             return Err(IndexDbError::JournalModeNotWal(mode));
         }
 

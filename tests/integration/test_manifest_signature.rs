@@ -12,18 +12,18 @@ fn cargo_bin(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop(); // tests/integration -> tests
     path.pop(); // tests -> root
-    
+
     // Check debug first, then release
     let debug_path = path.join("target/debug").join(name);
     if debug_path.exists() {
         return debug_path;
     }
-    
+
     let release_path = path.join("target/release").join(name);
     if release_path.exists() {
         return release_path;
     }
-    
+
     // Return debug path as default (will fail with clear error)
     debug_path
 }
@@ -92,7 +92,9 @@ fn create_test_proofpack(dir: &std::path::Path) -> std::io::Result<()> {
 
 #[test]
 fn test_verify_unsigned_proofpack_passes() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
     let dir = tempfile::tempdir().expect("create temp dir");
     create_test_proofpack(dir.path()).expect("create proofpack");
 
@@ -113,7 +115,9 @@ fn test_verify_unsigned_proofpack_passes() {
 
 #[test]
 fn test_signed_proofpack_verifies() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
     use sha2::Digest;
 
     let dir = tempfile::tempdir().expect("create temp dir");
@@ -166,7 +170,9 @@ fn test_signed_proofpack_verifies() {
 
 #[test]
 fn test_tampered_manifest_fails_signature() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
     use sha2::Digest;
 
     let dir = tempfile::tempdir().expect("create temp dir");
@@ -243,7 +249,9 @@ fn test_tampered_manifest_fails_signature() {
 
 #[test]
 fn test_wrong_signature_fails() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
     use sha2::Digest;
 
     let dir = tempfile::tempdir().expect("create temp dir");

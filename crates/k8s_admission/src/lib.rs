@@ -452,9 +452,7 @@ impl ValidatingWebhook {
                             if let Some(image) = container.get("image").and_then(|v| v.as_str()) {
                                 let allowed = registries.iter().any(|r| image.starts_with(r));
                                 if !allowed {
-                                    return Err(format!(
-                                        "image {image} not from allowed registry"
-                                    ));
+                                    return Err(format!("image {image} not from allowed registry"));
                                 }
                             }
                         }
@@ -469,9 +467,7 @@ impl ValidatingWebhook {
                         for container in arr {
                             if let Some(image) = container.get("image").and_then(|v| v.as_str()) {
                                 if image.ends_with(":latest") || !image.contains(':') {
-                                    return Err(format!(
-                                        "image {image} uses latest tag or no tag"
-                                    ));
+                                    return Err(format!("image {image} uses latest tag or no tag"));
                                 }
                             }
                         }
